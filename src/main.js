@@ -5887,12 +5887,10 @@ function buildSeasonFromImport(parsed, opts) {
   }
 
   // 3. Build races — one per header code (or per raceCodes override).
-  // Resolution priority for each race code:
-  //   (a) Selected calendar preset's country-code index (if user picked one in modal)
-  //   (b) Any other saved calendar preset's index
-  //   (c) Track preset library (user customs first, then built-in TRACK_PRESETS)
-  //   (d) Hardcoded F1_RACE_CODE_MAP (legacy fallback)
-  //   (e) Generic "{CODE} Grand Prix"
+  // Simple resolution: compare each pasted code to the country code in each
+  // calendar preset's races. Direct string match — no alias translation.
+  // If no calendar preset has that country code, fall back to F1 built-in map,
+  // then generic.
   const headerCodes = (opts.raceCodes && opts.raceCodes.length === parsed.headers.length)
     ? opts.raceCodes
     : parsed.headers;
@@ -5926,16 +5924,11 @@ function buildSeasonFromImport(parsed, opts) {
 
   const raceObjs = headerCodes.map((code, idx) => {
     const codeKey = (code || '').toUpperCase().trim();
-    // Step 1: calendar-preset country index
+    // Step 1: direct match against calendar presets' country codes
     let meta = codeIndex[codeKey];
-    // Step 2: track preset library (user customs + built-in TRACK_PRESETS)
-    if (!meta) {
-      const tp = matchTrackPresetForCode(codeKey);
-      if (tp) meta = { name: tp.name, circuit: tp.circuit, country: tp.country, sprint: !!tp.sprint };
-    }
-    // Step 3: hardcoded F1 map (legacy)
+    // Step 2: hardcoded F1 map (legacy fallback for codes the calendar doesn't have)
     if (!meta) meta = F1_RACE_CODE_MAP[codeKey];
-    // Step 4: generic fallback
+    // Step 3: generic fallback
     if (!meta) meta = { name: `${code} Grand Prix`, circuit: code, country: code };
 
     return {
@@ -6066,7 +6059,7 @@ Red Bull
       <div class="field">
         <label>Race calendar codes <span style="font-weight:400;color:var(--text-muted);font-family:var(--f-body)">— space-separated, in calendar order</span></label>
         <input type="text" id="imp-races" placeholder="e.g. BHR SAU AUS AZE MIA MON ESP CAN AUT GBR HUN BEL NED ITA SIN JPN QAT USA MXC SAP LVG ABU" style="font-family:var(--f-mono);font-size:11px">
-        <span class="field-help">Resolution order: (1) selected calendar preset above, (2) any saved calendar preset, (3) your custom track presets, (4) built-in track library, (5) generic "R1, R2…". F1.com code translations applied automatically (SAU→KSA, MON→MCO, SIN→SGP, MXC→MEX, SAP→BRA, ABU→UAE).</span>
+        <span class="field-help">Each pasted code is matched against the country code of each race in your saved calendar presets. If your preset has a race with country "BHR", pasting "BHR" pulls in that race's name, circuit, and sprint flag. Unmatched codes fall back to the F1 built-in map, then to generic "R1, R2…".</span>
       </div>
       <div id="imp-preview"></div>`,
     footer: `<button class="btn btn-ghost" data-act="cancel">Cancel</button><button class="btn btn-ghost" data-act="parse">⚙ PARSE</button><button class="btn btn-primary" data-act="ok" disabled>Build Season</button>`,
@@ -6136,22 +6129,19 @@ Red Bull
         if (selectedPid) indexPreset((state.calendarPresets || []).find(p => p.id === selectedPid));
         (state.calendarPresets || []).forEach(p => indexPreset(p));
 
-        // For each preview code, work out where it resolved
+        // For each preview code, work out where it resolved.
+        // Simple logic: direct match against calendar preset country codes,
+        // then F1 hardcoded map fallback, then generic fallback. No alias translation.
         const resolutions = previewHeaders.map(code => {
           const k = (code || '').toUpperCase().trim();
-          // Step 1: calendar preset
+          // Step 1: direct match against calendar preset country codes
           if (codeIndex[k]) return { code, name: codeIndex[k].name, source: `calendar preset: ${codeIndex[k].source}` };
-          // Step 2: track preset library (user customs + built-in)
-          const tp = matchTrackPresetForCode(k);
-          if (tp) return { code, name: tp.name, source: tp.source };
-          // Step 3: F1 hardcoded map
+          // Step 2: F1 hardcoded map
           if (F1_RACE_CODE_MAP[k]) return { code, name: F1_RACE_CODE_MAP[k].name, source: 'F1 hardcoded map' };
-          // Step 4: generic fallback
+          // Step 3: generic fallback
           return { code, name: `${code} Grand Prix`, source: 'fallback' };
         });
         const fromCalPreset = resolutions.filter(x => x.source.startsWith('calendar preset')).length;
-        const fromCustomTrack = resolutions.filter(x => x.source === 'custom track preset').length;
-        const fromBuiltinTrack = resolutions.filter(x => x.source.startsWith('track preset')).length;
         const fromF1Map = resolutions.filter(x => x.source === 'F1 hardcoded map').length;
         const fallback = resolutions.filter(x => x.source === 'fallback').length;
 
@@ -6163,8 +6153,6 @@ Red Bull
         // Resolution status line — tells the user how many codes matched where
         const statusParts = [];
         if (fromCalPreset)    statusParts.push(`<span style="color:var(--green,#10b981)">● ${fromCalPreset} from calendar preset</span>`);
-        if (fromCustomTrack)  statusParts.push(`<span style="color:var(--sec-purple,#a78bfa)">● ${fromCustomTrack} from your custom track presets</span>`);
-        if (fromBuiltinTrack) statusParts.push(`<span style="color:var(--sec-blue,#60a5fa)">● ${fromBuiltinTrack} from built-in track library</span>`);
         if (fromF1Map)        statusParts.push(`<span style="color:var(--sec-blue,#60a5fa)">● ${fromF1Map} from F1 map</span>`);
         if (fallback)         statusParts.push(`<span style="color:var(--sec-yellow,#f59e0b)">● ${fallback} fell back to generic "Grand Prix" name</span>`);
         const resolutionStatus = previewHeaders.length ? `
