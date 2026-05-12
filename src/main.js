@@ -5551,15 +5551,21 @@ function matchTrackPresetForCode(code) {
   const codeKey = (code || '').toUpperCase().trim();
   if (!codeKey) return null;
 
-  // Pre-compute disambiguation hint (if any). The hint tells us which preset
+  // Get the EFFECTIVE preset list — this includes:
+  //   - User customs (state.customTrackPresets)
+  //   - Built-in TRACK_PRESETS, with any user overrides from state.presetOverrides.tracks merged on top
+  // This is the same data the user sees in the track preset library, so the
+  // matcher and the library stay in sync.
+  const effective = getEffectiveTrackPresets();
+
+  // Pre-compute the disambiguation hint (if any). Hints tell us which preset
   // to pick when one country has multiple tracks (USA = Miami/Austin/Vegas,
-  // ITA = Monza/Imola, ESP = Catalunya/Valencia, etc.). Applied to both the
-  // direct-match path and the alias path.
+  // ITA = Monza/Imola, ESP = Catalunya/Valencia, etc.).
   const hint = F1_CODE_TO_TRACK_HINT[codeKey];
 
-  // Helper: pick the best match from a list of candidates that all share the
+  // Helper: pick the best preset from a list of candidates that all share the
   // same country code. Uses circuitContains hint to disambiguate, then prefers
-  // Current era.
+  // user customs, then Current era.
   const pickBest = (candidates) => {
     if (!candidates.length) return null;
     let pool = candidates;
@@ -5569,47 +5575,41 @@ function matchTrackPresetForCode(code) {
       );
       if (matched.length) pool = matched;
     }
-    return pool.find(p => p.era === 'Current') || pool[0];
+    // Sort priority: custom > built-in-with-override > built-in current era > anything else
+    return pool.find(p => p.isCustom)
+        || pool.find(p => p.era === 'Current')
+        || pool[0];
   };
 
-  // Step 1: DIRECT match — preset country equals pasted code exactly.
-  // Try user customs first.
-  const customs = state.customTrackPresets || [];
-  const customCandidates = customs.filter(p => (p.country || '').toUpperCase().trim() === codeKey);
-  const customDirect = pickBest(customCandidates);
-  if (customDirect) {
-    return { ...customDirect, source: 'custom track preset' };
-  }
-  // Then built-in TRACK_PRESETS.
-  const builtInCandidates = TRACK_PRESETS.filter(p => (p.country || '').toUpperCase().trim() === codeKey);
-  const builtInDirect = pickBest(builtInCandidates);
-  if (builtInDirect) {
-    return { ...builtInDirect, source: builtInDirect.era === 'Current' ? 'track preset (current)' : `track preset (${builtInDirect.era})` };
+  // Step 1: DIRECT match — preset country equals pasted code exactly
+  const directCandidates = effective.filter(p => (p.country || '').toUpperCase().trim() === codeKey);
+  const direct = pickBest(directCandidates);
+  if (direct) {
+    const source = direct.isCustom
+      ? 'custom track preset'
+      : (direct.era === 'Current' ? 'track preset (current)' : `track preset (${direct.era})`);
+    return { ...direct, source };
   }
 
-  // Step 2: ALIAS match — pasted code is an F1 abbreviation that needs translation
+  // Step 2: ALIAS match — pasted code is an F1.com abbreviation that needs translation
   // (e.g. SAU → KSA, SIN → SGP, MON → MCO). Look up via the hint table.
   if (!hint) return null;
 
-  const aliasedMatch = (preset) => {
-    if ((preset.country || '').toUpperCase() !== hint.country) return false;
+  const aliasCandidates = effective.filter(p => {
+    if ((p.country || '').toUpperCase() !== hint.country) return false;
     if (hint.circuitContains) {
-      return (preset.circuit || '').toLowerCase().includes(hint.circuitContains.toLowerCase());
+      return (p.circuit || '').toLowerCase().includes(hint.circuitContains.toLowerCase());
     }
     return true;
-  };
-
-  // 2a. Customs with alias
-  const customAliasCandidates = customs.filter(aliasedMatch);
-  const customAlias = customAliasCandidates.find(p => p.era === 'Current') || customAliasCandidates[0];
-  if (customAlias) {
-    return { ...customAlias, source: 'custom track preset' };
-  }
-  // 2b. Built-in with alias
-  const builtInAliasCandidates = TRACK_PRESETS.filter(aliasedMatch);
-  const builtInAlias = builtInAliasCandidates.find(p => p.era === 'Current') || builtInAliasCandidates[0];
-  if (builtInAlias) {
-    return { ...builtInAlias, source: builtInAlias.era === 'Current' ? 'track preset (current)' : `track preset (${builtInAlias.era})` };
+  });
+  const alias = aliasCandidates.find(p => p.isCustom)
+             || aliasCandidates.find(p => p.era === 'Current')
+             || aliasCandidates[0];
+  if (alias) {
+    const source = alias.isCustom
+      ? 'custom track preset'
+      : (alias.era === 'Current' ? 'track preset (current)' : `track preset (${alias.era})`);
+    return { ...alias, source };
   }
 
   return null;
