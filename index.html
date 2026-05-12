@@ -4319,18 +4319,27 @@ async function cloudPushActive() {
   const save = state.saves[state.activeSaveId];
   if (!save) return;
 
-  // Upsert the save row itself
-  const saveRow = { id: save.id, name: save.name };
-  const { error: eSave } = await CLOUD.client.from('saves').upsert(saveRow);
-  if (eSave) { console.warn('[P1] save sync failed', eSave); return; }
-
-  // If this is a brand-new save, register the current user as owner
+  // First-time push of this save: use explicit INSERT (the only path the INSERT policy allows)
+  // and immediately create the save_members owner row so subsequent updates pass user_is_save_owner().
+  // Subsequent pushes of the same save: use explicit UPDATE (gated on owner role, which we now have).
+  // Using upsert() here fails because Supabase evaluates BOTH the INSERT and UPDATE policies, and the
+  // UPDATE policy requires us to already be an owner — which we aren't until the member row is inserted.
   if (!cloudSaveIds.has(save.id)) {
-    const { error: eMem } = await CLOUD.client.from('save_members').upsert({
+    // Brand new save → INSERT, then become owner
+    const { error: eIns } = await CLOUD.client.from('saves').insert({ id: save.id, name: save.name });
+    if (eIns) { console.warn('[P1] save insert failed', eIns); return; }
+    const { error: eMem } = await CLOUD.client.from('save_members').insert({
       save_id: save.id, user_id: currentUser.id, role: 'owner',
-    }, { onConflict: 'save_id,user_id' });
-    if (eMem) console.warn('[P1] member sync failed', eMem);
+    });
+    if (eMem && eMem.code !== '23505') { // 23505 = duplicate key (already a member — harmless)
+      console.warn('[P1] member insert failed', eMem);
+      return;
+    }
     cloudSaveIds.add(save.id);
+  } else {
+    // Existing save → UPDATE name only
+    const { error: eUpd } = await CLOUD.client.from('saves').update({ name: save.name }).eq('id', save.id);
+    if (eUpd) { console.warn('[P1] save update failed', eUpd); return; }
   }
 
   // Upsert every season in this save
