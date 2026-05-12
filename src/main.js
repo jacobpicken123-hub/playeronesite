@@ -13,8 +13,8 @@
    To enable: set SUPABASE_URL and SUPABASE_ANON_KEY below to your project values.
    ===================================================== */
 const P1_CONFIG = {
-  SUPABASE_URL:      'https://ujrjjxxdwhlmgailrnbw.supabase.co/rest/v1/',  // e.g. 'https://abcdefg.supabase.co'
-  SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVqcmpqeHhkd2hsbWdhaWxybmJ3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg1MTE5NTIsImV4cCI6MjA5NDA4Nzk1Mn0.4-uGvz_o69mgGzf9sjXh7jP5Qgeo_YsR8TQiMxG334o',  // the long eyJ... anon key (safe to ship)
+  SUPABASE_URL:      'https://ujrjjxxdwhlmgailrnbw.supabase.co',
+  SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVqcmpqeHhkd2hsbWdhaWxybmJ3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg1MTE5NTIsImV4cCI6MjA5NDA4Nzk1Mn0.4-uGvz_o69mgGzf9sjXh7jP5Qgeo_YsR8TQiMxG334o',
 };
 
 const CLOUD = (() => {
