@@ -3,6 +3,486 @@
    Vanilla JS single-page app
    ===================================================== */
 
+/* =====================================================
+   ▼ SUPABASE CLOUD LAYER ▼
+   Wraps the existing localStorage-backed `state` with a cloud sync.
+   - If P1_CONFIG.SUPABASE_URL is empty, the app runs in local-only mode (unchanged).
+   - If filled in, the app shows a sign-in screen, hydrates state from cloud
+     on login, and mirrors every saveState() to cloud in the background.
+
+   To enable: set SUPABASE_URL and SUPABASE_ANON_KEY below to your project values.
+   ===================================================== */
+const P1_CONFIG = {
+  SUPABASE_URL:      '',  // e.g. 'https://abcdefg.supabase.co'
+  SUPABASE_ANON_KEY: '',  // the long eyJ... anon key (safe to ship)
+};
+
+const CLOUD = (() => {
+  // If config is empty, return a no-op shim — the app continues to work locally exactly as before.
+  if (!P1_CONFIG.SUPABASE_URL || !P1_CONFIG.SUPABASE_ANON_KEY) {
+    return { enabled: false };
+  }
+  if (typeof supabase === 'undefined') {
+    console.warn('[P1] Supabase SDK not loaded — running in local-only mode');
+    return { enabled: false };
+  }
+  const client = supabase.createClient(P1_CONFIG.SUPABASE_URL, P1_CONFIG.SUPABASE_ANON_KEY, {
+    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
+  });
+  return { enabled: true, client };
+})();
+
+// Current signed-in user (null = signed out). Populated by cloudInit().
+let currentUser = null;
+
+// Track which save IDs originated in the cloud so we don't try to push them again on first sync
+const cloudSaveIds = new Set();
+// In-flight write counter — used to debounce sync after a flurry of edits
+let pendingCloudWrites = 0;
+let cloudSyncTimer = null;
+
+/* ---------- AUTH wrappers ---------- */
+async function cloudSignUp(email, password) {
+  const { data, error } = await CLOUD.client.auth.signUp({
+    email, password,
+    options: { emailRedirectTo: window.location.origin },
+  });
+  if (error) throw error;
+  return data;
+}
+async function cloudSignIn(email, password) {
+  const { data, error } = await CLOUD.client.auth.signInWithPassword({ email, password });
+  if (error) throw error;
+  return data;
+}
+async function cloudMagicLink(email) {
+  const { error } = await CLOUD.client.auth.signInWithOtp({
+    email,
+    options: { emailRedirectTo: window.location.origin },
+  });
+  if (error) throw error;
+}
+async function cloudGoogleSignIn() {
+  const { error } = await CLOUD.client.auth.signInWithOAuth({
+    provider: 'google',
+    options: { redirectTo: window.location.origin },
+  });
+  if (error) throw error;
+}
+async function cloudSignOut() {
+  await CLOUD.client.auth.signOut();
+  // Clear all local state on sign-out so user B doesn't see user A's cached data
+  localStorage.removeItem(STORAGE_KEY);
+  location.reload();
+}
+
+/* ---------- CLOUD DATA: pull all saves user has access to into local `state` shape ----------
+   Cloud rows live in normalized tables; we re-assemble them into the same shape your
+   render code already expects (state.saves[id] = { id, name, seasons: { [seasonId]: {...} } }).
+*/
+async function cloudPullAllSaves() {
+  if (!CLOUD.enabled || !currentUser) return;
+
+  // 1. Saves the user can access (via RLS — only owned/shared)
+  const { data: saves, error: e1 } = await CLOUD.client
+    .from('saves').select('*');
+  if (e1) throw e1;
+
+  const { data: seasons, error: e2 } = await CLOUD.client.from('seasons').select('*');
+  if (e2) throw e2;
+  const { data: teams, error: e3 } = await CLOUD.client.from('teams').select('*');
+  if (e3) throw e3;
+  const { data: drivers, error: e4 } = await CLOUD.client.from('drivers').select('*');
+  if (e4) throw e4;
+  const { data: races, error: e5 } = await CLOUD.client.from('races').select('*');
+  if (e5) throw e5;
+  const { data: rresults, error: e6 } = await CLOUD.client.from('race_results').select('*');
+  if (e6) throw e6;
+  const { data: sresults, error: e7 } = await CLOUD.client.from('sprint_results').select('*');
+  if (e7) throw e7;
+  const { data: members, error: e8 } = await CLOUD.client
+    .from('save_members').select('save_id, user_id, role');
+  if (e8) throw e8;
+
+  // Build the in-memory tree
+  const newSaves = {};
+  cloudSaveIds.clear();
+  for (const s of saves) {
+    newSaves[s.id] = {
+      id: s.id, name: s.name,
+      createdAt: new Date(s.created_at).getTime(),
+      updatedAt: new Date(s.updated_at).getTime(),
+      seasons: {},
+      _cloud: true,
+      _members: members.filter(m => m.save_id === s.id),
+    };
+    cloudSaveIds.add(s.id);
+  }
+  for (const sn of seasons) {
+    const save = newSaves[sn.save_id]; if (!save) continue;
+    save.seasons[sn.id] = {
+      id: sn.id, name: sn.name, year: sn.year,
+      pointsSystemId: sn.points_system_id,
+      polePointEnabled: sn.pole_point_enabled,
+      polePointValue: sn.pole_point_value,
+      flEnabled: sn.fl_enabled,
+      drivers: [], teams: [], races: [],
+      _cloud: true,
+    };
+  }
+  // Teams under their season
+  const teamsBySeason = {};
+  for (const t of teams) {
+    (teamsBySeason[t.season_id] ||= []).push({
+      id: t.id, name: t.name, short: t.short, country: t.country,
+      color: t.color, logo: t.logo, dsq: t.dsq,
+    });
+  }
+  // Drivers under their season
+  const driversBySeason = {};
+  for (const d of drivers) {
+    (driversBySeason[d.season_id] ||= []).push({
+      id: d.id, name: d.name, number: d.number, country: d.country,
+      photo: d.photo, teamId: d.team_id, dsq: d.dsq,
+    });
+  }
+  // Races under their season, with results re-nested as arrays (matches local shape)
+  const racesBySeason = {};
+  const resultsByRace = {};
+  const sprintByRace = {};
+  for (const r of rresults) {
+    (resultsByRace[r.race_id] ||= []).push({
+      driverId: r.driver_id, position: r.position, time: r.time,
+      dnf: r.dnf, dsq: r.dsq, dns: r.dns,
+    });
+  }
+  for (const r of sresults) {
+    (sprintByRace[r.race_id] ||= []).push({
+      driverId: r.driver_id, position: r.position,
+      dnf: r.dnf, dsq: r.dsq, dns: r.dns,
+    });
+  }
+  for (const rc of races) {
+    (racesBySeason[rc.season_id] ||= []).push({
+      id: rc.id, round: rc.round, name: rc.name, circuit: rc.circuit,
+      country: rc.country, flagImage: rc.flag_image,
+      date: rc.date ? new Date(rc.date).getTime() : null,
+      sprint: rc.sprint, completed: rc.completed,
+      poleDriverId: rc.pole_driver_id,
+      fastestLapDriverId: rc.fastest_lap_driver_id,
+      results: resultsByRace[rc.id] || [],
+      sprintResults: sprintByRace[rc.id] || [],
+    });
+  }
+  // Attach to seasons
+  for (const seasonId of Object.keys(teamsBySeason)) {
+    for (const save of Object.values(newSaves)) {
+      if (save.seasons[seasonId]) save.seasons[seasonId].teams = teamsBySeason[seasonId];
+    }
+  }
+  for (const seasonId of Object.keys(driversBySeason)) {
+    for (const save of Object.values(newSaves)) {
+      if (save.seasons[seasonId]) save.seasons[seasonId].drivers = driversBySeason[seasonId];
+    }
+  }
+  for (const seasonId of Object.keys(racesBySeason)) {
+    for (const save of Object.values(newSaves)) {
+      if (save.seasons[seasonId]) save.seasons[seasonId].races = racesBySeason[seasonId];
+    }
+  }
+
+  // Merge cloud saves into state — keep activeSaveId if it still exists, else clear it
+  state.saves = newSaves;
+  if (state.activeSaveId && !newSaves[state.activeSaveId]) state.activeSaveId = null;
+  if (state.activeSeasonId && state.activeSaveId && !newSaves[state.activeSaveId].seasons[state.activeSeasonId]) state.activeSeasonId = null;
+
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch {}
+}
+
+/* ---------- CLOUD PUSH: serialize the active save tree and upsert into cloud ----------
+   Called from saveState() after every local change. Debounced to avoid hammering the API.
+*/
+async function cloudPushActive() {
+  if (!CLOUD.enabled || !currentUser) return;
+  const save = state.saves[state.activeSaveId];
+  if (!save) return;
+
+  // Upsert the save row itself
+  const saveRow = { id: save.id, name: save.name };
+  const { error: eSave } = await CLOUD.client.from('saves').upsert(saveRow);
+  if (eSave) { console.warn('[P1] save sync failed', eSave); return; }
+
+  // If this is a brand-new save, register the current user as owner
+  if (!cloudSaveIds.has(save.id)) {
+    const { error: eMem } = await CLOUD.client.from('save_members').upsert({
+      save_id: save.id, user_id: currentUser.id, role: 'owner',
+    }, { onConflict: 'save_id,user_id' });
+    if (eMem) console.warn('[P1] member sync failed', eMem);
+    cloudSaveIds.add(save.id);
+  }
+
+  // Upsert every season in this save
+  for (const season of Object.values(save.seasons || {})) {
+    const seasonRow = {
+      id: season.id, save_id: save.id, name: season.name, year: season.year,
+      points_system_id: season.pointsSystemId,
+      pole_point_enabled: season.polePointEnabled || false,
+      pole_point_value: season.polePointValue || 1,
+      fl_enabled: season.flEnabled !== false,
+    };
+    const { error: eSn } = await CLOUD.client.from('seasons').upsert(seasonRow);
+    if (eSn) { console.warn('[P1] season sync failed', eSn); continue; }
+
+    // Teams — replace all
+    if (season.teams?.length) {
+      const teamRows = season.teams.map(t => ({
+        id: t.id, season_id: season.id, name: t.name, short: t.short,
+        country: t.country, color: t.color, logo: t.logo || null, dsq: t.dsq || false,
+      }));
+      await CLOUD.client.from('teams').upsert(teamRows);
+    }
+    // Drivers
+    if (season.drivers?.length) {
+      const drvRows = season.drivers.map(d => ({
+        id: d.id, season_id: season.id, name: d.name, number: d.number,
+        country: d.country, photo: d.photo || null, team_id: d.teamId || null,
+        dsq: d.dsq || false,
+      }));
+      await CLOUD.client.from('drivers').upsert(drvRows);
+    }
+    // Races — and for each race, replace results + sprint results
+    if (season.races?.length) {
+      const raceRows = season.races.map(r => ({
+        id: r.id, season_id: season.id, round: r.round, name: r.name,
+        circuit: r.circuit, country: r.country, flag_image: r.flagImage || null,
+        date: r.date ? new Date(r.date).toISOString().slice(0, 10) : null,
+        sprint: r.sprint || false, completed: r.completed || false,
+        pole_driver_id: r.poleDriverId || null,
+        fastest_lap_driver_id: r.fastestLapDriverId || null,
+      }));
+      await CLOUD.client.from('races').upsert(raceRows);
+      // Results — delete then insert per race
+      for (const race of season.races) {
+        if (race.results?.length) {
+          await CLOUD.client.from('race_results').delete().eq('race_id', race.id);
+          const rows = race.results.map(rr => ({
+            race_id: race.id, driver_id: rr.driverId,
+            position: rr.position || null, time: rr.time || null,
+            dnf: rr.dnf || false, dsq: rr.dsq || false, dns: rr.dns || false,
+          }));
+          await CLOUD.client.from('race_results').insert(rows);
+        }
+        if (race.sprintResults?.length) {
+          await CLOUD.client.from('sprint_results').delete().eq('race_id', race.id);
+          const rows = race.sprintResults.map(rr => ({
+            race_id: race.id, driver_id: rr.driverId,
+            position: rr.position || null,
+            dnf: rr.dnf || false, dsq: rr.dsq || false, dns: rr.dns || false,
+          }));
+          await CLOUD.client.from('sprint_results').insert(rows);
+        }
+      }
+    }
+  }
+}
+
+// Debounced sync — called from saveState; coalesces a flurry of edits into one push
+function scheduleCloudSync() {
+  if (!CLOUD.enabled || !currentUser) return;
+  pendingCloudWrites++;
+  clearTimeout(cloudSyncTimer);
+  cloudSyncTimer = setTimeout(() => {
+    const n = pendingCloudWrites;
+    pendingCloudWrites = 0;
+    cloudPushActive().catch(e => {
+      console.warn('[P1] cloud push failed', e);
+      // Don't toast on every failure — just log. Local save still worked.
+    });
+  }, 800);
+}
+
+/* ---------- COLLABORATION: invite + accept ---------- */
+async function cloudInvite(saveId, role = 'editor') {
+  if (!CLOUD.enabled || !currentUser) throw new Error('Not signed in');
+  // We don't need the email server-side — the token is the secret.
+  // Pass a placeholder so the column isn't null.
+  const { data, error } = await CLOUD.client.from('invitations').insert({
+    save_id: saveId, invited_email: 'shared-link', role,
+  }).select().single();
+  if (error) throw error;
+  return `${window.location.origin}${window.location.pathname}?invite=${data.token}`;
+}
+
+async function cloudAcceptInvite(token) {
+  if (!CLOUD.enabled || !currentUser) throw new Error('Not signed in');
+  const { data, error } = await CLOUD.client.rpc('accept_invitation', {
+    invitation_token: token,
+  });
+  if (error) throw error;
+  return data; // joined save_id
+}
+
+/* ---------- REALTIME: subscribe to changes on saves the user has access to ---------- */
+let cloudRealtimeChannel = null;
+function cloudSubscribeRealtime() {
+  if (!CLOUD.enabled || !currentUser) return;
+  if (cloudRealtimeChannel) {
+    CLOUD.client.removeChannel(cloudRealtimeChannel);
+  }
+  // Listen to changes on all relevant tables; RLS makes sure we only get events for accessible rows.
+  cloudRealtimeChannel = CLOUD.client.channel('p1-changes')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'saves' }, onCloudChange)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'seasons' }, onCloudChange)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'teams' }, onCloudChange)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'drivers' }, onCloudChange)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'races' }, onCloudChange)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'race_results' }, onCloudChange)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'sprint_results' }, onCloudChange)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'save_members' }, onCloudChange)
+    .subscribe();
+}
+// On any incoming change, re-pull everything and re-render. Cheap because there are at most a handful of saves.
+let realtimeMergeTimer = null;
+function onCloudChange(payload) {
+  // Ignore changes we just pushed (avoids feedback loops). Heuristic: if we have pending writes, skip.
+  if (pendingCloudWrites > 0) return;
+  clearTimeout(realtimeMergeTimer);
+  realtimeMergeTimer = setTimeout(async () => {
+    try {
+      await cloudPullAllSaves();
+      renderAll();
+    } catch (e) { console.warn('[P1] realtime merge failed', e); }
+  }, 300);
+}
+
+/* ---------- INIT: detect signed-in user on boot, hydrate, then render ---------- */
+async function cloudInit() {
+  if (!CLOUD.enabled) return false;
+  // Catch ?invite=TOKEN before showing sign-in
+  const inviteToken = new URLSearchParams(location.search).get('invite');
+
+  // Listen for auth changes so we re-hydrate after sign-in
+  CLOUD.client.auth.onAuthStateChange((event, session) => {
+    const newUser = session?.user || null;
+    const wasSignedIn = !!currentUser;
+    currentUser = newUser;
+    if (newUser && !wasSignedIn) {
+      // Just signed in — pull data, accept any pending invite, render
+      (async () => {
+        try {
+          if (inviteToken) {
+            await cloudAcceptInvite(inviteToken).catch(e =>
+              toast('Invite link is invalid or expired: ' + e.message, 'error'));
+            // Strip the token from the URL
+            const url = new URL(location.href); url.searchParams.delete('invite');
+            history.replaceState({}, '', url.toString());
+          }
+          await cloudPullAllSaves();
+          cloudSubscribeRealtime();
+          renderAll();
+        } catch (e) { console.warn('[P1] post-signin hydrate failed', e); }
+      })();
+    } else if (!newUser && wasSignedIn) {
+      // Signed out — reload to clear
+      location.reload();
+    }
+  });
+
+  // Check current session synchronously
+  const { data: { session } } = await CLOUD.client.auth.getSession();
+  currentUser = session?.user || null;
+
+  if (currentUser) {
+    // Already signed in — accept invite if present, pull, subscribe, return true to skip login UI
+    if (inviteToken) {
+      try {
+        await cloudAcceptInvite(inviteToken);
+        const url = new URL(location.href); url.searchParams.delete('invite');
+        history.replaceState({}, '', url.toString());
+      } catch (e) { console.warn('Could not accept invite:', e.message); }
+    }
+    await cloudPullAllSaves();
+    cloudSubscribeRealtime();
+    return true;
+  }
+  return false; // not signed in
+}
+
+/* ---------- SIGN-IN UI: shown when cloud is enabled and no user signed in ---------- */
+function renderSignInScreen() {
+  const root = $('#app');
+  root.innerHTML = `
+    <div class="signin-screen">
+      <div class="signin-card">
+        <div class="signin-head">
+          <h1 class="signin-title">Sign in to <span class="accent">P1</span></h1>
+          <p class="signin-sub">Cloud sync · multi-device · collaborate with friends</p>
+        </div>
+        <form id="signin-form" class="signin-form">
+          <div class="field">
+            <label>Email</label>
+            <input type="email" name="email" required autocomplete="email" placeholder="you@example.com">
+          </div>
+          <div class="field">
+            <label>Password <span class="field-help-inline">(min 6 characters)</span></label>
+            <input type="password" name="password" required autocomplete="current-password" minlength="6">
+          </div>
+          <div class="signin-actions">
+            <button type="submit" class="btn btn-primary" data-act="signin">SIGN IN</button>
+            <button type="button" class="btn btn-ghost" data-act="signup">CREATE ACCOUNT</button>
+          </div>
+          <div class="signin-divider">or</div>
+          <button type="button" class="btn btn-ghost btn-full" data-act="magic">✦ EMAIL ME A MAGIC LINK</button>
+          <button type="button" class="btn btn-ghost btn-full" data-act="google">G · CONTINUE WITH GOOGLE</button>
+          <div class="signin-msg" id="signin-msg"></div>
+        </form>
+        <div class="signin-foot">
+          <small>By signing in you agree to keep your fictional motorsport universe to yourself.</small>
+        </div>
+      </div>
+    </div>`;
+
+  // Clear topbar/tabs so login is the full focus
+  $('#topbar-selectors').innerHTML = '';
+  $('#topbar-actions').innerHTML = '';
+  $('#tabs').innerHTML = '';
+
+  const msg = $('#signin-msg');
+  const setMsg = (text, tone = 'info') => { msg.textContent = text; msg.className = `signin-msg tone-${tone}`; };
+
+  const form = $('#signin-form');
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const fd = new FormData(form);
+    setMsg('Signing in…', 'info');
+    try { await cloudSignIn(fd.get('email'), fd.get('password')); }
+    catch (err) { setMsg(err.message, 'error'); }
+  });
+  $('[data-act="signup"]').addEventListener('click', async () => {
+    const fd = new FormData(form);
+    if (!fd.get('email') || !fd.get('password')) { setMsg('Enter email + password first.', 'error'); return; }
+    setMsg('Creating account…', 'info');
+    try {
+      await cloudSignUp(fd.get('email'), fd.get('password'));
+      setMsg('Account created. Check your email to confirm — then sign in.', 'success');
+    } catch (err) { setMsg(err.message, 'error'); }
+  });
+  $('[data-act="magic"]').addEventListener('click', async () => {
+    const fd = new FormData(form);
+    if (!fd.get('email')) { setMsg('Enter your email first.', 'error'); return; }
+    setMsg('Sending magic link…', 'info');
+    try { await cloudMagicLink(fd.get('email')); setMsg('Magic link sent — check your inbox.', 'success'); }
+    catch (err) { setMsg(err.message, 'error'); }
+  });
+  $('[data-act="google"]').addEventListener('click', async () => {
+    try { await cloudGoogleSignIn(); }
+    catch (err) { setMsg(err.message, 'error'); }
+  });
+}
+/* =====================================================
+   ▲ END SUPABASE CLOUD LAYER ▲
+   ===================================================== */
+
 /* ---------- constants ---------- */
 const STORAGE_KEY = 'p1_season_creator_v2';
 const LEGACY_KEYS = ['apex_f1_creator_v1']; // migrate from old saves
@@ -499,6 +979,8 @@ function saveState() {
     state.saves[state.activeSaveId] && (state.saves[state.activeSaveId].updatedAt = Date.now());
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   } catch (e) { console.warn('Save failed', e); }
+  // Mirror to cloud in the background (debounced, no-op if cloud disabled or not signed in)
+  scheduleCloudSync();
 }
 
 /* ---------- utils ---------- */
@@ -1109,11 +1591,17 @@ function renderTopbar() {
   // actions
   let act = `<button class="btn btn-ghost btn-sm" id="btn-export">⇣ EXPORT</button>
              <button class="btn btn-ghost btn-sm" id="btn-import">⇡ IMPORT</button>`;
+  if (CLOUD.enabled && currentUser && state.activeSaveId) {
+    act += `<button class="btn btn-ghost btn-sm" id="btn-share" title="Invite a collaborator">✦ SHARE</button>`;
+  }
   if (state.activeSaveId && !state.activeSeasonId) {
     act += `<button class="btn btn-primary btn-sm" id="btn-new-season">+ NEW SEASON</button>`;
   }
   if (!state.activeSaveId) {
     act += `<button class="btn btn-primary btn-sm" id="btn-new-save">+ NEW SAVE</button>`;
+  }
+  if (CLOUD.enabled && currentUser) {
+    act += `<button class="btn btn-ghost btn-sm" id="btn-account" title="${esc(currentUser.email)}">${esc(currentUser.email.split('@')[0])} ▾</button>`;
   }
   actions.innerHTML = act;
 
@@ -1121,6 +1609,8 @@ function renderTopbar() {
   $('#btn-import') && ($('#btn-import').onclick = importData);
   $('#btn-new-save') && ($('#btn-new-save').onclick = openNewSaveModal);
   $('#btn-new-season') && ($('#btn-new-season').onclick = openNewSeasonModal);
+  $('#btn-share') && ($('#btn-share').onclick = openShareModal);
+  $('#btn-account') && ($('#btn-account').onclick = openAccountModal);
 }
 
 /* ---------- render: tabs ---------- */
@@ -3701,6 +4191,82 @@ function openRecordDetail(catId, recs) {
 }
 
 /* ---------- modals: new save / season / rename ---------- */
+
+/* ---------- modal: share (collaboration invite) ---------- */
+function openShareModal() {
+  if (!state.activeSaveId) return;
+  const save = state.saves[state.activeSaveId];
+  const members = save?._members || [];
+  const isOwner = members.some(m => m.user_id === currentUser?.id && m.role === 'owner');
+
+  modal({
+    title: `<span class="accent">Share</span> ${esc(save.name)}`,
+    body: `
+      <div class="field-help" style="margin-bottom:18px">
+        Invite a friend to collaborate on this save. They'll have ${isOwner ? 'editor' : 'the same'} access — see all seasons, edit drivers, enter results in real time.
+      </div>
+      <div class="share-link-row" id="share-link-row" style="display:none">
+        <label>Share this link with your collaborator:</label>
+        <div class="share-link-box">
+          <input type="text" id="share-link-input" readonly>
+          <button class="btn btn-primary btn-sm" id="share-copy">COPY</button>
+        </div>
+        <div class="field-help">The link expires in 7 days. Anyone signed in who opens it joins this save.</div>
+      </div>
+      <div class="members-list">
+        <div class="members-head">CURRENT MEMBERS · ${members.length}</div>
+        ${members.map(m => `<div class="member-row"><span class="member-role">${esc(m.role)}</span> <span class="member-id">${m.user_id === currentUser?.id ? 'you' : m.user_id.slice(0,8) + '…'}</span></div>`).join('')}
+      </div>`,
+    footer: `<button class="btn btn-ghost" data-act="cancel">Done</button>${isOwner ? '<button class="btn btn-primary" data-act="gen">✦ GENERATE INVITE LINK</button>' : ''}`,
+    onMount: (root, close) => {
+      $('[data-act="cancel"]', root).onclick = close;
+      const gen = $('[data-act="gen"]', root);
+      if (gen) gen.onclick = async () => {
+        try {
+          gen.disabled = true; gen.textContent = 'Generating…';
+          const url = await cloudInvite(state.activeSaveId, 'editor');
+          $('#share-link-row', root).style.display = 'block';
+          const inp = $('#share-link-input', root);
+          inp.value = url;
+          inp.select();
+          $('#share-copy', root).onclick = async () => {
+            try { await navigator.clipboard.writeText(url); toast('Link copied', 'success'); }
+            catch { inp.select(); document.execCommand('copy'); toast('Link copied', 'success'); }
+          };
+          gen.style.display = 'none';
+        } catch (err) {
+          toast('Could not generate link: ' + err.message, 'error');
+          gen.disabled = false; gen.textContent = '✦ GENERATE INVITE LINK';
+        }
+      };
+    },
+  });
+}
+
+/* ---------- modal: account / sign out ---------- */
+function openAccountModal() {
+  modal({
+    title: `<span class="accent">Account</span>`,
+    body: `
+      <div class="account-info">
+        <div class="account-row"><span class="lbl">Signed in as</span><span class="val">${esc(currentUser?.email || '—')}</span></div>
+        <div class="account-row"><span class="lbl">User ID</span><span class="val mono">${esc(currentUser?.id || '—')}</span></div>
+        <div class="account-row"><span class="lbl">Cloud sync</span><span class="val accent">● ACTIVE</span></div>
+      </div>
+      <div class="field-help" style="margin-top:18px">
+        Your saves sync automatically across every device you sign in on. Signing out clears local cached data but your cloud saves stay intact.
+      </div>`,
+    footer: `<button class="btn btn-ghost" data-act="cancel">Close</button><button class="btn btn-ghost" data-act="signout" style="color:var(--red)">SIGN OUT</button>`,
+    onMount: (root, close) => {
+      $('[data-act="cancel"]', root).onclick = close;
+      $('[data-act="signout"]', root).onclick = async () => {
+        if (!confirm('Sign out of P1?')) return;
+        await cloudSignOut();
+      };
+    },
+  });
+}
+
 function openNewSaveModal() {
   modal({
     title: `<span class="accent">New</span> Save File`,
@@ -4924,7 +5490,18 @@ function renderAll() {
 }
 
 /* ---------- init ---------- */
-renderAll();
+(async () => {
+  if (CLOUD.enabled) {
+    const signedIn = await cloudInit();
+    if (!signedIn) {
+      // Build the shell first so signin screen can target #app
+      renderTopbar(); renderTabs();
+      renderSignInScreen();
+      return;
+    }
+  }
+  renderAll();
+})();
 
 // First-run friendly: if no saves at all and we're in 'home' view, leave hero visible.
 // If saves exist but user closed without active selection, that's fine.
