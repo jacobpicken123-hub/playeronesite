@@ -204,6 +204,8 @@ async function cloudPullAllSaves() {
 */
 async function cloudPushActive() {
   if (!CLOUD.enabled || !currentUser) return;
+  // Upgrade any legacy short IDs to proper UUIDs before pushing — Supabase rejects non-UUID strings
+  upgradeIdsToUuids();
   const save = state.saves[state.activeSaveId];
   if (!save) return;
 
@@ -393,7 +395,9 @@ async function cloudInit() {
   currentUser = session?.user || null;
 
   if (currentUser) {
-    // Already signed in — accept invite if present, pull, subscribe, return true to skip login UI
+    // Already signed in — upgrade any legacy short IDs in localStorage to UUIDs,
+    // then accept invite if present, pull, subscribe, return true to skip login UI
+    upgradeIdsToUuids();
     if (inviteToken) {
       try {
         await cloudAcceptInvite(inviteToken);
@@ -984,7 +988,81 @@ function saveState() {
 }
 
 /* ---------- utils ---------- */
-const uid = () => Math.random().toString(36).slice(2, 10);
+// uid() — generates a proper RFC 4122 UUID v4 (36 chars with dashes).
+// Postgres' `uuid` column type is strict and rejects short random strings,
+// so we use crypto.randomUUID() when available, falling back to a hand-rolled
+// v4 generator for very old browsers.
+const uid = () => {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
+  // Fallback for legacy environments
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = Math.random() * 16 | 0;
+    const v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
+};
+
+// Check whether a string is a valid UUID. Used to detect legacy short IDs that
+// need upgrading before they can be pushed to Supabase.
+const isUuid = (s) => typeof s === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
+
+// Walk the entire state and upgrade any short-id entities to UUIDs. We build a
+// map of old → new IDs as we go, then patch every cross-reference (teamId on
+// drivers, driverId on results, pole/FL on races, etc.) so the data still hangs
+// together after the upgrade. Called from saveState() before each cloud sync.
+function upgradeIdsToUuids() {
+  let changed = false;
+  for (const save of Object.values(state.saves || {})) {
+    if (!isUuid(save.id)) {
+      const newId = uid();
+      // Update the keying as well so state.saves[id] lookups keep working
+      delete state.saves[save.id];
+      save.id = newId;
+      state.saves[newId] = save;
+      if (state.activeSaveId && !isUuid(state.activeSaveId)) state.activeSaveId = newId;
+      changed = true;
+    }
+    for (const season of Object.values(save.seasons || {})) {
+      // Build the old-to-new map for this season's entities
+      const teamMap = {};
+      const driverMap = {};
+      const raceMap = {};
+      if (!isUuid(season.id)) {
+        const newId = uid();
+        delete save.seasons[season.id];
+        season.id = newId;
+        save.seasons[newId] = season;
+        if (state.activeSeasonId && !isUuid(state.activeSeasonId)) state.activeSeasonId = newId;
+        changed = true;
+      }
+      (season.teams || []).forEach(t => {
+        if (!isUuid(t.id)) { const n = uid(); teamMap[t.id] = n; t.id = n; changed = true; }
+      });
+      (season.drivers || []).forEach(d => {
+        if (!isUuid(d.id)) { const n = uid(); driverMap[d.id] = n; d.id = n; changed = true; }
+        // Patch teamId reference using the team map
+        if (d.teamId && teamMap[d.teamId]) d.teamId = teamMap[d.teamId];
+      });
+      (season.races || []).forEach(r => {
+        if (!isUuid(r.id)) { const n = uid(); raceMap[r.id] = n; r.id = n; changed = true; }
+        // Patch pole/FL driver references
+        if (r.poleDriverId && driverMap[r.poleDriverId]) r.poleDriverId = driverMap[r.poleDriverId];
+        if (r.fastestLapDriverId && driverMap[r.fastestLapDriverId]) r.fastestLapDriverId = driverMap[r.fastestLapDriverId];
+        // Patch driverId in every result row
+        (r.results || []).forEach(res => {
+          if (res.driverId && driverMap[res.driverId]) res.driverId = driverMap[res.driverId];
+        });
+        (r.sprintResults || []).forEach(res => {
+          if (res.driverId && driverMap[res.driverId]) res.driverId = driverMap[res.driverId];
+        });
+      });
+    }
+  }
+  if (changed) {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch {}
+  }
+  return changed;
+}
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
