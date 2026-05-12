@@ -6049,6 +6049,8 @@ if (!state.presetOverrides.tracks) state.presetOverrides.tracks = {};
 // Each: { id, name, savedAt, drivers: [{ name, number, country, photo, era }], note }
 if (!state.driverClasses) state.driverClasses = [];
 if (!state.teamClasses)   state.teamClasses   = [];
+// Calendar presets — saved race calendars, available across all saves (like roster bundles).
+if (!state.calendarPresets) state.calendarPresets = [];
 // FEATURE #8: Season templates — full snapshots of a season (calendar + teams + drivers, no results)
 if (!state.seasonTemplates) state.seasonTemplates = [];
 let standingsTab = 'drivers';
@@ -6395,7 +6397,15 @@ function renameSave(id, newName) {
   saveState();
 }
 
-function createSeason({ year, name, pointsSystemId, withPresetTeams, withPresetCalendar, withPresetDrivers }) {
+function createSeason({
+  year, name, pointsSystemId,
+  // Legacy boolean API (still supported for the F1 importer + old call sites)
+  withPresetTeams, withPresetCalendar, withPresetDrivers,
+  // New API — pass IDs to pick specific saved bundles, "default" for built-in, "" for none
+  teamBundleId,     // '' | 'default' | <saved-team-class-id>
+  driverBundleId,   // '' | 'default' | <saved-driver-class-id>
+  calendarPresetId, // '' | 'default' | <saved-calendar-preset-id>
+}) {
   const save = activeSave(); if (!save) return;
   const id = uid();
   const season = {
@@ -6412,12 +6422,39 @@ function createSeason({ year, name, pointsSystemId, withPresetTeams, withPresetC
     teams: [],
     races: [],
   };
-  if (withPresetTeams) {
+
+  // ─── TEAMS ──────────────────────────────────────────────
+  // New API takes precedence. If teamBundleId is set, use it; else fall back to the bool.
+  const teamChoice = teamBundleId !== undefined
+    ? teamBundleId
+    : (withPresetTeams ? 'default' : '');
+  if (teamChoice === 'default') {
     PRESET_TEAMS.forEach(t => {
       season.teams.push({ id: uid(), name: t.name, short: t.short, color: t.color, country: t.country });
     });
+  } else if (teamChoice) {
+    const bundle = (state.teamClasses || []).find(c => c.id === teamChoice);
+    if (bundle) {
+      bundle.teams.forEach(t => {
+        season.teams.push({
+          id: uid(),
+          name: t.name,
+          short: t.short || (t.name || '').slice(0, 3).toUpperCase(),
+          country: t.country || '',
+          color: t.color || '#666',
+          logo: t.logo || '',
+          dsq: false,
+        });
+      });
+    }
   }
-  if (withPresetDrivers && season.teams.length) {
+
+  // ─── DRIVERS ────────────────────────────────────────────
+  const driverChoice = driverBundleId !== undefined
+    ? driverBundleId
+    : (withPresetDrivers && withPresetTeams ? 'default' : '');
+  if (driverChoice === 'default' && season.teams.length) {
+    // Sample 20 drivers — two per team
     let n = 2;
     season.teams.forEach((team, ti) => {
       for (let i = 0; i < 2; i++) {
@@ -6432,8 +6469,28 @@ function createSeason({ year, name, pointsSystemId, withPresetTeams, withPresetC
         });
       }
     });
+  } else if (driverChoice) {
+    const bundle = (state.driverClasses || []).find(c => c.id === driverChoice);
+    if (bundle) {
+      bundle.drivers.forEach(d => {
+        season.drivers.push({
+          id: uid(),
+          name: d.name,
+          number: d.number,
+          country: d.country || '',
+          photo: d.photo || '',
+          teamId: null, // bundle has no team mapping
+          dsq: false,
+        });
+      });
+    }
   }
-  if (withPresetCalendar) {
+
+  // ─── CALENDAR ───────────────────────────────────────────
+  const calChoice = calendarPresetId !== undefined
+    ? calendarPresetId
+    : (withPresetCalendar ? 'default' : '');
+  if (calChoice === 'default') {
     PRESET_CALENDAR.forEach((r, i) => {
       season.races.push({
         id: uid(),
@@ -6444,13 +6501,35 @@ function createSeason({ year, name, pointsSystemId, withPresetTeams, withPresetC
         sprint: !!r.sprint,
         date: '',
         completed: false,
-        results: [],            // [{driverId, position, dnf}]
+        results: [],
         sprintResults: [],
         fastestLapDriverId: null,
         poleDriverId: null,
       });
     });
+  } else if (calChoice) {
+    const preset = (state.calendarPresets || []).find(c => c.id === calChoice);
+    if (preset) {
+      preset.races.forEach((r, i) => {
+        season.races.push({
+          id: uid(),
+          round: i + 1,
+          name: r.name,
+          circuit: r.circuit,
+          country: r.country,
+          flagImage: r.flagImage || '',
+          sprint: !!r.sprint,
+          date: '',
+          completed: false,
+          results: [],
+          sprintResults: [],
+          fastestLapDriverId: null,
+          poleDriverId: null,
+        });
+      });
+    }
   }
+
   save.seasons[id] = season;
   state.activeSeasonId = id;
   state.view = 'dashboard';
@@ -7826,6 +7905,7 @@ function renderCalendar() {
       <div style="flex:1"></div>
       <span class="f1-progress-meta">${completedCount}/${races.length} RUN</span>
       ${!races.length ? '<button class="btn btn-ghost" id="seed-cal" style="margin-left:8px">LOAD CLASSIC CALENDAR</button>' : ''}
+      <button class="btn btn-ghost" id="open-cal-presets" style="margin-left:8px">★ CALENDAR PRESETS</button>
       <button class="btn btn-ghost" id="search-track-presets" style="margin-left:8px">⌕ TRACK PRESETS</button>
       <button class="btn btn-primary" id="add-race" style="margin-left:8px">+ NEW ROUND</button>
     </div>
@@ -7847,6 +7927,7 @@ function renderCalendar() {
     $('#seed-cal', wrap)?.addEventListener('click', seed);
     $('#empty-seed-cal', wrap)?.addEventListener('click', seed);
     $('#search-track-presets', wrap)?.addEventListener('click', openTrackPresetSearch);
+    $('#open-cal-presets', wrap)?.addEventListener('click', openCalendarPresets);
     $$('[data-race]', wrap).forEach(row => row.onclick = (e) => {
       if (e.target.closest('[data-edit-race]') || e.target.closest('[data-del-race]')) return;
       state.view = 'race'; state.raceId = row.dataset.race; renderAll();
@@ -9938,6 +10019,10 @@ function openNewSeasonModal() {
   if (!state.activeSaveId) {
     return toast('Open a save first', 'warn');
   }
+  const teamBundles = state.teamClasses || [];
+  const driverBundles = state.driverClasses || [];
+  const calPresets = state.calendarPresets || [];
+
   modal({
     title: `<span class="accent">New</span> Season`,
     body: `
@@ -9954,18 +10039,37 @@ function openNewSeasonModal() {
       </div>
       <div class="divider" style="margin:16px 0"></div>
       <div style="font-family:var(--f-mono);font-size:10px;letter-spacing:0.2em;color:var(--text-dim);text-transform:uppercase;margin-bottom:12px">PRELOADS</div>
-      <label style="display:flex;align-items:center;gap:8px;padding:10px;border:1px solid var(--border);border-radius:var(--radius);margin-bottom:8px;cursor:pointer">
-        <input type="checkbox" id="ns-teams" checked style="width:16px;height:16px;accent-color:var(--red)">
-        <div><div style="font-weight:600">Seed 10 standard teams</div><div style="font-family:var(--f-mono);font-size:10px;color:var(--text-muted)">Editable fictional grid</div></div>
-      </label>
-      <label style="display:flex;align-items:center;gap:8px;padding:10px;border:1px solid var(--border);border-radius:var(--radius);margin-bottom:8px;cursor:pointer">
-        <input type="checkbox" id="ns-drivers" checked style="width:16px;height:16px;accent-color:var(--red)">
-        <div><div style="font-weight:600">Seed 20 sample drivers</div><div style="font-family:var(--f-mono);font-size:10px;color:var(--text-muted)">Two per team — rename freely or replace from presets</div></div>
-      </label>
-      <label style="display:flex;align-items:center;gap:8px;padding:10px;border:1px solid var(--border);border-radius:var(--radius);cursor:pointer">
-        <input type="checkbox" id="ns-cal" checked style="width:16px;height:16px;accent-color:var(--red)">
-        <div><div style="font-weight:600">Load 22-round classic calendar</div><div style="font-family:var(--f-mono);font-size:10px;color:var(--text-muted)">Suzuka, Monaco, Spa, Monza & more</div></div>
-      </label>
+
+      <div class="field">
+        <label>Teams</label>
+        <select id="ns-team-bundle">
+          <option value="default" selected>Default — 10 standard fictional teams</option>
+          <option value="">— None — empty paddock</option>
+          ${teamBundles.length ? `<optgroup label="Your saved bundles">${teamBundles.map(b => `<option value="${esc(b.id)}">${esc(b.name)} · ${b.teams.length} team${b.teams.length === 1 ? '' : 's'}</option>`).join('')}</optgroup>` : ''}
+        </select>
+        <span class="field-help">${teamBundles.length ? `${teamBundles.length} saved bundle${teamBundles.length === 1 ? '' : 's'} available.` : 'Save a team bundle from the Constructors tab to reuse it here.'}</span>
+      </div>
+
+      <div class="field">
+        <label>Drivers</label>
+        <select id="ns-driver-bundle">
+          <option value="default" selected>Default — 20 sample drivers (paired to default teams)</option>
+          <option value="">— None — empty grid</option>
+          ${driverBundles.length ? `<optgroup label="Your saved bundles">${driverBundles.map(b => `<option value="${esc(b.id)}">${esc(b.name)} · ${b.drivers.length} driver${b.drivers.length === 1 ? '' : 's'}</option>`).join('')}</optgroup>` : ''}
+        </select>
+        <span class="field-help">${driverBundles.length ? `${driverBundles.length} saved bundle${driverBundles.length === 1 ? '' : 's'} available. Saved drivers come without team assignments — sign them after.` : 'Save a driver bundle from the Drivers tab to reuse it here.'}</span>
+      </div>
+
+      <div class="field">
+        <label>Calendar</label>
+        <select id="ns-calendar">
+          <option value="default" selected>Default — 22-round classic calendar</option>
+          <option value="">— None — empty calendar</option>
+          ${calPresets.length ? `<optgroup label="Your saved presets">${calPresets.map(p => `<option value="${esc(p.id)}">${esc(p.name)} · ${p.races.length} round${p.races.length === 1 ? '' : 's'}</option>`).join('')}</optgroup>` : ''}
+        </select>
+        <span class="field-help">${calPresets.length ? `${calPresets.length} saved preset${calPresets.length === 1 ? '' : 's'} available.` : 'Save a calendar preset from the Calendar tab to reuse it here.'}</span>
+      </div>
+
       <div class="divider" style="margin:16px 0"></div>
       <button class="btn btn-ghost" id="ns-import-real" style="width:100%;display:flex;flex-direction:column;gap:2px;padding:14px;align-items:flex-start;text-align:left">
         <div style="font-weight:700;font-family:var(--f-display);font-size:14px;letter-spacing:0.02em">⇡ IMPORT REAL SEASON FROM F1.COM PASTE</div>
@@ -9977,10 +10081,10 @@ function openNewSeasonModal() {
         const year = $('#ns-year', root).value;
         const name = $('#ns-name', root).value;
         const pointsSystemId = $('#ns-points', root).value;
-        const teams = $('#ns-teams', root).checked;
-        const drivers = $('#ns-drivers', root).checked;
-        const cal = $('#ns-cal', root).checked;
-        createSeason({ year, name, pointsSystemId, withPresetTeams: teams, withPresetDrivers: teams && drivers, withPresetCalendar: cal });
+        const teamBundleId = $('#ns-team-bundle', root).value;
+        const driverBundleId = $('#ns-driver-bundle', root).value;
+        const calendarPresetId = $('#ns-calendar', root).value;
+        createSeason({ year, name, pointsSystemId, teamBundleId, driverBundleId, calendarPresetId });
         close(); renderAll(); toast('Season opened', 'success');
       };
       $('[data-act="ok"]', root).onclick = submit;
@@ -11267,6 +11371,73 @@ function loadTeamClass(cls, mode = 'add') {
 }
 
 /* =====================================================
+   CALENDAR PRESETS — snapshot a full season's race calendar, reload anywhere.
+   Saves circuit info, country, sprint-weekend flag, custom flag image, and
+   the round order. Drops dates + completion state — these are season-specific.
+   ===================================================== */
+function saveCalendarPreset(name, note = '') {
+  const s = activeSeason(); if (!s) return null;
+  const snapshot = (s.races || [])
+    .slice()
+    .sort((a, b) => (a.round || 0) - (b.round || 0))
+    .map(r => ({
+      name: r.name,
+      circuit: r.circuit || '',
+      country: r.country || '',
+      flagImage: r.flagImage || '',
+      sprint: !!r.sprint,
+    }));
+  const preset = {
+    id: uid(),
+    name: (name || '').trim() || `Calendar · ${new Date().toLocaleDateString()}`,
+    savedAt: Date.now(),
+    races: snapshot,
+    note: (note || '').trim(),
+  };
+  state.calendarPresets = state.calendarPresets || [];
+  state.calendarPresets.unshift(preset);
+  saveState();
+  return preset;
+}
+
+function deleteCalendarPreset(id) {
+  state.calendarPresets = (state.calendarPresets || []).filter(c => c.id !== id);
+  saveState();
+}
+
+function loadCalendarPreset(preset, mode = 'replace') {
+  // `mode = 'replace'` wipes existing races (preserving results would be unsafe
+  // since round numbers and driver IDs may not line up). `mode = 'append'` adds
+  // at the end with continued round numbers.
+  const s = activeSeason(); if (!s) return 0;
+  if (mode === 'replace') {
+    s.races = [];
+  }
+  const startRound = (s.races.length ? Math.max(...s.races.map(r => r.round || 0)) : 0) + 1;
+  let added = 0;
+  preset.races.forEach((r, i) => {
+    s.races.push({
+      id: uid(),
+      round: startRound + i,
+      name: r.name,
+      circuit: r.circuit,
+      country: r.country,
+      flagImage: r.flagImage || '',
+      sprint: !!r.sprint,
+      date: '',
+      completed: false,
+      results: [],
+      sprintResults: [],
+      fastestLapDriverId: null,
+      poleDriverId: null,
+    });
+    added++;
+  });
+  saveState();
+  return added;
+}
+
+/* =====================================================
    FEATURE #5: BULK ROSTER IMPORT
    Parses pasted text into drivers in one go. Supports several common formats:
      - "Lewis Hamilton GBR"
@@ -11975,7 +12146,132 @@ function openRosterClasses(kind) {
   });
 }
 
-/* season settings (change points system) */
+/* =====================================================
+   CALENDAR PRESETS MODAL — same shape as roster bundles
+   Save the current season's race calendar as a named preset,
+   then reload it into any season (REPLACE wipes existing races,
+   APPEND adds at the end with continued round numbering).
+   ===================================================== */
+function openCalendarPresets() {
+  const season = activeSeason();
+  const list = () => state.calendarPresets || [];
+  const currentCount = season ? (season.races || []).length : 0;
+
+  modal({
+    title: `<span class="accent">Calendar</span> Presets`,
+    size: 'wide',
+    body: `
+      <div class="roster-help" style="margin-bottom:18px;padding:12px 14px;background:var(--bg-elev);border:1px solid var(--border-dim);border-radius:var(--radius);font-size:13px;color:var(--text-soft);line-height:1.55">
+        Save the current race calendar as a named preset to reload it into any season later. Saved calendars carry circuit info, country flags, sprint-weekend marks, and round order. Dates and completion state are not stored (those are per-season).
+      </div>
+      <div class="roster-save-row" style="display:flex;gap:10px;align-items:flex-end;margin-bottom:24px;padding-bottom:24px;border-bottom:1px solid var(--border-dim)">
+        <div class="field" style="flex:1;margin:0">
+          <label>Preset name</label>
+          <input type="text" id="cp-name" placeholder="e.g. 2024 World Championship" maxlength="60">
+        </div>
+        <div class="field" style="flex:1;margin:0">
+          <label>Note (optional)</label>
+          <input type="text" id="cp-note" placeholder="e.g. 24-round modern calendar" maxlength="120">
+        </div>
+        <button class="btn btn-primary" id="cp-save" ${!season || currentCount === 0 ? 'disabled' : ''}>
+          ★ SAVE ${currentCount} ROUND${currentCount === 1 ? '' : 'S'}
+        </button>
+      </div>
+      <div class="rc-list-head" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;font-family:var(--f-mono);font-size:10px;letter-spacing:0.18em;color:var(--text-muted);text-transform:uppercase">
+        <span>Saved presets</span>
+        <span id="cp-count">${list().length} preset${list().length === 1 ? '' : 's'}</span>
+      </div>
+      <div id="cp-list"></div>
+      ${!season ? `<div class="field-help" style="margin-top:14px;color:var(--sec-yellow,#f59e0b)">Open a season to save its calendar as a preset.</div>` : ''}
+    `,
+    footer: `<button class="btn btn-ghost" data-act="cancel">Done</button>`,
+    onMount: (root, close) => {
+      const listEl = $('#cp-list', root);
+      const countEl = $('#cp-count', root);
+
+      const renderList = () => {
+        const all = list();
+        countEl.textContent = `${all.length} preset${all.length === 1 ? '' : 's'}`;
+        if (!all.length) {
+          listEl.innerHTML = `<div class="empty" style="padding:36px 20px"><div class="empty-headline">NO PRESETS YET</div><div class="empty-sub">Save the current calendar above to create your first one.</div></div>`;
+          return;
+        }
+        listEl.innerHTML = all.map(c => {
+          const count = c.races.length;
+          const sprints = c.races.filter(r => r.sprint).length;
+          const dateStr = new Date(c.savedAt).toLocaleDateString();
+          // Preview chips — first few rounds with flag/country
+          const previewChips = c.races.slice(0, 8).map(r => {
+            const code = (r.country || '???').slice(0, 3).toUpperCase();
+            return `<span class="rc-chip" style="border-color:var(--border-hi);color:var(--text-dim);font-size:8px;letter-spacing:0.06em">${esc(code)}</span>`;
+          }).join('');
+          const overflow = c.races.length > 8 ? `<span class="rc-chip rc-more">+${c.races.length - 8}</span>` : '';
+          return `
+            <div class="rc-row" data-id="${c.id}">
+              <div class="rc-head">
+                <div class="rc-name">${esc(c.name)}</div>
+                <div class="rc-meta">${count} round${count === 1 ? '' : 's'} · ${sprints} sprint${sprints === 1 ? '' : 's'} · saved ${dateStr}</div>
+                ${c.note ? `<div class="rc-note">${esc(c.note)}</div>` : ''}
+                <div class="rc-chips" style="margin-top:8px">${previewChips}${overflow}</div>
+              </div>
+              <div class="rc-actions">
+                ${season ? `
+                  <button class="btn btn-ghost btn-sm" data-act="append">+ APPEND</button>
+                  <button class="btn btn-primary btn-sm" data-act="replace">⤴ REPLACE</button>
+                ` : ''}
+                <button class="btn btn-ghost btn-sm" data-act="del" style="color:var(--red)">× DELETE</button>
+              </div>
+            </div>`;
+        }).join('');
+
+        $$('[data-act="append"]', listEl).forEach(b => {
+          b.onclick = () => {
+            const id = b.closest('.rc-row').dataset.id;
+            const preset = list().find(p => p.id === id); if (!preset) return;
+            const added = loadCalendarPreset(preset, 'append');
+            toast(`Added ${added} round${added === 1 ? '' : 's'}`, 'success');
+            close();
+            renderMain();
+          };
+        });
+        $$('[data-act="replace"]', listEl).forEach(b => {
+          b.onclick = () => {
+            const id = b.closest('.rc-row').dataset.id;
+            const preset = list().find(p => p.id === id); if (!preset) return;
+            if (season.races?.length && !confirm(`Replace ${season.races.length} existing race${season.races.length === 1 ? '' : 's'} with ${preset.races.length} new round${preset.races.length === 1 ? '' : 's'}? Any unsaved results will be lost.`)) return;
+            const added = loadCalendarPreset(preset, 'replace');
+            toast(`Loaded ${added} round${added === 1 ? '' : 's'}`, 'success');
+            close();
+            renderMain();
+          };
+        });
+        $$('[data-act="del"]', listEl).forEach(b => {
+          b.onclick = () => {
+            const id = b.closest('.rc-row').dataset.id;
+            if (!confirm('Delete this preset? Saves using it won\'t be affected.')) return;
+            deleteCalendarPreset(id);
+            renderList();
+            toast('Preset deleted', 'success');
+          };
+        });
+      };
+
+      $('#cp-save', root)?.addEventListener('click', () => {
+        const name = $('#cp-name', root).value;
+        const note = $('#cp-note', root).value;
+        const preset = saveCalendarPreset(name, note);
+        if (preset) {
+          toast(`Saved "${preset.name}"`, 'success');
+          $('#cp-name', root).value = '';
+          $('#cp-note', root).value = '';
+          renderList();
+        }
+      });
+      $('[data-act="cancel"]', root).onclick = close;
+      renderList();
+    }
+  });
+}
 /* =====================================================
    IMPORT FROM PASTE
    Parses tabular text copied from results pages and matches
