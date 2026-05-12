@@ -5288,40 +5288,170 @@ const F1_TEAM_NORMALIZER = {
   'haas f1 team':   { name: 'Haas',                short: 'HAS', color: '#B6BABD' },
 };
 
-// Parse one result cell. Returns { position, dnf, dsq, dns, pole } or null if unreadable.
+// Parse one result cell. Returns { position, dnf, dsq, dns, pole, sprintPoints } or null if unreadable.
+// Real F1.com paste examples this must handle:
+//   "1"     → P1
+//   "1P"    → P1 + pole
+//   "26"    → P2 + 6 sprint points (NOT P26 — F1 doesn't have 26 finishers)
+//   "1P8"   → P1 + pole + 8 sprint points
+//   "4P2"   → P4 + pole + 2 sprint points
+//   "DNF"   → did not finish
+//   "DNF4"  → did not finish + 4 sprint points (rare)
+//   "DSQ7"  → disqualified + 7 sprint points
+//   "DSQ"   → disqualified
+//   "DNS"   → did not start
 function parseImportResultCell(raw) {
   if (raw == null) return null;
-  const s = String(raw).trim().toUpperCase();
-  if (!s || s === '-' || s === '—') return null;
-  // Status codes — take precedence
-  if (s === 'DNF' || s === 'RET' || s.startsWith('DNF')) return { dnf: true };
-  if (s === 'DSQ' || s.startsWith('DSQ')) return { dsq: true };
-  if (s === 'DNS' || s.startsWith('DNS')) return { dns: true };
-  if (s === 'NC' || s === 'EX') return { dnf: true }; // "Not Classified" / "Excluded" → treat as DNF
-  // Otherwise: parse the leading position number, optional P (pole).
-  // Trailing digits (sprint pos / FL indicator) are noted but not separately stored in V1.
-  const m = s.match(/^(\d{1,2})(P)?/);
+  // Normalize subscript characters to regular digits.
+  // Some F1.com pastes use Unicode subscripts (₀-₉) for sprint points.
+  let s = String(raw).trim();
+  s = s.replace(/[₀₁₂₃₄₅₆₇₈₉]/g, c => '₀₁₂₃₄₅₆₇₈₉'.indexOf(c).toString());
+  s = s.toUpperCase();
+  if (!s || s === '-' || s === '—' || s === '–') return null;
+
+  // Status codes — may be followed by sprint subscript digits ("DNF4" = DNF + 4 sprint pts)
+  const statusMatch = s.match(/^(DNF|RET|DSQ|EX|DNS|NC)(\d+)?$/);
+  if (statusMatch) {
+    const code = statusMatch[1];
+    const sprintPts = statusMatch[2] ? parseInt(statusMatch[2], 10) : 0;
+    const out = { sprintPoints: sprintPts || 0 };
+    if (code === 'DNF' || code === 'RET' || code === 'NC') out.dnf = true;
+    else if (code === 'DSQ' || code === 'EX') out.dsq = true;
+    else if (code === 'DNS') out.dns = true;
+    return out;
+  }
+
+  // Position cell — leading digits + optional P + optional sprint-point subscript digits.
+  // Real F1 finishes are 1-20. Anything above 20 in the leading-digits slot is interpreted
+  // as "1 or 2-digit position", with everything after taken as sprint points.
+  // Pattern: [pos digits, max 2][P]?[sprint digits, optional]
+  const m = s.match(/^(\d{1,2})(P)?(\d+)?$/);
   if (!m) return null;
-  const position = parseInt(m[1], 10);
+  let position = parseInt(m[1], 10);
+  const pole = !!m[2];
+  let sprintPoints = m[3] ? parseInt(m[3], 10) : 0;
+
+  // Heuristic disambiguation:
+  // If position > 20 AND it's exactly 2 digits AND we don't have a P or sprint marker,
+  // it's almost certainly a single-digit position + sprint subscript glued together.
+  // e.g. "26" → P2 + 6, not P26
+  if (position > 20 && m[1].length === 2 && !m[2] && !m[3]) {
+    sprintPoints = position % 10;
+    position = Math.floor(position / 10);
+  }
+
   if (position < 1 || position > 30) return null;
-  return { position, pole: !!m[2] };
+  return { position, pole, sprintPoints };
 }
 
-// Main parser. Takes pasted text, returns a structured preview:
-// { headers: ['BHR','SAU',...], drivers: [{ pos, name, team, points, cells: [resultObj or null] }], errors: [] }
+// Main parser. Real F1.com paste format is BLOCK-based (not tab-separated):
+//   POS\nDRIVER_NAME\n[blank]\nTEAM_NAME\nPOINTS RESULT1 RESULT2 RESULT3 ...
+// where POS is either a digit ("2", "3"...) or a crown emoji (👑 for P1).
+// Returns: { headers?, drivers: [{ pos, name, team, points, cells: [resultObj or null] }], errors: [] }
 function parseImportSeasonPaste(text) {
+  // Normalize whitespace; preserve line breaks
+  const rawLines = text.split(/\r?\n/);
+
+  // First pass: skip leading garbage (any blank lines or "POS DRIVER TEAM PTS BHR SAU..." header).
+  // The real F1.com paste might or might not include the table header. We tolerate both.
+  // We're done with the header section when we hit a line that looks like a POS marker
+  // (a digit, or a crown emoji).
+  const isPosLine = (l) => {
+    const t = l.trim();
+    if (!t) return false;
+    // Crown emoji (P1) — any of the common variants
+    if (/^[👑🏆]+$/u.test(t)) return true;
+    // Plain digit (POS for P2+)
+    if (/^\d{1,2}$/.test(t)) return true;
+    return false;
+  };
+
+  // Find where the driver blocks start
+  let firstDriverIdx = -1;
+  for (let i = 0; i < rawLines.length; i++) {
+    if (isPosLine(rawLines[i])) { firstDriverIdx = i; break; }
+  }
+  if (firstDriverIdx === -1) {
+    return { error: 'Couldn\'t find any driver rows. The paste should start with a position indicator (a digit or crown emoji) followed by the driver name on the next line.' };
+  }
+
+  // Walk the lines and chunk them into driver blocks.
+  // A block is: POS_LINE, NAME_LINE, [optional blank], TEAM_LINE, RESULTS_LINE.
+  // The next block starts at the following POS_LINE.
+  const drivers = [];
+  let i = firstDriverIdx;
+  while (i < rawLines.length) {
+    if (!isPosLine(rawLines[i])) { i++; continue; }
+    const posLine = rawLines[i].trim();
+    // Read forward to gather the block: skip blanks, take next 3 non-blank lines
+    const blockLines = [];
+    let j = i + 1;
+    while (j < rawLines.length && blockLines.length < 3) {
+      const t = rawLines[j].trim();
+      if (t) blockLines.push(t);
+      j++;
+      // Stop if we hit the next POS_LINE — that's the start of the next driver
+      if (j < rawLines.length && isPosLine(rawLines[j]) && blockLines.length >= 3) break;
+    }
+
+    if (blockLines.length < 3) {
+      // Incomplete trailing block — stop here
+      break;
+    }
+    const [nameLine, teamLine, resultsLine] = blockLines;
+
+    // Parse the results line: first token is total points, rest are race results.
+    const tokens = resultsLine.split(/\s+/).filter(Boolean);
+    if (tokens.length < 1) { i = j; continue; }
+
+    const points = parseInt(tokens[0].replace(/[^\d]/g, ''), 10) || 0;
+    const cellTokens = tokens.slice(1);
+    const cells = cellTokens.map(t => parseImportResultCell(t));
+
+    // Position: crown = 1, otherwise parse digit
+    const pos = posLine.match(/^\d+$/) ? parseInt(posLine, 10) : 1;
+
+    drivers.push({ pos, name: nameLine, team: teamLine, points, cells });
+
+    i = j;
+  }
+
+  if (!drivers.length) {
+    return { error: 'Found POS markers but couldn\'t parse complete driver blocks. Each block needs POS, DRIVER NAME, TEAM NAME, RESULTS LINE.' };
+  }
+
+  // Figure out how many races we have — use the longest result-cell list as the canonical count.
+  const raceCount = drivers.reduce((mx, d) => Math.max(mx, d.cells.length), 0);
+  if (!raceCount) {
+    return { error: 'Found driver blocks but no race result cells. The results line should contain points followed by race results separated by spaces.' };
+  }
+
+  // Build placeholder headers — we don't know race codes from this format.
+  // The user can choose to fill them in or accept generated names like "Race 1", "Race 2"...
+  const headers = Array.from({ length: raceCount }, (_, k) => `R${k + 1}`);
+
+  // Pad any short driver to raceCount with nulls so the matrix is rectangular
+  drivers.forEach(d => {
+    while (d.cells.length < raceCount) d.cells.push(null);
+  });
+
+  return { headers, drivers, errors: [], formatType: 'block' };
+}
+
+// LEGACY: TSV header-based parser (kept around in case some users have it pre-formatted that way).
+// Tries the block parser first, falls back to TSV if the block parser fails AND the text looks
+// like it has a tab-separated header.
+function parseImportSeasonPasteTSV(text) {
   const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
   if (!lines.length) return { error: 'No data pasted' };
 
-  // Find the header line — must contain "POS" and "DRIVER" (in any order). All other lines before are skipped.
   let headerIdx = -1;
   for (let i = 0; i < lines.length; i++) {
     const cells = lines[i].split(/\t+/).map(c => c.trim().toUpperCase());
     if (cells.includes('POS') && cells.includes('DRIVER')) { headerIdx = i; break; }
   }
   if (headerIdx === -1) {
-    // Tolerant fallback: maybe the user pasted without a header. Bail with a friendly hint.
-    return { error: 'Couldn\'t find a header row. The paste must include a row with columns labelled "POS DRIVER TEAM PTS" plus race codes (e.g. BHR SAU AUS...).' };
+    return { error: 'No tab-separated header row found' };
   }
 
   const headerCells = lines[headerIdx].split(/\t+/).map(c => c.trim());
@@ -5332,35 +5462,25 @@ function parseImportSeasonPaste(text) {
   if (drvIdx === -1 || teamIdx === -1) {
     return { error: 'Header row missing DRIVER or TEAM column' };
   }
-  // Everything after PTS is treated as a race code. If PTS is missing, races start after TEAM.
   const racesStart = (ptsIdx !== -1) ? ptsIdx + 1 : teamIdx + 1;
   const raceCodes = headerCells.slice(racesStart).map(c => c.trim().toUpperCase()).filter(Boolean);
-  if (!raceCodes.length) {
-    return { error: 'No race codes found in the header row after PTS' };
-  }
+  if (!raceCodes.length) return { error: 'No race codes after PTS' };
 
-  // Parse driver rows — everything from headerIdx+1 onward until we run out.
   const drivers = [];
-  const errors = [];
   for (let i = headerIdx + 1; i < lines.length; i++) {
     const cells = lines[i].split(/\t+/);
-    if (cells.length < racesStart + 1) continue; // skip stray short rows (totals, etc.)
+    if (cells.length < racesStart + 1) continue;
     const name = (cells[drvIdx] || '').trim();
     const team = (cells[teamIdx] || '').trim();
     if (!name || !team) continue;
     const pos = parseInt((cells[posIdx] || '').trim(), 10) || (drivers.length + 1);
     const points = parseInt((cells[ptsIdx] || '0').replace(/[^\d]/g,''), 10) || 0;
-    const raceResultCells = raceCodes.map((_, ri) => {
-      const raw = (cells[racesStart + ri] || '').trim();
-      return parseImportResultCell(raw);
-    });
+    const raceResultCells = raceCodes.map((_, ri) => parseImportResultCell((cells[racesStart + ri] || '').trim()));
     drivers.push({ pos, name, team, points, cells: raceResultCells });
   }
-  if (!drivers.length) {
-    return { error: 'Found a header but no driver rows below it' };
-  }
+  if (!drivers.length) return { error: 'No driver rows' };
 
-  return { headers: raceCodes, drivers, errors };
+  return { headers: raceCodes, drivers, errors: [], formatType: 'tsv' };
 }
 
 // Build a season from a parsed preview. Returns the new season's id.
@@ -5417,8 +5537,20 @@ function buildSeasonFromImport(parsed, opts) {
     season.drivers.push(driverObj);
   }
 
-  // 3. Build races — one per header code
-  const raceObjs = parsed.headers.map((code, idx) => {
+  // 3. Build races — one per header code (or per raceCodes override)
+  // If opts.raceCodes is supplied, use those instead of parsed.headers.
+  // This is how we let the user paste race codes separately when the block format
+  // doesn't include them (which it doesn't — F1.com only shows codes in the table header).
+  const headerCodes = (opts.raceCodes && opts.raceCodes.length === parsed.headers.length)
+    ? opts.raceCodes
+    : parsed.headers;
+
+  // Detect which races had sprints — any race where ANY driver has sprintPoints > 0
+  const hadSprint = parsed.headers.map((_, ri) =>
+    parsed.drivers.some(d => d.cells[ri]?.sprintPoints > 0)
+  );
+
+  const raceObjs = headerCodes.map((code, idx) => {
     const meta = F1_RACE_CODE_MAP[code] || { name: `${code} Grand Prix`, circuit: code, country: code };
     return {
       id: uid(),
@@ -5426,7 +5558,7 @@ function buildSeasonFromImport(parsed, opts) {
       name: meta.name,
       circuit: meta.circuit,
       country: meta.country,
-      sprint: !!meta.sprint,
+      sprint: hadSprint[idx] || !!meta.sprint,
       date: '',
       completed: false,
       results: [],
@@ -5438,6 +5570,9 @@ function buildSeasonFromImport(parsed, opts) {
   season.races = raceObjs;
 
   // 4. Apply results per race
+  // F1 sprint scoring (modern era): 8-7-6-5-4-3-2-1 for top 8.
+  // We reverse-engineer the sprint finishing position from the sprint points scored.
+  const SPRINT_POINT_TO_POS = { 8: 1, 7: 2, 6: 3, 5: 4, 4: 5, 3: 6, 2: 7, 1: 8 };
   for (let ri = 0; ri < raceObjs.length; ri++) {
     const race = raceObjs[ri];
     let anyResults = false;
@@ -5456,6 +5591,15 @@ function buildSeasonFromImport(parsed, opts) {
         dns: !!cell.dns,
       });
       if (cell.pole && !poleDrvId) poleDrvId = drvId;
+      // Sprint result if this driver scored sprint points
+      if (cell.sprintPoints > 0) {
+        const sprintPos = SPRINT_POINT_TO_POS[cell.sprintPoints] || null;
+        race.sprintResults.push({
+          driverId: drvId,
+          position: sprintPos,
+          dnf: false, dsq: false, dns: false,
+        });
+      }
     }
     if (anyResults) {
       race.completed = true;
@@ -5479,19 +5623,32 @@ function openImportRealSeasonModal() {
     size: 'wide',
     body: `
       <div class="field-help" style="margin-bottom:14px">
-        Copy the full standings table from F1.com, Wikipedia, or a similar source and paste it below. Includes drivers, teams, race calendar, and per-race results.
+        Copy a driver standings table from F1.com or Wikipedia and paste it below. Each driver appears as a block: position, name, team, then a line of results.
       </div>
       <details style="margin-bottom:14px;background:var(--bg-elev);border-radius:6px;padding:10px 14px">
-        <summary style="cursor:pointer;font-family:var(--f-mono);font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-soft)">▸ Format example</summary>
-        <pre style="margin:10px 0 0;font-size:10px;line-height:1.5;color:var(--text-soft);white-space:pre">POS	DRIVER	TEAM	PTS	BHR	SAU	AUS	AZE	MIA	MON	ESP	CAN	AUT	GBR	HUN	BEL	NED	ITA	SIN	JPN	QAT	USA	MXC	SAP	LVG	ABU
-1	Max Verstappen	Red Bull	587	1P	2	1P	2	1	1P	1P	1	1P	1	1	1P	1	5	1P	1P	1	1	1P	1	1P
-2	Sergio Perez	Red Bull	287	2	1P	5	1	2P	16	4	6	3	6	3	2	4	2	8	DNF	10	4	DNF	4	3	4
-3	Lewis Hamilton	Mercedes	235	5	5	2	6	6	4	2	3	8	3	4P	4	6	6	3	5	DNF	DSQ	2	8	7	9</pre>
-        <div style="font-family:var(--f-mono);font-size:10px;color:var(--text-muted);margin-top:8px;line-height:1.6">
-          • Each cell = position (1-20) or DNF/DSQ/DNS<br>
-          • Append <b>P</b> to a position for pole (e.g. <code>1P</code>, <code>4P</code>)<br>
-          • Tab-separated columns (Ctrl+C from F1.com keeps tabs)<br>
-          • Race-code headers map to circuits automatically (BHR → Bahrain GP, etc.)
+        <summary style="cursor:pointer;font-family:var(--f-mono);font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-soft)">▸ Format examples</summary>
+        <div style="font-family:var(--f-mono);font-size:10px;color:var(--text-muted);margin-top:10px;line-height:1.6">
+          <b style="color:var(--text)">F1.com paste format (most common):</b> each driver is 4 lines.
+        </div>
+        <pre style="margin:8px 0;font-size:10px;line-height:1.4;color:var(--text-soft);white-space:pre">👑
+Max Verstappen
+
+Red Bull
+587   1P  2  1P  26  1  1P  1P  1P  1P8  1P  1  18  1P  1  5  1P  1P7  18  1  1P8  1  1P
+2
+Sergio Pérez
+
+Red Bull
+287   2  1P  5  18  2P  16  4  6  37  6  3  2  4  2  8  DNF  10  44  DNF  46  3  4</pre>
+        <div style="font-family:var(--f-mono);font-size:10px;color:var(--text-muted);margin-top:10px;line-height:1.6">
+          Each result token decodes as:<br>
+          • <code>1</code> → P1 finish<br>
+          • <code>1P</code> → P1 finish + pole position<br>
+          • <code>26</code> → P2 finish + 6 sprint race points<br>
+          • <code>1P8</code> → P1 finish + pole + 8 sprint points<br>
+          • <code>DNF</code>, <code>DSQ</code>, <code>DNS</code> → status codes<br>
+          • <b>Fastest laps cannot be detected from text</b> — add them manually after import.<br>
+          • 👑 emoji or just a number indicates the championship position.
         </div>
       </details>
       <div class="field-row">
@@ -5505,13 +5662,19 @@ function openImportRealSeasonModal() {
         </select>
       </div>
       <div class="field">
-        <label>Paste the standings table</label>
-        <textarea id="imp-text" rows="10" placeholder="POS&#9;DRIVER&#9;TEAM&#9;PTS&#9;BHR&#9;SAU&#9;..." style="font-family:var(--f-mono);font-size:11px;width:100%;min-height:160px"></textarea>
+        <label>Paste the driver standings here</label>
+        <textarea id="imp-text" rows="12" placeholder="Paste the F1.com standings table here..." style="font-family:var(--f-mono);font-size:11px;width:100%;min-height:200px"></textarea>
+      </div>
+      <div class="field">
+        <label>Race calendar (optional) <span style="font-weight:400;color:var(--text-muted);font-family:var(--f-body)">— space-separated race codes in calendar order</span></label>
+        <input type="text" id="imp-races" placeholder="e.g. BHR SAU AUS AZE MIA MON ESP CAN AUT GBR HUN BEL NED ITA SIN JPN QAT USA MXC SAP LVG ABU" style="font-family:var(--f-mono);font-size:11px">
+        <span class="field-help">Leave blank to use generic round names (R1, R2…). With codes, races map to real circuits automatically.</span>
       </div>
       <div id="imp-preview"></div>`,
     footer: `<button class="btn btn-ghost" data-act="cancel">Cancel</button><button class="btn btn-ghost" data-act="parse">⚙ PARSE</button><button class="btn btn-primary" data-act="ok" disabled>Build Season</button>`,
     onMount: (root, close) => {
       const ta = $('#imp-text', root);
+      const racesInp = $('#imp-races', root);
       const preview = $('#imp-preview', root);
       const okBtn = $('[data-act="ok"]', root);
 
@@ -5521,20 +5684,33 @@ function openImportRealSeasonModal() {
           preview.innerHTML = `<div class="empty-row" style="padding:20px">Paste some text and click PARSE.</div>`;
           okBtn.disabled = true; return;
         }
-        const r = parseImportSeasonPaste(text);
+        // Try the block parser (real F1.com format) first
+        let r = parseImportSeasonPaste(text);
+        // If block parser fails, fall back to the legacy tab-separated parser
+        if (r.error) {
+          const tsv = parseImportSeasonPasteTSV(text);
+          if (!tsv.error) r = tsv;
+        }
         if (r.error) {
           preview.innerHTML = `<div class="storage-warning" style="margin-top:14px"><div class="storage-warning-head">⚠ Couldn't parse</div><div class="storage-warning-body">${esc(r.error)}</div></div>`;
           okBtn.disabled = true; parsed = null; return;
         }
         parsed = r;
         okBtn.disabled = false;
+
+        // If user supplied race codes AND count matches, use those for the preview header
+        const userCodes = racesInp.value.trim().split(/\s+/).filter(Boolean);
+        const previewHeaders = (userCodes.length === r.headers.length) ? userCodes : r.headers;
+
         const completedRaces = r.headers.length;
         const totalResults = r.drivers.reduce((sum, d) => sum + d.cells.filter(Boolean).length, 0);
-        // Preview: table head with race codes, body rows with driver name + team + each cell. Position rendering matches the matrix.
+        const totalSprintPoints = r.drivers.reduce((sum, d) => sum + d.cells.reduce((s, c) => s + (c?.sprintPoints || 0), 0), 0);
+        const totalPoles = r.drivers.reduce((sum, d) => sum + d.cells.filter(c => c?.pole).length, 0);
+
         preview.innerHTML = `
           <div style="margin-top:18px">
             <div style="font-family:var(--f-mono);font-size:10px;letter-spacing:0.18em;color:var(--text-muted);text-transform:uppercase;margin-bottom:10px">
-              PREVIEW · ${r.drivers.length} DRIVER${r.drivers.length === 1 ? '' : 'S'} · ${completedRaces} RACE${completedRaces === 1 ? '' : 'S'} · ${totalResults} RESULT${totalResults === 1 ? '' : 'S'}
+              PREVIEW · ${r.drivers.length} DRIVER${r.drivers.length === 1 ? '' : 'S'} · ${completedRaces} RACE${completedRaces === 1 ? '' : 'S'} · ${totalResults} RESULT${totalResults === 1 ? '' : 'S'} · ${totalPoles} POLE${totalPoles === 1 ? '' : 'S'} · ${totalSprintPoints} SPRINT POINTS
             </div>
             <div style="overflow-x:auto;border:1px solid var(--border-dim);border-radius:6px;max-height:380px">
               <table style="border-collapse:collapse;font-family:var(--f-mono);font-size:11px;width:max-content;min-width:100%">
@@ -5544,7 +5720,7 @@ function openImportRealSeasonModal() {
                     <th style="padding:8px 10px;text-align:left;border-bottom:1px solid var(--border)">DRIVER</th>
                     <th style="padding:8px 10px;text-align:left;border-bottom:1px solid var(--border)">TEAM</th>
                     <th style="padding:8px 10px;text-align:right;border-bottom:1px solid var(--border)">PTS</th>
-                    ${r.headers.map(h => `<th style="padding:8px 6px;text-align:center;border-bottom:1px solid var(--border);font-size:9px;letter-spacing:0.1em">${esc(h)}</th>`).join('')}
+                    ${previewHeaders.map(h => `<th style="padding:8px 6px;text-align:center;border-bottom:1px solid var(--border);font-size:9px;letter-spacing:0.1em">${esc(h)}</th>`).join('')}
                   </tr>
                 </thead>
                 <tbody>
@@ -5567,6 +5743,10 @@ function openImportRealSeasonModal() {
                           else if (c.position === 3) col = 'var(--bronze)';
                           else if (c.position > 10) col = 'var(--text-muted)';
                         }
+                        // Sprint subscript
+                        if (c.sprintPoints > 0) {
+                          txt += `<sub style="color:var(--sec-yellow,#f59e0b);font-size:8px;margin-left:1px">${c.sprintPoints}</sub>`;
+                        }
                         return `<td style="padding:6px;text-align:center;color:${col};font-weight:600">${txt}</td>`;
                       }).join('')}
                     </tr>
@@ -5575,7 +5755,7 @@ function openImportRealSeasonModal() {
               </table>
             </div>
             <div class="field-help" style="margin-top:10px">
-              Teams will be auto-created (with default colors you can edit). Driver countries will be blank — fill in via driver edit. Unknown race codes use the code itself as the country.
+              Teams will be auto-created (with default colors you can edit). Driver countries will be blank — fill in via driver edit. ${userCodes.length === r.headers.length ? 'Race codes mapped to real circuits.' : 'Optionally fill the race calendar field above to get real circuit names.'}
             </div>
           </div>`;
       };
@@ -5583,13 +5763,16 @@ function openImportRealSeasonModal() {
       $('[data-act="parse"]', root).onclick = doParse;
       $('[data-act="cancel"]', root).onclick = close;
       ta.oninput = () => { if (parsed) { parsed = null; okBtn.disabled = true; } };
+      racesInp.oninput = () => { if (parsed) doParse(); };  // re-render preview with codes
       okBtn.onclick = () => {
         if (!parsed) return doParse();
         try {
           const year = $('#imp-year', root).value;
           const name = $('#imp-name', root).value;
           const pointsSystemId = $('#imp-points', root).value;
-          buildSeasonFromImport(parsed, { year, name, pointsSystemId });
+          const userCodes = racesInp.value.trim().split(/\s+/).filter(Boolean);
+          const raceCodes = (userCodes.length === parsed.headers.length) ? userCodes : null;
+          buildSeasonFromImport(parsed, { year, name, pointsSystemId, raceCodes });
           close();
           renderAll();
           toast(`Imported ${parsed.drivers.length} driver${parsed.drivers.length === 1 ? '' : 's'} across ${parsed.headers.length} race${parsed.headers.length === 1 ? '' : 's'}`, 'success');
