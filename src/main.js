@@ -5642,12 +5642,40 @@ function buildSeasonFromImport(parsed, opts) {
   }
 
   // 3. Build races — one per header code (or per raceCodes override)
-  // If opts.raceCodes is supplied, use those instead of parsed.headers.
-  // This is how we let the user paste race codes separately when the block format
-  // doesn't include them (which it doesn't — F1.com only shows codes in the table header).
+  // Resolution priority for each race code:
+  //   (a) If opts.calendarPresetId points to a saved preset whose country codes
+  //       match the pasted codes (in order), use that preset's race info.
+  //   (b) If opts.raceCodes is supplied and length matches, use those codes
+  //       and look each one up in saved presets first, then F1_RACE_CODE_MAP.
+  //   (c) Fall back to the pasted parsed.headers (e.g. "R1" placeholders).
   const headerCodes = (opts.raceCodes && opts.raceCodes.length === parsed.headers.length)
     ? opts.raceCodes
     : parsed.headers;
+
+  // Build a lookup index: country-code (uppercase) → race-from-preset
+  // We index ALL saved presets so any code can resolve regardless of which preset it's from.
+  // The user-selected preset (opts.calendarPresetId) is checked first so its entries win on conflicts.
+  const presetById = id => (state.calendarPresets || []).find(p => p.id === id);
+  const codeIndex = {}; // 'BHR' -> { name, circuit, country, flagImage, sprint }
+  const indexPreset = (preset) => {
+    if (!preset) return;
+    preset.races.forEach(r => {
+      const key = (r.country || '').toUpperCase().trim();
+      if (key && !codeIndex[key]) {
+        codeIndex[key] = {
+          name: r.name,
+          circuit: r.circuit,
+          country: r.country,
+          flagImage: r.flagImage || '',
+          sprint: !!r.sprint,
+        };
+      }
+    });
+  };
+  // 1. Selected preset first (highest priority)
+  if (opts.calendarPresetId) indexPreset(presetById(opts.calendarPresetId));
+  // 2. Then all other presets
+  (state.calendarPresets || []).forEach(p => indexPreset(p));
 
   // Detect which races had sprints — any race where ANY driver has sprintPoints > 0
   const hadSprint = parsed.headers.map((_, ri) =>
@@ -5655,13 +5683,18 @@ function buildSeasonFromImport(parsed, opts) {
   );
 
   const raceObjs = headerCodes.map((code, idx) => {
-    const meta = F1_RACE_CODE_MAP[code] || { name: `${code} Grand Prix`, circuit: code, country: code };
+    const codeKey = (code || '').toUpperCase().trim();
+    // Resolution order: saved-preset index → built-in F1 map → fallback
+    const meta = codeIndex[codeKey]
+                 || F1_RACE_CODE_MAP[codeKey]
+                 || { name: `${code} Grand Prix`, circuit: code, country: code };
     return {
       id: uid(),
       round: idx + 1,
       name: meta.name,
       circuit: meta.circuit,
       country: meta.country,
+      flagImage: meta.flagImage || '',
       sprint: hadSprint[idx] || !!meta.sprint,
       date: '',
       completed: false,
@@ -5770,17 +5803,50 @@ Red Bull
         <textarea id="imp-text" rows="12" placeholder="Paste the F1.com standings table here..." style="font-family:var(--f-mono);font-size:11px;width:100%;min-height:200px"></textarea>
       </div>
       <div class="field">
-        <label>Race calendar (optional) <span style="font-weight:400;color:var(--text-muted);font-family:var(--f-body)">— space-separated race codes in calendar order</span></label>
+        <label>Match races to one of your saved calendar presets <span style="font-weight:400;color:var(--text-muted);font-family:var(--f-body)">(optional)</span></label>
+        <div style="display:flex;gap:8px;align-items:flex-end">
+          <select id="imp-cal-preset" style="flex:1">
+            <option value="">— Use F1 default circuit names —</option>
+            ${(state.calendarPresets || []).map(p => `<option value="${esc(p.id)}">${esc(p.name)} · ${p.races.length} round${p.races.length === 1 ? '' : 's'}</option>`).join('')}
+          </select>
+          <button type="button" class="btn btn-ghost" id="imp-fill-codes" style="white-space:nowrap" ${!(state.calendarPresets || []).length ? 'disabled' : ''}>↳ FILL CODES BELOW</button>
+        </div>
+        <span class="field-help">Selecting a preset auto-resolves race codes against its rounds. Click FILL CODES to populate the race calendar field below with that preset's country codes in order.</span>
+      </div>
+      <div class="field">
+        <label>Race calendar codes <span style="font-weight:400;color:var(--text-muted);font-family:var(--f-body)">— space-separated, in calendar order</span></label>
         <input type="text" id="imp-races" placeholder="e.g. BHR SAU AUS AZE MIA MON ESP CAN AUT GBR HUN BEL NED ITA SIN JPN QAT USA MXC SAP LVG ABU" style="font-family:var(--f-mono);font-size:11px">
-        <span class="field-help">Leave blank to use generic round names (R1, R2…). With codes, races map to real circuits automatically.</span>
+        <span class="field-help">Codes get matched against your saved calendar presets first, then the built-in F1 map (BHR → Bahrain, SAU → Saudi Arabia…). Leave blank for generic round names (R1, R2…).</span>
       </div>
       <div id="imp-preview"></div>`,
     footer: `<button class="btn btn-ghost" data-act="cancel">Cancel</button><button class="btn btn-ghost" data-act="parse">⚙ PARSE</button><button class="btn btn-primary" data-act="ok" disabled>Build Season</button>`,
     onMount: (root, close) => {
       const ta = $('#imp-text', root);
       const racesInp = $('#imp-races', root);
+      const calSel = $('#imp-cal-preset', root);
+      const fillCodesBtn = $('#imp-fill-codes', root);
       const preview = $('#imp-preview', root);
       const okBtn = $('[data-act="ok"]', root);
+
+      // Auto-fill codes button: takes the selected preset and fills imp-races with its country codes in order
+      fillCodesBtn.onclick = () => {
+        const pid = calSel.value;
+        if (!pid) { toast('Pick a calendar preset first', 'warn'); return; }
+        const preset = (state.calendarPresets || []).find(p => p.id === pid);
+        if (!preset) return;
+        const codes = preset.races
+          .slice()
+          .sort((a, b) => (a.round || 0) - (b.round || 0))
+          .map(r => (r.country || '???').toUpperCase().trim())
+          .filter(Boolean);
+        racesInp.value = codes.join(' ');
+        toast(`Filled ${codes.length} codes from "${preset.name}"`, 'success');
+        if (parsed) doParse(); // re-render preview with new codes
+      };
+
+      // Selecting a preset doesn't auto-fill codes (user might want to pick a different code order)
+      // but it does affect resolution priority.
+      calSel.onchange = () => { if (parsed) doParse(); };
 
       const doParse = () => {
         const text = ta.value;
@@ -5806,16 +5872,52 @@ Red Bull
         const userCodes = racesInp.value.trim().split(/\s+/).filter(Boolean);
         const previewHeaders = (userCodes.length === r.headers.length) ? userCodes : r.headers;
 
+        // Resolve each header code against (1) selected preset, (2) all presets, (3) F1 map
+        // — same logic as buildSeasonFromImport, mirrored here so preview matches reality.
+        const codeIndex = {};
+        const indexPreset = (preset) => {
+          if (!preset) return;
+          preset.races.forEach(rr => {
+            const key = (rr.country || '').toUpperCase().trim();
+            if (key && !codeIndex[key]) codeIndex[key] = { name: rr.name, source: preset.name };
+          });
+        };
+        const selectedPid = calSel.value;
+        if (selectedPid) indexPreset((state.calendarPresets || []).find(p => p.id === selectedPid));
+        (state.calendarPresets || []).forEach(p => indexPreset(p));
+
+        // For each preview code, work out where it resolved
+        const resolutions = previewHeaders.map(code => {
+          const k = (code || '').toUpperCase().trim();
+          if (codeIndex[k]) return { code, name: codeIndex[k].name, source: `preset: ${codeIndex[k].source}` };
+          if (F1_RACE_CODE_MAP[k]) return { code, name: F1_RACE_CODE_MAP[k].name, source: 'F1 built-in' };
+          return { code, name: `${code} Grand Prix`, source: 'fallback' };
+        });
+        const resolvedFromPreset = resolutions.filter(x => x.source.startsWith('preset')).length;
+        const resolvedFromBuiltIn = resolutions.filter(x => x.source === 'F1 built-in').length;
+        const fallback = resolutions.filter(x => x.source === 'fallback').length;
+
         const completedRaces = r.headers.length;
         const totalResults = r.drivers.reduce((sum, d) => sum + d.cells.filter(Boolean).length, 0);
         const totalSprintPoints = r.drivers.reduce((sum, d) => sum + d.cells.reduce((s, c) => s + (c?.sprintPoints || 0), 0), 0);
         const totalPoles = r.drivers.reduce((sum, d) => sum + d.cells.filter(c => c?.pole).length, 0);
+
+        // Resolution status line — tells the user how many codes matched where
+        const resolutionStatus = previewHeaders.length ? `
+          <div style="font-family:var(--f-mono);font-size:10px;color:var(--text-muted);margin-bottom:10px;padding:8px 12px;background:var(--bg-elev);border-radius:6px;border:1px solid var(--border-dim)">
+            ${resolvedFromPreset ? `<span style="color:var(--green,#10b981)">● ${resolvedFromPreset} matched from your presets</span>` : ''}
+            ${resolvedFromPreset && (resolvedFromBuiltIn || fallback) ? ' · ' : ''}
+            ${resolvedFromBuiltIn ? `<span style="color:var(--sec-blue,#60a5fa)">● ${resolvedFromBuiltIn} matched from F1 built-in</span>` : ''}
+            ${resolvedFromBuiltIn && fallback ? ' · ' : ''}
+            ${fallback ? `<span style="color:var(--sec-yellow,#f59e0b)">● ${fallback} fell back to "Grand Prix" name</span>` : ''}
+          </div>` : '';
 
         preview.innerHTML = `
           <div style="margin-top:18px">
             <div style="font-family:var(--f-mono);font-size:10px;letter-spacing:0.18em;color:var(--text-muted);text-transform:uppercase;margin-bottom:10px">
               PREVIEW · ${r.drivers.length} DRIVER${r.drivers.length === 1 ? '' : 'S'} · ${completedRaces} RACE${completedRaces === 1 ? '' : 'S'} · ${totalResults} RESULT${totalResults === 1 ? '' : 'S'} · ${totalPoles} POLE${totalPoles === 1 ? '' : 'S'} · ${totalSprintPoints} SPRINT POINTS
             </div>
+            ${resolutionStatus}
             <div style="overflow-x:auto;border:1px solid var(--border-dim);border-radius:6px;max-height:380px">
               <table style="border-collapse:collapse;font-family:var(--f-mono);font-size:11px;width:max-content;min-width:100%">
                 <thead>
@@ -5824,7 +5926,11 @@ Red Bull
                     <th style="padding:8px 10px;text-align:left;border-bottom:1px solid var(--border)">DRIVER</th>
                     <th style="padding:8px 10px;text-align:left;border-bottom:1px solid var(--border)">TEAM</th>
                     <th style="padding:8px 10px;text-align:right;border-bottom:1px solid var(--border)">PTS</th>
-                    ${previewHeaders.map(h => `<th style="padding:8px 6px;text-align:center;border-bottom:1px solid var(--border);font-size:9px;letter-spacing:0.1em">${esc(h)}</th>`).join('')}
+                    ${previewHeaders.map((h, idx) => {
+                      const res = resolutions[idx];
+                      const tip = `${res.name} (${res.source})`;
+                      return `<th style="padding:8px 6px;text-align:center;border-bottom:1px solid var(--border);font-size:9px;letter-spacing:0.1em" title="${esc(tip)}">${esc(h)}</th>`;
+                    }).join('')}
                   </tr>
                 </thead>
                 <tbody>
@@ -5876,7 +5982,8 @@ Red Bull
           const pointsSystemId = $('#imp-points', root).value;
           const userCodes = racesInp.value.trim().split(/\s+/).filter(Boolean);
           const raceCodes = (userCodes.length === parsed.headers.length) ? userCodes : null;
-          buildSeasonFromImport(parsed, { year, name, pointsSystemId, raceCodes });
+          const calendarPresetId = calSel.value || null;
+          buildSeasonFromImport(parsed, { year, name, pointsSystemId, raceCodes, calendarPresetId });
           close();
           renderAll();
           toast(`Imported ${parsed.drivers.length} driver${parsed.drivers.length === 1 ? '' : 's'} across ${parsed.headers.length} race${parsed.headers.length === 1 ? '' : 's'}`, 'success');
