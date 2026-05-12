@@ -136,6 +136,8 @@ async function cloudPullAllSaves() {
     (teamsBySeason[t.season_id] ||= []).push({
       id: t.id, name: t.name, short: t.short, country: t.country,
       color: t.color, logo: t.logo, dsq: t.dsq,
+      _updatedAt: t.updated_at ? new Date(t.updated_at).getTime() : null,
+      _lastEditedBy: t.last_edited_by || null,
     });
   }
   // Drivers under their season
@@ -144,6 +146,8 @@ async function cloudPullAllSaves() {
     (driversBySeason[d.season_id] ||= []).push({
       id: d.id, name: d.name, number: d.number, country: d.country,
       photo: d.photo, teamId: d.team_id, dsq: d.dsq,
+      _updatedAt: d.updated_at ? new Date(d.updated_at).getTime() : null,
+      _lastEditedBy: d.last_edited_by || null,
     });
   }
   // Races under their season, with results re-nested as arrays (matches local shape)
@@ -172,6 +176,8 @@ async function cloudPullAllSaves() {
       fastestLapDriverId: rc.fastest_lap_driver_id,
       results: resultsByRace[rc.id] || [],
       sprintResults: sprintByRace[rc.id] || [],
+      _updatedAt: rc.updated_at ? new Date(rc.updated_at).getTime() : null,
+      _lastEditedBy: rc.last_edited_by || null,
     });
   }
   // Attach to seasons
@@ -332,6 +338,73 @@ async function cloudInvite(saveId, role = 'editor') {
   return `${window.location.origin}${window.location.pathname}?invite=${data.token}`;
 }
 
+// FEATURE #1 — Member kick: remove a collaborator from a save
+async function cloudRemoveMember(saveId, userId) {
+  if (!CLOUD.enabled || !currentUser) throw new Error('Not signed in');
+  const { error } = await CLOUD.client
+    .from('save_members')
+    .delete()
+    .eq('save_id', saveId)
+    .eq('user_id', userId);
+  if (error) throw error;
+  // Update local cache so the SHARE modal refreshes without a round-trip
+  const save = state.saves[saveId];
+  if (save?._members) save._members = save._members.filter(m => m.user_id !== userId);
+}
+
+// FEATURE #2 — Change a member's role between editor and viewer
+async function cloudUpdateMemberRole(saveId, userId, newRole) {
+  if (!CLOUD.enabled || !currentUser) throw new Error('Not signed in');
+  if (!['editor', 'viewer'].includes(newRole)) throw new Error('Invalid role');
+  const { error } = await CLOUD.client
+    .from('save_members')
+    .update({ role: newRole })
+    .eq('save_id', saveId)
+    .eq('user_id', userId);
+  if (error) throw error;
+  const save = state.saves[saveId];
+  if (save?._members) {
+    const m = save._members.find(x => x.user_id === userId);
+    if (m) m.role = newRole;
+  }
+}
+
+// FEATURE #11 — Public read-only share links
+async function cloudEnablePublicShare(saveId) {
+  if (!CLOUD.enabled || !currentUser) throw new Error('Not signed in');
+  // Check if already public
+  const { data: existing } = await CLOUD.client
+    .from('public_shares').select('slug').eq('save_id', saveId).maybeSingle();
+  if (existing?.slug) {
+    return `${window.location.origin}${window.location.pathname}?view=${existing.slug}`;
+  }
+  const { data, error } = await CLOUD.client
+    .from('public_shares')
+    .insert({ save_id: saveId, enabled_by: currentUser.id })
+    .select('slug').single();
+  if (error) throw error;
+  return `${window.location.origin}${window.location.pathname}?view=${data.slug}`;
+}
+async function cloudDisablePublicShare(saveId) {
+  if (!CLOUD.enabled || !currentUser) throw new Error('Not signed in');
+  const { error } = await CLOUD.client
+    .from('public_shares').delete().eq('save_id', saveId);
+  if (error) throw error;
+}
+async function cloudGetPublicShareSlug(saveId) {
+  if (!CLOUD.enabled) return null;
+  const { data } = await CLOUD.client
+    .from('public_shares').select('slug').eq('save_id', saveId).maybeSingle();
+  return data?.slug || null;
+}
+// Anonymous fetch: read a public save by its slug (no auth required)
+async function cloudFetchPublicSave(slug) {
+  if (!CLOUD.enabled) throw new Error('Cloud disabled');
+  const { data, error } = await CLOUD.client.rpc('get_public_save', { public_slug: slug });
+  if (error) throw error;
+  return data; // jsonb object with save/seasons/teams/drivers/races/results
+}
+
 async function cloudAcceptInvite(token) {
   if (!CLOUD.enabled || !currentUser) throw new Error('Not signed in');
   const { data, error } = await CLOUD.client.rpc('accept_invitation', {
@@ -374,14 +447,85 @@ function onCloudChange(payload) {
   }, 300);
 }
 
+// FEATURE #3 — Presence: show who else is currently viewing the active save.
+// Each save has its own presence channel. When you select a save we join it
+// and announce ourselves; we leave when you change saves or sign out.
+let presenceChannel = null;
+let presenceState = {};  // { user_id: { email, joinedAt } }
+function cloudSubscribePresence(saveId) {
+  if (!CLOUD.enabled || !currentUser || !saveId) return;
+  if (presenceChannel) {
+    CLOUD.client.removeChannel(presenceChannel);
+    presenceChannel = null;
+    presenceState = {};
+  }
+  presenceChannel = CLOUD.client.channel(`presence:save:${saveId}`, {
+    config: { presence: { key: currentUser.id } },
+  });
+  presenceChannel
+    .on('presence', { event: 'sync' }, () => {
+      // Rebuild local presence state from the channel
+      const newState = presenceChannel.presenceState();
+      const flat = {};
+      for (const userId of Object.keys(newState)) {
+        const entries = newState[userId];
+        if (entries.length) {
+          flat[userId] = { email: entries[0].email, joinedAt: entries[0].joinedAt };
+        }
+      }
+      presenceState = flat;
+      renderPresenceDots();
+    })
+    .subscribe(async (status) => {
+      if (status === 'SUBSCRIBED') {
+        await presenceChannel.track({
+          email: currentUser.email,
+          joinedAt: Date.now(),
+        });
+      }
+    });
+}
+function renderPresenceDots() {
+  const slot = $('#presence-slot');
+  if (!slot) return;
+  const others = Object.entries(presenceState).filter(([uid]) => uid !== currentUser?.id);
+  if (!others.length) { slot.innerHTML = ''; return; }
+  slot.innerHTML = others.map(([uid, info]) => {
+    const initials = (info.email || '?').slice(0, 2).toUpperCase();
+    const color = `hsl(${Math.abs([...uid].reduce((a,c) => a + c.charCodeAt(0), 0)) % 360}, 60%, 55%)`;
+    return `<span class="presence-dot" style="background:${color}" title="${esc(info.email)} is here">${esc(initials)}</span>`;
+  }).join('');
+}
+
 /* ---------- INIT: detect signed-in user on boot, hydrate, then render ---------- */
 async function cloudInit() {
   if (!CLOUD.enabled) return false;
+
+  // FEATURE #11: Public read-only view. If URL has ?view=SLUG, render in
+  // public mode (no auth required, no edits possible) and return true so we
+  // skip the sign-in screen.
+  const viewSlug = new URLSearchParams(location.search).get('view');
+  if (viewSlug) {
+    try {
+      const data = await cloudFetchPublicSave(viewSlug);
+      if (data) {
+        renderPublicView(data);
+        return true;
+      } else {
+        // Slug invalid — fall through to normal flow
+        toast('Public link not found — it may have been disabled.', 'error');
+      }
+    } catch (e) {
+      console.warn('Public-view fetch failed', e);
+    }
+  }
+
   // Catch ?invite=TOKEN before showing sign-in
   const inviteToken = new URLSearchParams(location.search).get('invite');
 
   // Listen for auth changes so we re-hydrate after sign-in
   CLOUD.client.auth.onAuthStateChange((event, session) => {
+    if (isPublicView) return; // Don't re-render over a public view
     const newUser = session?.user || null;
     const wasSignedIn = !!currentUser;
     currentUser = newUser;
@@ -427,6 +571,130 @@ async function cloudInit() {
     return true;
   }
   return false; // not signed in
+}
+
+/* ---------- PUBLIC READ-ONLY VIEW (Feature #11) ---------- */
+let isPublicView = false;
+function renderPublicView(data) {
+  isPublicView = true;
+  // Suppress topbar/tabs — clean focused viewing experience
+  $('#topbar-selectors').innerHTML = '';
+  $('#topbar-actions').innerHTML = `<a href="${esc(window.location.origin + window.location.pathname)}" class="btn btn-ghost btn-sm">⚡ Make your own P1 universe</a>`;
+  $('#tabs').innerHTML = '';
+
+  const root = $('#app');
+  const save = data.save || {};
+  const seasons = (data.seasons || []).slice().sort((a, b) => (b.season?.year || 0) - (a.season?.year || 0));
+  // Default to most recent season
+  let activeIdx = 0;
+
+  const renderShell = () => {
+    const sn = seasons[activeIdx]?.season;
+    const teams = seasons[activeIdx]?.teams || [];
+    const drivers = seasons[activeIdx]?.drivers || [];
+    const races = (seasons[activeIdx]?.races || []).slice().sort((a, b) => (a.race?.round || 0) - (b.race?.round || 0));
+
+    // Compute standings from the season data
+    let standings = [];
+    if (sn && drivers.length) {
+      const localShape = {
+        ...sn,
+        pointsSystemId: sn.points_system_id,
+        flEnabled: sn.fl_enabled,
+        polePointEnabled: sn.pole_point_enabled,
+        polePointValue: sn.pole_point_value,
+        drivers: drivers.map(d => ({ id: d.id, name: d.name, number: d.number, teamId: d.team_id, dsq: d.dsq })),
+        teams,
+        races: races.map(r => ({
+          ...r.race,
+          completed: r.race?.completed,
+          sprint: r.race?.sprint,
+          fastestLapDriverId: r.race?.fastest_lap_driver_id,
+          poleDriverId: r.race?.pole_driver_id,
+          results: (r.results || []).map(x => ({ driverId: x.driver_id, position: x.position, dnf: x.dnf, dsq: x.dsq, dns: x.dns })),
+          sprintResults: (r.sprintResults || []).map(x => ({ driverId: x.driver_id, position: x.position, dnf: x.dnf, dsq: x.dsq, dns: x.dns })),
+        })),
+      };
+      try { standings = calcDriverStandings(localShape); } catch {}
+    }
+
+    root.innerHTML = `
+      <div class="public-view">
+        <div class="public-head">
+          <div class="public-eyebrow">PLAYER ONE · PUBLIC VIEW</div>
+          <h1 class="public-title">${esc(save.name || 'Untitled Save')}</h1>
+          <div class="public-sub">A fictional motorsport universe · shared in read-only mode</div>
+        </div>
+
+        ${seasons.length > 1 ? `
+        <div class="f1-filter-strip" style="margin-bottom:24px">
+          ${seasons.map((s, i) => `<button class="f1-filter ${i === activeIdx ? 'active' : ''}" data-idx="${i}">${esc(String(s.season?.year || ''))} · ${esc(s.season?.name || '')}</button>`).join('')}
+        </div>` : ''}
+
+        <div class="public-section">
+          <h2 class="public-section-title">CHAMPIONSHIP STANDINGS</h2>
+          ${standings.length ? `
+            <table class="public-table">
+              <thead><tr><th>#</th><th>Driver</th><th>Team</th><th>Pts</th><th>W</th><th>P</th></tr></thead>
+              <tbody>
+                ${standings.slice(0, 20).map((row, i) => {
+                  const drv = drivers.find(d => d.id === row.driverId);
+                  const team = drv ? teams.find(t => t.id === drv.team_id) : null;
+                  return `<tr ${i===0?'class="public-champ"':''}>
+                    <td>${i+1}</td>
+                    <td>${esc(drv?.name || '—')}</td>
+                    <td style="color:${esc(team?.color || 'inherit')}">${esc(team?.name || '—')}</td>
+                    <td><b>${row.points}</b></td>
+                    <td>${row.wins}</td>
+                    <td>${row.podiums}</td>
+                  </tr>`;
+                }).join('')}
+              </tbody>
+            </table>` : '<div class="empty-row">No completed races yet.</div>'}
+        </div>
+
+        <div class="public-section">
+          <h2 class="public-section-title">CALENDAR · ${races.length} ROUND${races.length === 1 ? '' : 'S'}</h2>
+          <div class="public-calendar">
+            ${races.map(r => {
+              const rr = r.race || {};
+              const winner = (r.results || []).find(x => x.position === 1);
+              const winnerDrv = winner ? drivers.find(d => d.id === winner.driver_id) : null;
+              return `<div class="public-race-row ${rr.completed ? '' : 'pending'}">
+                <div class="public-race-num">R${rr.round}</div>
+                <div class="public-race-name">${esc(rr.name)}<div class="public-race-circuit">${esc(rr.circuit || '')}</div></div>
+                <div class="public-race-winner">${rr.completed ? (winnerDrv ? '🏆 ' + esc(winnerDrv.name) : '—') : '<span style="color:var(--text-muted)">upcoming</span>'}</div>
+              </div>`;
+            }).join('')}
+          </div>
+        </div>
+
+        <div class="public-section">
+          <h2 class="public-section-title">${drivers.length} DRIVERS · ${teams.length} TEAMS</h2>
+          <div class="public-roster">
+            ${drivers.map(d => {
+              const team = teams.find(t => t.id === d.team_id);
+              return `<div class="public-driver-card" style="--team-color:${esc(team?.color || '#666')}">
+                <div class="public-driver-num">${d.number || '–'}</div>
+                <div class="public-driver-info">
+                  <div class="public-driver-name">${esc(d.name)}</div>
+                  <div class="public-driver-team">${esc(team?.name || 'Free agent')} · ${flag(d.country)} ${esc(d.country || '')}</div>
+                </div>
+              </div>`;
+            }).join('')}
+          </div>
+        </div>
+
+        <div class="public-foot">
+          Made with <a href="${esc(window.location.origin + window.location.pathname)}">P1 — Player One Season Creator</a>
+        </div>
+      </div>`;
+
+    $$('.f1-filter[data-idx]', root).forEach(b => {
+      b.onclick = () => { activeIdx = +b.dataset.idx; renderShell(); };
+    });
+  };
+  renderShell();
 }
 
 /* ---------- SIGN-IN UI: shown when cloud is enabled and no user signed in ---------- */
@@ -975,6 +1243,8 @@ if (!state.presetOverrides.tracks) state.presetOverrides.tracks = {};
 // Each: { id, name, savedAt, drivers: [{ name, number, country, photo, era }], note }
 if (!state.driverClasses) state.driverClasses = [];
 if (!state.teamClasses)   state.teamClasses   = [];
+// FEATURE #8: Season templates — full snapshots of a season (calendar + teams + drivers, no results)
+if (!state.seasonTemplates) state.seasonTemplates = [];
 let standingsTab = 'drivers';
 let seasonWins = []; // populated by calcAllTimeRecords; reset before each call
 
@@ -1089,6 +1359,23 @@ const fmtDate = (ts) => {
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 };
 const isoDate = (ts) => ts ? new Date(ts).toISOString().slice(0,10) : '';
+// FEATURE #4: Last-edited indicator helpers
+const formatRelativeTime = (ts) => {
+  if (!ts) return '';
+  const s = Math.floor((Date.now() - ts) / 1000);
+  if (s < 5) return 'just now';
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.floor(s/60)}m ago`;
+  if (s < 86400) return `${Math.floor(s/3600)}h ago`;
+  if (s < 604800) return `${Math.floor(s/86400)}d ago`;
+  return new Date(ts).toLocaleDateString();
+};
+const lastEditedBadge = (entity) => {
+  if (!entity?._updatedAt) return '';
+  const isYou = entity._lastEditedBy && currentUser && entity._lastEditedBy === currentUser.id;
+  const who = isYou ? 'you' : (entity._lastEditedBy ? entity._lastEditedBy.slice(0,6) + '…' : '—');
+  return `<div class="edit-stamp" title="Edited ${new Date(entity._updatedAt).toLocaleString()}">edited by ${esc(who)} · ${formatRelativeTime(entity._updatedAt)}</div>`;
+};
 const teamColor = (season, teamId) => season.teams.find(t => t.id === teamId)?.color || '#666';
 const teamName  = (season, teamId) => season.teams.find(t => t.id === teamId)?.name || 'No Team';
 const teamShort = (season, teamId) => season.teams.find(t => t.id === teamId)?.short || '—';
@@ -1684,8 +1971,9 @@ function renderTopbar() {
   };
 
   // actions
-  let act = `<button class="btn btn-ghost btn-sm" id="btn-export">⇣ EXPORT</button>
-             <button class="btn btn-ghost btn-sm" id="btn-import">⇡ IMPORT</button>`;
+  let act = `<span id="presence-slot" class="presence-slot"></span>`;
+  act += `<button class="btn btn-ghost btn-sm" id="btn-export">⇣ EXPORT</button>
+          <button class="btn btn-ghost btn-sm" id="btn-import">⇡ IMPORT</button>`;
   if (CLOUD.enabled && currentUser && state.activeSaveId) {
     act += `<button class="btn btn-ghost btn-sm" id="btn-share" title="Invite a collaborator">✦ SHARE</button>`;
   }
@@ -1833,7 +2121,8 @@ function renderHomeSave() {
         <span class="f1-round-pill">SAVE</span>
         <span class="f1-round-meta">${esc(save.id.slice(0,6).toUpperCase())}</span>
       </div>
-      <div style="display:flex;gap:8px">
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-ghost" id="open-templates">★ TEMPLATES</button>
         <button class="btn btn-ghost" id="rename-save">RENAME</button>
         <button class="btn btn-danger" id="delete-save">DELETE SAVE</button>
         <button class="btn btn-primary" id="new-season">+ NEW SEASON</button>
@@ -1880,6 +2169,7 @@ function renderHomeSave() {
   `;
   setTimeout(() => {
     $('#rename-save', wrap).onclick = () => openRenameSaveModal();
+    $('#open-templates', wrap)?.addEventListener('click', openSeasonTemplatesModal);
     $('#delete-save', wrap).onclick = () => {
       confirmModal({
         title: 'Delete save?',
@@ -1937,6 +2227,7 @@ function renderDashboard() {
             <div style="font-family:var(--f-mono);font-size:10px;letter-spacing:0.2em;color:var(--text-muted);text-transform:uppercase;margin-bottom:6px">${completed} OF ${total} ROUNDS COMPLETE</div>
             <div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div>
           </div>
+          <button class="btn btn-ghost btn-sm" id="dash-template">★ TEMPLATES</button>
           <button class="btn btn-ghost btn-sm" id="dash-settings">⚙ SETTINGS</button>
         </div>
       </div>
@@ -2104,6 +2395,7 @@ function renderDashboard() {
     $$('[data-goto]', wrap).forEach(a => a.onclick = (e) => { e.preventDefault(); state.view = a.dataset.goto; renderAll(); });
     $$('[data-race]', wrap).forEach(a => a.onclick = () => { state.view = 'race'; state.raceId = a.dataset.race; renderAll(); });
     $('#dash-settings', wrap)?.addEventListener('click', openSeasonSettings);
+    $('#dash-template', wrap)?.addEventListener('click', openSeasonTemplatesModal);
   }, 0);
   return wrap;
 }
@@ -2124,6 +2416,7 @@ function renderDrivers() {
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn btn-ghost" id="open-driver-classes">★ ROSTER BUNDLES</button>
         <button class="btn btn-ghost" id="search-presets">⌕ DRIVER PRESETS</button>
+        <button class="btn btn-ghost" id="bulk-import-drivers">⇡ BULK IMPORT</button>
         <button class="btn btn-ghost" id="add-sample">+ ADD SAMPLE</button>
         <button class="btn btn-primary" id="add-driver">+ NEW DRIVER</button>
       </div>
@@ -2152,8 +2445,10 @@ function renderDrivers() {
                   <div class="driver-stat"><div class="driver-stat-num">${stats.polePositions || 0}</div><div class="driver-stat-lbl">POLE</div></div>
                 </div>
                 <div class="driver-flag">${flagAndCode(d.country)}</div>
+                ${lastEditedBadge(d)}
                 <div class="driver-card-actions">
                   <button class="btn btn-sm btn-ghost btn-icon ${d.dsq ? 'active-dsq' : ''}" data-dsq-driver="${d.id}" title="${d.dsq ? 'Reinstate to championship' : 'Disqualify from championship'}">${d.dsq ? '✓' : '⊘'}</button>
+                  <button class="btn btn-sm btn-ghost btn-icon" data-xfer-driver="${d.id}" title="Transfer to another season">⇄</button>
                   <button class="btn btn-sm btn-ghost btn-icon" data-edit-driver="${d.id}" title="Edit">✎</button>
                   <button class="btn btn-sm btn-danger btn-icon" data-del-driver="${d.id}" title="Delete">✕</button>
                 </div>
@@ -2178,6 +2473,7 @@ function renderDrivers() {
     $('#add-driver', wrap)?.addEventListener('click', () => openDriverModal());
     $('#search-presets', wrap)?.addEventListener('click', openDriverPresetSearch);
     $('#open-driver-classes', wrap)?.addEventListener('click', () => openRosterClasses('driver'));
+    $('#bulk-import-drivers', wrap)?.addEventListener('click', openBulkImportDrivers);
     $('#empty-search-presets', wrap)?.addEventListener('click', openDriverPresetSearch);
     $('#add-sample', wrap)?.addEventListener('click', () => {
       if (!season.teams.length) return toast('Create a team first', 'warn');
@@ -2193,6 +2489,7 @@ function renderDrivers() {
     });
     $('#empty-new-driver', wrap)?.addEventListener('click', () => openDriverModal());
     $$('[data-edit-driver]', wrap).forEach(b => b.onclick = () => openDriverModal(b.dataset.editDriver));
+    $$('[data-xfer-driver]', wrap).forEach(b => b.onclick = () => openTransferDriverModal(b.dataset.xferDriver));
     $$('[data-dsq-driver]', wrap).forEach(b => b.onclick = () => {
       const drv = season.drivers.find(x => x.id === b.dataset.dsqDriver);
       const willDsq = !drv.dsq;
@@ -2329,6 +2626,7 @@ function renderTeams() {
                         <span class="team-driver-pts">${ptsMap[d.id] || 0} PTS</span>
                       </div>`).join('')}
                   </div>` : `<div style="margin-top:12px;font-family:var(--f-mono);font-size:10px;color:var(--text-muted);letter-spacing:0.1em">NO DRIVERS ASSIGNED</div>`}
+                ${lastEditedBadge(t)}
               </div>
             </div>`;
         }).join('')}
@@ -2826,7 +3124,8 @@ function renderRace() {
           <div class="circuit">${esc(race.circuit || '')}</div>
         </div>
       </div>
-      <div style="display:flex;gap:8px">
+      <div style="display:flex;gap:8px;align-items:center">
+        ${lastEditedBadge(race)}
         <button class="btn btn-ghost" id="race-edit">✎ EDIT INFO</button>
         ${race.completed ? `<button class="btn btn-danger" id="race-reset">RESET RESULTS</button>` : ''}
       </div>
@@ -2839,6 +3138,8 @@ function renderRace() {
       <div class="race-meta-item"><div class="lbl">POLE</div><div class="val">${race.poleDriverId ? esc(driverName(season, race.poleDriverId)) : '—'}</div></div>
       <div class="race-meta-item"><div class="lbl">FASTEST LAP</div><div class="val">${race.fastestLapDriverId ? esc(driverName(season, race.fastestLapDriverId)) : '—'}</div></div>
     </div>
+
+    ${buildRaceTimelineHTML(race, season)}
 
     <div id="race-content"></div>
   `;
@@ -3311,6 +3612,7 @@ function renderStandings() {
         <span class="f1-round-pill">${esc(String(season.year))}</span>
         <span class="f1-round-meta">CHAMPIONSHIP TABLE</span>
       </div>
+      <button class="btn btn-ghost btn-sm" id="open-predictions">⚡ PREDICT CHAMPION</button>
     </div>
 
     <h1 class="f1-page-title">${esc(String(season.year))} <span style="font-weight:300;color:var(--text-dim)">STANDINGS</span></h1>
@@ -3393,6 +3695,7 @@ function renderStandings() {
       $$('.f1-filter', wrap).forEach(x => x.classList.toggle('active', x.dataset.stab === standingsTab));
       renderTable();
     });
+    $('#open-predictions', wrap)?.addEventListener('click', openPredictionsModal);
   }, 0);
   return wrap;
 }
@@ -3609,7 +3912,10 @@ function renderStats() {
         <span class="f1-round-pill">${esc(String(season.year))}</span>
         <span class="f1-round-meta">${esc(season.name)}</span>
       </div>
-      <button class="btn btn-primary" id="open-h2h">⇄ HEAD-TO-HEAD COMPARISON</button>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-ghost" id="open-cmp">⊕ COMPARE ACROSS SEASONS</button>
+        <button class="btn btn-primary" id="open-h2h">⇄ HEAD-TO-HEAD COMPARISON</button>
+      </div>
     </div>
 
     <h1 class="f1-page-title">${esc(String(season.year))} <span style="font-weight:300;color:var(--text-dim)">DRIVER STATISTICS</span></h1>
@@ -3696,6 +4002,7 @@ function renderStats() {
       if (lc?.leader) openDriverSeasonDetail(lc.leader.driverId);
     });
     $('#open-h2h', wrap)?.addEventListener('click', openHeadToHead);
+    $('#open-cmp', wrap)?.addEventListener('click', openDriverComparison);
   }, 0);
   return wrap;
 }
@@ -4287,45 +4594,130 @@ function openRecordDetail(catId, recs) {
 
 /* ---------- modals: new save / season / rename ---------- */
 
-/* ---------- modal: share (collaboration invite) ---------- */
+/* ---------- modal: share (collaboration invite + member management + public link) ---------- */
 function openShareModal() {
   if (!state.activeSaveId) return;
   const save = state.saves[state.activeSaveId];
-  const members = save?._members || [];
-  // Determine ownership: prefer the cloud member list, but fall back to "this save
-  // is in cloudSaveIds (we synced it) and we're signed in" — which means we MUST
-  // be the owner since only the creator gets that flag. This handles the gap
-  // between save creation and the next cloudPullAllSaves().
-  const isOwner = members.length
-    ? members.some(m => m.user_id === currentUser?.id && m.role === 'owner')
-    : (cloudSaveIds.has(save.id) && !!currentUser);
+  const isOwner = (save._members?.length
+    ? save._members.some(m => m.user_id === currentUser?.id && m.role === 'owner')
+    : (cloudSaveIds.has(save.id) && !!currentUser));
+
+  let inviteRole = 'editor';   // current selection for the next invite
+  let publicSlug = null;        // populated on mount via cloudGetPublicShareSlug
 
   modal({
     title: `<span class="accent">Share</span> ${esc(save.name)}`,
+    size: 'wide',
     body: `
       <div class="field-help" style="margin-bottom:18px">
-        Invite a friend to collaborate on this save. They'll have ${isOwner ? 'editor' : 'the same'} access — see all seasons, edit drivers, enter results in real time.
+        Invite a friend to collaborate on this save. Editors can change everything; viewers can see but not edit.
       </div>
-      <div class="share-link-row" id="share-link-row" style="display:none">
-        <label>Share this link with your collaborator:</label>
-        <div class="share-link-box">
-          <input type="text" id="share-link-input" readonly>
-          <button class="btn btn-primary btn-sm" id="share-copy">COPY</button>
+      ${isOwner ? `
+      <div class="share-section">
+        <div class="share-section-head">INVITE A NEW MEMBER</div>
+        <div class="share-invite-row">
+          <div class="share-role-toggle">
+            <button class="btn btn-ghost btn-sm" data-role="editor">EDITOR</button>
+            <button class="btn btn-ghost btn-sm" data-role="viewer">VIEWER</button>
+          </div>
+          <button class="btn btn-primary" data-act="gen">✦ GENERATE INVITE LINK</button>
         </div>
-        <div class="field-help">The link expires in 7 days. Anyone signed in who opens it joins this save.</div>
+        <div class="share-link-row" id="share-link-row" style="display:none">
+          <label>Send this link to your collaborator:</label>
+          <div class="share-link-box">
+            <input type="text" id="share-link-input" readonly>
+            <button class="btn btn-primary btn-sm" id="share-copy">COPY</button>
+          </div>
+          <div class="field-help">Link expires in 7 days. One-time use.</div>
+        </div>
+      </div>` : ''}
+
+      <div class="share-section">
+        <div class="share-section-head">CURRENT MEMBERS · <span id="member-count">${(save._members || []).length}</span></div>
+        <div class="members-list" id="members-list"></div>
       </div>
-      <div class="members-list">
-        <div class="members-head">CURRENT MEMBERS · ${members.length}</div>
-        ${members.map(m => `<div class="member-row"><span class="member-role">${esc(m.role)}</span> <span class="member-id">${m.user_id === currentUser?.id ? 'you' : m.user_id.slice(0,8) + '…'}</span></div>`).join('')}
-      </div>`,
-    footer: `<button class="btn btn-ghost" data-act="cancel">Done</button>${isOwner ? '<button class="btn btn-primary" data-act="gen">✦ GENERATE INVITE LINK</button>' : ''}`,
-    onMount: (root, close) => {
+
+      ${isOwner ? `
+      <div class="share-section">
+        <div class="share-section-head">PUBLIC READ-ONLY LINK</div>
+        <div class="field-help" style="margin-bottom:10px">Anyone with the link can view this save as a webpage. They cannot edit. Useful for showing off your fictional season.</div>
+        <div id="public-link-area">
+          <div class="loading-row">Checking…</div>
+        </div>
+      </div>` : ''}
+    `,
+    footer: `<button class="btn btn-ghost" data-act="cancel">Done</button>`,
+    onMount: async (root, close) => {
       $('[data-act="cancel"]', root).onclick = close;
+
+      // Role toggle
+      const updateRoleButtons = () => {
+        $$('.share-role-toggle button', root).forEach(b => {
+          b.classList.toggle('active', b.dataset.role === inviteRole);
+        });
+      };
+      $$('.share-role-toggle button', root).forEach(b => {
+        b.onclick = () => { inviteRole = b.dataset.role; updateRoleButtons(); };
+      });
+      updateRoleButtons();
+
+      // Members list rendering
+      const renderMembers = () => {
+        const list = $('#members-list', root);
+        const members = save._members || [];
+        $('#member-count', root).textContent = members.length;
+        if (!members.length) {
+          list.innerHTML = `<div class="empty-row">No members yet.</div>`;
+          return;
+        }
+        list.innerHTML = members.map(m => {
+          const isYou = m.user_id === currentUser?.id;
+          const isThisMemberOwner = m.role === 'owner';
+          const canKick = isOwner && !isThisMemberOwner;
+          const canChangeRole = isOwner && !isThisMemberOwner;
+          return `
+            <div class="member-row" data-uid="${esc(m.user_id)}">
+              <span class="member-name">${isYou ? 'You' : (m.user_id.slice(0,8) + '…')}</span>
+              ${canChangeRole ? `
+                <select class="member-role-select" data-uid="${esc(m.user_id)}">
+                  <option value="editor" ${m.role === 'editor' ? 'selected' : ''}>EDITOR</option>
+                  <option value="viewer" ${m.role === 'viewer' ? 'selected' : ''}>VIEWER</option>
+                </select>` : `<span class="member-role role-${esc(m.role)}">${esc(m.role.toUpperCase())}</span>`}
+              ${canKick ? `<button class="btn-icon-x" data-act="kick" data-uid="${esc(m.user_id)}" title="Remove">×</button>` : ''}
+            </div>`;
+        }).join('');
+
+        // Wire kick + role-change handlers
+        $$('[data-act="kick"]', list).forEach(b => {
+          b.onclick = async () => {
+            if (!confirm('Remove this collaborator from the save?')) return;
+            try {
+              await cloudRemoveMember(save.id, b.dataset.uid);
+              toast('Member removed', 'success');
+              renderMembers();
+            } catch (e) { toast('Failed: ' + e.message, 'error'); }
+          };
+        });
+        $$('.member-role-select', list).forEach(s => {
+          s.onchange = async () => {
+            try {
+              await cloudUpdateMemberRole(save.id, s.dataset.uid, s.value);
+              toast(`Role set to ${s.value}`, 'success');
+            } catch (e) {
+              toast('Failed: ' + e.message, 'error');
+              renderMembers();
+            }
+          };
+        });
+      };
+      renderMembers();
+
+      // Generate invite link
       const gen = $('[data-act="gen"]', root);
       if (gen) gen.onclick = async () => {
         try {
           gen.disabled = true; gen.textContent = 'Generating…';
-          const url = await cloudInvite(state.activeSaveId, 'editor');
+          const url = await cloudInvite(state.activeSaveId, inviteRole);
           $('#share-link-row', root).style.display = 'block';
           const inp = $('#share-link-input', root);
           inp.value = url;
@@ -4334,12 +4726,52 @@ function openShareModal() {
             try { await navigator.clipboard.writeText(url); toast('Link copied', 'success'); }
             catch { inp.select(); document.execCommand('copy'); toast('Link copied', 'success'); }
           };
-          gen.style.display = 'none';
         } catch (err) {
           toast('Could not generate link: ' + err.message, 'error');
+        } finally {
           gen.disabled = false; gen.textContent = '✦ GENERATE INVITE LINK';
         }
       };
+
+      // Public share link (owner-only)
+      if (isOwner) {
+        publicSlug = await cloudGetPublicShareSlug(save.id);
+        const renderPublic = () => {
+          const area = $('#public-link-area', root);
+          if (publicSlug) {
+            const url = `${window.location.origin}${window.location.pathname}?view=${publicSlug}`;
+            area.innerHTML = `
+              <div class="share-link-box">
+                <input type="text" readonly value="${esc(url)}">
+                <button class="btn btn-ghost btn-sm" data-act="copy-public">COPY</button>
+                <button class="btn btn-ghost btn-sm" data-act="disable-public" style="color:var(--red)">DISABLE</button>
+              </div>`;
+            $('[data-act="copy-public"]', area).onclick = async () => {
+              try { await navigator.clipboard.writeText(url); toast('Public link copied', 'success'); } catch {}
+            };
+            $('[data-act="disable-public"]', area).onclick = async () => {
+              if (!confirm('Disable the public link? The current URL will stop working.')) return;
+              try {
+                await cloudDisablePublicShare(save.id);
+                publicSlug = null;
+                renderPublic();
+                toast('Public link disabled', 'success');
+              } catch (e) { toast('Failed: ' + e.message, 'error'); }
+            };
+          } else {
+            area.innerHTML = `<button class="btn btn-ghost" data-act="enable-public">⚡ ENABLE PUBLIC VIEW</button>`;
+            $('[data-act="enable-public"]', area).onclick = async () => {
+              try {
+                const url = await cloudEnablePublicShare(save.id);
+                publicSlug = url.split('?view=')[1];
+                renderPublic();
+                toast('Public link enabled', 'success');
+              } catch (e) { toast('Failed: ' + e.message, 'error'); }
+            };
+          }
+        };
+        renderPublic();
+      }
     },
   });
 }
@@ -5191,6 +5623,595 @@ function loadTeamClass(cls, mode = 'add') {
   return added;
 }
 
+/* =====================================================
+   FEATURE #5: BULK ROSTER IMPORT
+   Parses pasted text into drivers in one go. Supports several common formats:
+     - "Lewis Hamilton GBR"
+     - "44 Lewis Hamilton GBR"
+     - "Lewis Hamilton, GBR, 44"
+     - "44 | Lewis Hamilton | GBR"
+     - Just names (numbers auto-assigned)
+   Each line becomes one driver.
+   ===================================================== */
+function parseBulkRosterText(text) {
+  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  const drivers = [];
+  for (const line of lines) {
+    if (line.startsWith('#') || line.startsWith('//')) continue;  // skip comments
+    // Try splitting on common delimiters
+    const parts = line.split(/[,\t|]+|\s{2,}/).map(p => p.trim()).filter(Boolean);
+    let name = null, number = null, country = null;
+    // Pattern A: single space-separated (e.g. "44 Hamilton GBR" or "Hamilton GBR")
+    if (parts.length === 1) {
+      const tokens = line.trim().split(/\s+/);
+      // If first token is a number, it's the racing number
+      const numIdx = tokens.findIndex(t => /^\d+$/.test(t));
+      if (numIdx === 0) {
+        number = parseInt(tokens[0], 10);
+        // Last 3-letter UPPERCASE token could be country
+        const last = tokens[tokens.length - 1];
+        if (/^[A-Z]{3}$/.test(last)) {
+          country = last;
+          name = tokens.slice(1, -1).join(' ');
+        } else {
+          name = tokens.slice(1).join(' ');
+        }
+      } else {
+        const last = tokens[tokens.length - 1];
+        if (/^[A-Z]{3}$/.test(last)) {
+          country = last;
+          name = tokens.slice(0, -1).join(' ');
+        } else {
+          name = tokens.join(' ');
+        }
+      }
+    } else {
+      // Pattern B: multi-part delimited
+      for (const p of parts) {
+        if (/^\d+$/.test(p) && number === null) number = parseInt(p, 10);
+        else if (/^[A-Z]{3}$/.test(p.toUpperCase()) && country === null && p.length === 3) country = p.toUpperCase();
+        else if (!name) name = p;
+      }
+    }
+    if (!name) continue;
+    drivers.push({ name, number, country });
+  }
+  return drivers;
+}
+
+/* =====================================================
+   FEATURE #6: DRIVER & TEAM TRANSFERS ACROSS SEASONS
+   "Copy" a driver/team into another season, optionally to a specific team there.
+   ===================================================== */
+function transferDriverToSeason(driverId, fromSeasonId, toSeasonId, toTeamId = null) {
+  const save = activeSave(); if (!save) return null;
+  const fromSeason = save.seasons[fromSeasonId];
+  const toSeason   = save.seasons[toSeasonId];
+  if (!fromSeason || !toSeason) return null;
+  const src = fromSeason.drivers.find(d => d.id === driverId);
+  if (!src) return null;
+  const copy = {
+    id: uid(),
+    name: src.name,
+    number: src.number,
+    country: src.country,
+    photo: src.photo || '',
+    teamId: toTeamId,
+    dsq: false,
+  };
+  toSeason.drivers.push(copy);
+  saveState();
+  return copy;
+}
+
+function openTransferDriverModal(driverId) {
+  const save = activeSave(); if (!save) return;
+  const driver = activeSeason()?.drivers.find(d => d.id === driverId);
+  if (!driver) return;
+  const otherSeasons = Object.values(save.seasons).filter(s => s.id !== state.activeSeasonId);
+  if (!otherSeasons.length) {
+    toast('Need at least one other season to transfer to', 'info');
+    return;
+  }
+  modal({
+    title: `<span class="accent">Transfer</span> ${esc(driver.name)}`,
+    body: `
+      <div class="field-help" style="margin-bottom:14px">
+        Copy this driver into another season. They'll keep their name, number, country, and photo. You can choose which team they join in the target season.
+      </div>
+      <div class="field">
+        <label>Target season</label>
+        <select id="xfer-season">
+          ${otherSeasons.sort((a,b)=>b.year-a.year).map(s => `<option value="${s.id}">${esc(s.year)} · ${esc(s.name)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field">
+        <label>Target team</label>
+        <select id="xfer-team"><option value="">— None / Free Agent —</option></select>
+      </div>`,
+    footer: `<button class="btn btn-ghost" data-act="cancel">Cancel</button><button class="btn btn-primary" data-act="ok">Transfer</button>`,
+    onMount: (root, close) => {
+      const seasonSel = $('#xfer-season', root);
+      const teamSel = $('#xfer-team', root);
+      const refreshTeams = () => {
+        const sn = save.seasons[seasonSel.value];
+        teamSel.innerHTML = `<option value="">— None / Free Agent —</option>` +
+          (sn?.teams || []).map(t => `<option value="${t.id}">${esc(t.name)}</option>`).join('');
+      };
+      seasonSel.onchange = refreshTeams;
+      refreshTeams();
+      $('[data-act="cancel"]', root).onclick = close;
+      $('[data-act="ok"]', root).onclick = () => {
+        const r = transferDriverToSeason(driverId, state.activeSeasonId, seasonSel.value, teamSel.value || null);
+        if (r) {
+          toast(`${driver.name} transferred to ${save.seasons[seasonSel.value].year}`, 'success');
+          close();
+          renderMain();
+        } else { toast('Transfer failed', 'error'); }
+      };
+    },
+  });
+}
+
+/* =====================================================
+   FEATURE #7: STANDINGS PREDICTIONS
+   "If X happens in remaining races, who wins the championship?"
+   ===================================================== */
+function openPredictionsModal() {
+  const season = activeSeason(); if (!season) return;
+  const remaining = season.races.filter(r => !r.completed);
+  if (!remaining.length) { toast('All races complete — no predictions to make', 'info'); return; }
+
+  // For each remaining race, the user can pick a winner; we then auto-fill the rest
+  // by current standings order and compute projected final standings.
+  let picks = {}; // raceId -> driverId (the predicted winner)
+
+  modal({
+    title: `<span class="accent">Predict</span> Championship`,
+    size: 'wide',
+    body: `
+      <div class="field-help" style="margin-bottom:14px">
+        Pick a winner for each remaining race. The other positions are filled by current standings order. See who'd be champion at season's end.
+      </div>
+      <div id="pred-races"></div>
+      <div id="pred-standings" style="margin-top:24px"></div>`,
+    footer: `<button class="btn btn-ghost" data-act="cancel">Close</button>`,
+    onMount: (root, close) => {
+      $('[data-act="cancel"]', root).onclick = close;
+      const racesEl = $('#pred-races', root);
+      const stEl = $('#pred-standings', root);
+      const driverById = Object.fromEntries(season.drivers.map(d => [d.id, d]));
+      const recompute = () => {
+        // Compute current standings to get an order for tiebreaks
+        const current = calcDriverStandings(season);
+        const orderedIds = current.map(s => s.driverId);
+        // Clone the season — apply the predicted winners + auto-fill
+        const cloned = JSON.parse(JSON.stringify(season));
+        for (const race of cloned.races) {
+          if (race.completed) continue;
+          // Build a predicted result list
+          const winnerId = picks[race.id];
+          const ids = winnerId ? [winnerId, ...orderedIds.filter(id => id !== winnerId)] : orderedIds;
+          race.results = ids.slice(0, 20).map((id, i) => ({ driverId: id, position: i + 1, dnf: false, dsq: false, dns: false }));
+          race.completed = true;
+        }
+        const projected = calcDriverStandings(cloned);
+        stEl.innerHTML = `
+          <div class="members-head" style="margin-bottom:10px">PROJECTED FINAL STANDINGS</div>
+          <table class="pred-table">
+            <thead><tr><th>#</th><th>Driver</th><th>Now</th><th>Final</th><th>Δ</th></tr></thead>
+            <tbody>
+              ${projected.slice(0, 10).map((s, i) => {
+                const nowIdx = current.findIndex(c => c.driverId === s.driverId);
+                const delta = nowIdx === -1 ? 0 : (nowIdx - i);
+                const arrow = delta > 0 ? `<span style="color:var(--green)">▲${delta}</span>`
+                              : delta < 0 ? `<span style="color:var(--red)">▼${-delta}</span>`
+                              : `<span style="color:var(--text-muted)">–</span>`;
+                const drv = driverById[s.driverId];
+                return `<tr ${i===0?'class="pred-champ"':''}><td>${i+1}</td><td>${esc(drv?.name || '—')}</td><td>${current[nowIdx]?.points || 0}</td><td><b>${s.points}</b></td><td>${arrow}</td></tr>`;
+              }).join('')}
+            </tbody>
+          </table>`;
+      };
+      racesEl.innerHTML = remaining.map(r => `
+        <div class="pred-race-row">
+          <div class="pred-race-num">R${r.round}</div>
+          <div class="pred-race-name">${esc(r.name)}</div>
+          <select class="pred-winner" data-race="${r.id}">
+            <option value="">— pick winner —</option>
+            ${season.drivers.map(d => `<option value="${d.id}">${esc(d.name)}</option>`).join('')}
+          </select>
+        </div>`).join('');
+      $$('.pred-winner', racesEl).forEach(s => {
+        s.onchange = () => { picks[s.dataset.race] = s.value; recompute(); };
+      });
+      recompute();
+    },
+  });
+}
+
+/* =====================================================
+   FEATURE #8: SEASON TEMPLATES — save a season's setup as a reusable shell
+   ===================================================== */
+function saveSeasonTemplate(name, note = '') {
+  const season = activeSeason(); if (!season) return null;
+  const tpl = {
+    id: uid(),
+    name: (name || '').trim() || `${season.year} template`,
+    savedAt: Date.now(),
+    note: note.trim(),
+    data: {
+      pointsSystemId: season.pointsSystemId,
+      polePointEnabled: season.polePointEnabled || false,
+      polePointValue: season.polePointValue || 1,
+      flEnabled: season.flEnabled !== false,
+      teams: (season.teams || []).map(t => ({ ...t, id: uid() })),
+      drivers: (season.drivers || []).map(d => ({ ...d, id: uid() })),
+      races: (season.races || []).map(r => ({
+        round: r.round, name: r.name, circuit: r.circuit, country: r.country,
+        flagImage: r.flagImage || null, sprint: r.sprint || false,
+      })),
+    },
+  };
+  state.seasonTemplates = state.seasonTemplates || [];
+  state.seasonTemplates.unshift(tpl);
+  saveState();
+  return tpl;
+}
+function deleteSeasonTemplate(id) {
+  state.seasonTemplates = (state.seasonTemplates || []).filter(t => t.id !== id);
+  saveState();
+}
+function instantiateSeasonTemplate(tplId, newYear, newName) {
+  const tpl = (state.seasonTemplates || []).find(t => t.id === tplId);
+  const save = activeSave(); if (!tpl || !save) return null;
+  // Build a fresh season from the template, regenerating all IDs
+  const teamMap = {};
+  const newTeams = tpl.data.teams.map(t => {
+    const id = uid(); teamMap[t.id] = id;
+    return { ...t, id, dsq: false };
+  });
+  const newDrivers = tpl.data.drivers.map(d => ({
+    ...d, id: uid(),
+    teamId: d.teamId ? teamMap[d.teamId] : null,
+    dsq: false,
+  }));
+  const newRaces = tpl.data.races.map(r => ({
+    ...r, id: uid(),
+    completed: false,
+    results: [], sprintResults: [],
+    poleDriverId: null, fastestLapDriverId: null,
+    date: null,
+  }));
+  const newSeason = {
+    id: uid(),
+    name: (newName || '').trim() || tpl.name,
+    year: newYear,
+    pointsSystemId: tpl.data.pointsSystemId,
+    polePointEnabled: tpl.data.polePointEnabled,
+    polePointValue: tpl.data.polePointValue,
+    flEnabled: tpl.data.flEnabled,
+    teams: newTeams,
+    drivers: newDrivers,
+    races: newRaces,
+  };
+  save.seasons[newSeason.id] = newSeason;
+  state.activeSeasonId = newSeason.id;
+  state.view = 'dashboard';
+  saveState();
+  return newSeason;
+}
+
+function openSeasonTemplatesModal() {
+  const save = activeSave(); if (!save) return;
+  const season = activeSeason();
+  const templates = state.seasonTemplates || [];
+
+  modal({
+    title: `<span class="accent">Season</span> Templates`,
+    size: 'wide',
+    body: `
+      <div class="field-help" style="margin-bottom:18px">
+        Save the current season's setup (calendar, teams, drivers, points system — no results) as a reusable template. Spin up a new season modeled on it in seconds.
+      </div>
+      ${season ? `
+      <div class="share-section">
+        <div class="share-section-head">SAVE CURRENT SEASON AS A TEMPLATE</div>
+        <div class="roster-save-row" style="display:flex;gap:10px;align-items:flex-end">
+          <div class="field" style="flex:1;margin:0"><label>Template name</label><input type="text" id="tpl-name" placeholder="e.g. ${esc(String(season.year))} season skeleton" maxlength="60"></div>
+          <button class="btn btn-primary" id="tpl-save">★ SAVE TEMPLATE</button>
+        </div>
+      </div>` : ''}
+      <div class="share-section">
+        <div class="share-section-head">SAVED TEMPLATES · <span id="tpl-count">${templates.length}</span></div>
+        <div id="tpl-list"></div>
+      </div>`,
+    footer: `<button class="btn btn-ghost" data-act="cancel">Done</button>`,
+    onMount: (root, close) => {
+      $('[data-act="cancel"]', root).onclick = close;
+      const listEl = $('#tpl-list', root);
+      const renderList = () => {
+        const tpls = state.seasonTemplates || [];
+        const countSpan = $('#tpl-count', root);
+        if (countSpan) countSpan.textContent = tpls.length;
+        if (!tpls.length) {
+          listEl.innerHTML = `<div class="empty-row">No templates yet.</div>`;
+          return;
+        }
+        listEl.innerHTML = tpls.map(t => `
+          <div class="rc-row" data-id="${t.id}">
+            <div class="rc-head">
+              <div class="rc-name">${esc(t.name)}</div>
+              <div class="rc-meta">${t.data.teams.length} teams · ${t.data.drivers.length} drivers · ${t.data.races.length} races</div>
+            </div>
+            <div class="rc-actions">
+              <button class="btn btn-ghost" data-act="use">+ NEW SEASON FROM THIS</button>
+              <button class="btn btn-ghost" data-act="del" style="color:var(--red)">× DELETE</button>
+            </div>
+          </div>`).join('');
+        $$('[data-act="use"]', listEl).forEach(b => {
+          b.onclick = () => {
+            const row = b.closest('.rc-row'); const id = row.dataset.id;
+            const yr = parseInt(prompt('New season year:', String(new Date().getFullYear() + 1)) || '0', 10);
+            if (!yr) return;
+            const nm = prompt('New season name (optional):', '') || '';
+            const r = instantiateSeasonTemplate(id, yr, nm);
+            if (r) { toast(`Created ${yr} season from template`, 'success'); close(); renderAll(); }
+          };
+        });
+        $$('[data-act="del"]', listEl).forEach(b => {
+          b.onclick = () => {
+            const row = b.closest('.rc-row'); const id = row.dataset.id;
+            if (!confirm('Delete this template?')) return;
+            deleteSeasonTemplate(id);
+            renderList();
+            toast('Template deleted', 'success');
+          };
+        });
+      };
+      renderList();
+      $('#tpl-save', root)?.addEventListener('click', () => {
+        const name = $('#tpl-name', root).value;
+        const tpl = saveSeasonTemplate(name);
+        if (tpl) {
+          toast(`Template "${tpl.name}" saved`, 'success');
+          $('#tpl-name', root).value = '';
+          renderList();
+        }
+      });
+    },
+  });
+}
+
+/* =====================================================
+   FEATURE #10: RACE WEEKEND TIMELINE VIEW
+   Shows a single race as a chronological flow: Qualifying → Sprint → Race
+   ===================================================== */
+function buildRaceTimelineHTML(race, season) {
+  const driverById = Object.fromEntries(season.drivers.map(d => [d.id, d]));
+  const sessions = [];
+  // Qualifying — pole driver
+  if (race.poleDriverId) {
+    const drv = driverById[race.poleDriverId];
+    sessions.push({
+      title: 'QUALIFYING',
+      icon: '⏱',
+      highlight: drv ? `<b>${esc(drv.name)}</b> took pole position` : 'Pole position set',
+      color: 'var(--sec-blue)',
+    });
+  } else if (race.completed) {
+    sessions.push({ title: 'QUALIFYING', icon: '⏱', highlight: 'No pole recorded', color: 'var(--text-muted)' });
+  }
+  // Sprint
+  if (race.sprint && race.sprintResults?.length) {
+    const winner = race.sprintResults.find(r => r.position === 1);
+    const drv = winner ? driverById[winner.driverId] : null;
+    sessions.push({
+      title: 'SPRINT',
+      icon: '🏁',
+      highlight: drv ? `<b>${esc(drv.name)}</b> won the sprint` : 'Sprint completed',
+      color: '#f59e0b',
+    });
+  }
+  // Race
+  if (race.completed && race.results?.length) {
+    const winner = race.results.find(r => r.position === 1);
+    const flDrv = race.fastestLapDriverId ? driverById[race.fastestLapDriverId] : null;
+    const drv = winner ? driverById[winner.driverId] : null;
+    sessions.push({
+      title: 'RACE',
+      icon: '🏆',
+      highlight: drv ? `<b>${esc(drv.name)}</b> took the win` : 'Race completed',
+      sub: flDrv ? `Fastest lap: ${esc(flDrv.name)}` : '',
+      color: 'var(--gold)',
+    });
+  } else if (!race.completed) {
+    sessions.push({ title: 'RACE', icon: '🏆', highlight: '— upcoming —', color: 'var(--text-muted)' });
+  }
+
+  return `
+    <div class="race-timeline">
+      ${sessions.map((s, i) => `
+        <div class="race-timeline-step" style="--ts-color:${s.color}">
+          ${i > 0 ? '<div class="race-timeline-connector"></div>' : ''}
+          <div class="race-timeline-icon">${s.icon}</div>
+          <div class="race-timeline-body">
+            <div class="race-timeline-title">${s.title}</div>
+            <div class="race-timeline-highlight">${s.highlight}</div>
+            ${s.sub ? `<div class="race-timeline-sub">${s.sub}</div>` : ''}
+          </div>
+        </div>
+      `).join('')}
+    </div>`;
+}
+
+/* =====================================================
+   FEATURE #12: DRIVER STATS COMPARISON
+   ===================================================== */
+function openDriverComparison() {
+  const save = activeSave(); if (!save) return;
+  // Collect every (driver, season) combination across all seasons in this save.
+  // calcDriverStandings returns an array of stat rows indexed by driverId.
+  const allDrivers = [];
+  for (const season of Object.values(save.seasons || {})) {
+    const standings = calcDriverStandings(season);
+    const statsByDriverId = Object.fromEntries(standings.map(s => [s.driverId, s]));
+    for (const d of season.drivers || []) {
+      const stats = statsByDriverId[d.id] || { points: 0, wins: 0, podiums: 0, polePositions: 0, fastestLaps: 0, races: 0, dnfs: 0 };
+      allDrivers.push({
+        key: `${d.id}::${season.id}`,
+        label: `${d.name} (${season.year})`,
+        driver: d, season, stats,
+      });
+    }
+  }
+  if (allDrivers.length < 2) { toast('Need at least 2 driver-seasons to compare', 'info'); return; }
+
+  let pickA = null, pickB = null;
+
+  const render = (root) => {
+    const compare = $('#cmp-content', root);
+    if (!pickA || !pickB) {
+      compare.innerHTML = `<div class="empty-row" style="padding:40px 20px;text-align:center;color:var(--text-muted)">Pick two drivers above to compare them.</div>`;
+      return;
+    }
+    const A = allDrivers.find(d => d.key === pickA);
+    const B = allDrivers.find(d => d.key === pickB);
+    if (!A || !B) return;
+    const rows = [
+      ['Points',      A.stats.points,         B.stats.points],
+      ['Wins',        A.stats.wins,           B.stats.wins],
+      ['Podiums',     A.stats.podiums,        B.stats.podiums],
+      ['Poles',       A.stats.polePositions,  B.stats.polePositions],
+      ['Fastest Laps',A.stats.fastestLaps,    B.stats.fastestLaps],
+      ['Races',       A.stats.races,          B.stats.races],
+      ['DNFs',        A.stats.dnfs,           B.stats.dnfs],
+    ];
+    compare.innerHTML = `
+      <div class="cmp-grid">
+        <div class="cmp-col">
+          <div class="cmp-name">${esc(A.driver.name)}</div>
+          <div class="cmp-sub">${esc(String(A.season.year))} · ${esc(A.season.name)}</div>
+          <div class="cmp-flag">${flag(A.driver.country)} ${esc(A.driver.country || '')}</div>
+        </div>
+        <div class="cmp-mid">
+          ${rows.map(([label, a, b]) => `
+            <div class="cmp-row">
+              <div class="cmp-val ${a > b ? 'win' : a < b ? 'lose' : ''}">${a}</div>
+              <div class="cmp-lbl">${label}</div>
+              <div class="cmp-val ${b > a ? 'win' : b < a ? 'lose' : ''}">${b}</div>
+            </div>`).join('')}
+        </div>
+        <div class="cmp-col">
+          <div class="cmp-name">${esc(B.driver.name)}</div>
+          <div class="cmp-sub">${esc(String(B.season.year))} · ${esc(B.season.name)}</div>
+          <div class="cmp-flag">${flag(B.driver.country)} ${esc(B.driver.country || '')}</div>
+        </div>
+      </div>`;
+  };
+
+  modal({
+    title: `<span class="accent">Compare</span> Drivers`,
+    size: 'wide',
+    body: `
+      <div style="display:flex;gap:12px;margin-bottom:18px">
+        <div class="field" style="flex:1;margin:0">
+          <label>Driver A</label>
+          <select id="cmp-a">
+            <option value="">— pick —</option>
+            ${allDrivers.map(d => `<option value="${d.key}">${esc(d.label)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="field" style="flex:1;margin:0">
+          <label>Driver B</label>
+          <select id="cmp-b">
+            <option value="">— pick —</option>
+            ${allDrivers.map(d => `<option value="${d.key}">${esc(d.label)}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+      <div id="cmp-content"></div>`,
+    footer: `<button class="btn btn-ghost" data-act="cancel">Close</button>`,
+    onMount: (root, close) => {
+      $('[data-act="cancel"]', root).onclick = close;
+      $('#cmp-a', root).onchange = (e) => { pickA = e.target.value; render(root); };
+      $('#cmp-b', root).onchange = (e) => { pickB = e.target.value; render(root); };
+      render(root);
+    },
+  });
+}
+
+function openBulkImportDrivers() {
+  const season = activeSeason(); if (!season) return;
+  let parsed = [];
+  // Find next available numbers for any driver without one
+  const usedNumbers = new Set(season.drivers.map(d => d.number).filter(n => typeof n === 'number'));
+  const nextNumber = () => {
+    for (let i = 1; i < 99; i++) if (!usedNumbers.has(i)) { usedNumbers.add(i); return i; }
+    return null;
+  };
+
+  modal({
+    title: `<span class="accent">Bulk Import</span> Drivers`,
+    size: 'wide',
+    body: `
+      <div class="field-help" style="margin-bottom:14px">
+        Paste a list of drivers, one per line. Each line can include name + 3-letter country code + race number, in any common format. Examples:
+      </div>
+      <pre style="background:var(--bg-elev);padding:10px 14px;border-radius:6px;font-size:11px;color:var(--text-soft);margin-bottom:14px;line-height:1.6">44 Lewis Hamilton GBR
+Max Verstappen NED 1
+Charles Leclerc, MON, 16
+Carlos Sainz | ESP | 55
+Lando Norris GBR</pre>
+      <div class="field">
+        <label>Paste your list</label>
+        <textarea id="bulk-text" rows="10" placeholder="One driver per line…" style="font-family:var(--f-mono);font-size:12px"></textarea>
+      </div>
+      <div id="bulk-preview" style="margin-top:14px"></div>`,
+    footer: `<button class="btn btn-ghost" data-act="cancel">Cancel</button><button class="btn btn-primary" data-act="ok" disabled>Import 0</button>`,
+    onMount: (root, close) => {
+      const ta = $('#bulk-text', root);
+      const previewEl = $('#bulk-preview', root);
+      const okBtn = $('[data-act="ok"]', root);
+      const refresh = () => {
+        parsed = parseBulkRosterText(ta.value);
+        okBtn.disabled = !parsed.length;
+        okBtn.textContent = `Import ${parsed.length}`;
+        if (!parsed.length) { previewEl.innerHTML = ''; return; }
+        previewEl.innerHTML = `
+          <div class="members-head" style="margin:14px 0 8px">PREVIEW · ${parsed.length} DRIVER${parsed.length === 1 ? '' : 'S'}</div>
+          <div class="bulk-preview-grid">
+            ${parsed.map(d => `
+              <div class="bulk-preview-row">
+                <span class="bulk-preview-num">${d.number || '–'}</span>
+                <span class="bulk-preview-name">${esc(d.name)}</span>
+                <span class="bulk-preview-flag">${d.country ? flag(d.country) + ' ' + esc(d.country) : '<span style="color:var(--text-muted)">(no flag)</span>'}</span>
+              </div>`).join('')}
+          </div>`;
+      };
+      ta.addEventListener('input', refresh);
+      $('[data-act="cancel"]', root).onclick = close;
+      okBtn.onclick = () => {
+        for (const d of parsed) {
+          season.drivers.push({
+            id: uid(),
+            name: d.name,
+            number: d.number ?? nextNumber(),
+            country: d.country || '',
+            photo: '',
+            teamId: null,
+            dsq: false,
+          });
+        }
+        saveState();
+        toast(`Imported ${parsed.length} driver${parsed.length === 1 ? '' : 's'}`, 'success');
+        close();
+        renderMain();
+      };
+    },
+  });
+}
+
 function openRosterClasses(kind) {
   const isDriver = kind === 'driver';
   const season = activeSeason(); if (!season) return;
@@ -5588,12 +6609,27 @@ function renderAll() {
   renderTopbar();
   renderTabs();
   renderMain();
+  // Keep presence channel in sync with the active save
+  if (CLOUD.enabled && currentUser) {
+    const desiredKey = state.activeSaveId ? `presence:save:${state.activeSaveId}` : null;
+    const currentKey = presenceChannel?.topic || null;
+    if (desiredKey !== currentKey) {
+      if (presenceChannel) {
+        CLOUD.client.removeChannel(presenceChannel);
+        presenceChannel = null;
+        presenceState = {};
+      }
+      if (state.activeSaveId) cloudSubscribePresence(state.activeSaveId);
+    }
+    renderPresenceDots();
+  }
 }
 
 /* ---------- init ---------- */
 (async () => {
   if (CLOUD.enabled) {
     const signedIn = await cloudInit();
+    if (isPublicView) return; // Public view took over — skip normal app render
     if (!signedIn) {
       // Build the shell first so signin screen can target #app
       renderTopbar(); renderTabs();
