@@ -5549,31 +5549,69 @@ const F1_CODE_TO_TRACK_HINT = {
 // Both sources are matched by country + optional circuitContains.
 function matchTrackPresetForCode(code) {
   const codeKey = (code || '').toUpperCase().trim();
+  if (!codeKey) return null;
+
+  // Pre-compute disambiguation hint (if any). The hint tells us which preset
+  // to pick when one country has multiple tracks (USA = Miami/Austin/Vegas,
+  // ITA = Monza/Imola, ESP = Catalunya/Valencia, etc.). Applied to both the
+  // direct-match path and the alias path.
   const hint = F1_CODE_TO_TRACK_HINT[codeKey];
+
+  // Helper: pick the best match from a list of candidates that all share the
+  // same country code. Uses circuitContains hint to disambiguate, then prefers
+  // Current era.
+  const pickBest = (candidates) => {
+    if (!candidates.length) return null;
+    let pool = candidates;
+    if (hint?.circuitContains) {
+      const matched = candidates.filter(p =>
+        (p.circuit || '').toLowerCase().includes(hint.circuitContains.toLowerCase())
+      );
+      if (matched.length) pool = matched;
+    }
+    return pool.find(p => p.era === 'Current') || pool[0];
+  };
+
+  // Step 1: DIRECT match — preset country equals pasted code exactly.
+  // Try user customs first.
+  const customs = state.customTrackPresets || [];
+  const customCandidates = customs.filter(p => (p.country || '').toUpperCase().trim() === codeKey);
+  const customDirect = pickBest(customCandidates);
+  if (customDirect) {
+    return { ...customDirect, source: 'custom track preset' };
+  }
+  // Then built-in TRACK_PRESETS.
+  const builtInCandidates = TRACK_PRESETS.filter(p => (p.country || '').toUpperCase().trim() === codeKey);
+  const builtInDirect = pickBest(builtInCandidates);
+  if (builtInDirect) {
+    return { ...builtInDirect, source: builtInDirect.era === 'Current' ? 'track preset (current)' : `track preset (${builtInDirect.era})` };
+  }
+
+  // Step 2: ALIAS match — pasted code is an F1 abbreviation that needs translation
+  // (e.g. SAU → KSA, SIN → SGP, MON → MCO). Look up via the hint table.
   if (!hint) return null;
 
-  // Helper: does this preset match the hint?
-  const matches = (preset) => {
+  const aliasedMatch = (preset) => {
     if ((preset.country || '').toUpperCase() !== hint.country) return false;
     if (hint.circuitContains) {
-      const c = (preset.circuit || '').toLowerCase();
-      return c.includes(hint.circuitContains.toLowerCase());
+      return (preset.circuit || '').toLowerCase().includes(hint.circuitContains.toLowerCase());
     }
     return true;
   };
 
-  // 1. Try user customs first (most specific to this user)
-  const customs = state.customTrackPresets || [];
-  const customHit = customs.find(matches);
-  if (customHit) {
-    return { ...customHit, source: 'custom track preset' };
+  // 2a. Customs with alias
+  const customAliasCandidates = customs.filter(aliasedMatch);
+  const customAlias = customAliasCandidates.find(p => p.era === 'Current') || customAliasCandidates[0];
+  if (customAlias) {
+    return { ...customAlias, source: 'custom track preset' };
   }
-  // 2. Then built-in TRACK_PRESETS — prefer 'Current' era when multiple match
-  const builtIn = TRACK_PRESETS.filter(matches);
-  if (builtIn.length) {
-    const preferred = builtIn.find(p => p.era === 'Current') || builtIn[0];
-    return { ...preferred, source: builtIn.find(p => p.era === 'Current') ? 'track preset (current)' : `track preset (${preferred.era})` };
+  // 2b. Built-in with alias
+  const builtInAliasCandidates = TRACK_PRESETS.filter(aliasedMatch);
+  const builtInAlias = builtInAliasCandidates.find(p => p.era === 'Current') || builtInAliasCandidates[0];
+  if (builtInAlias) {
+    return { ...builtInAlias, source: builtInAlias.era === 'Current' ? 'track preset (current)' : `track preset (${builtInAlias.era})` };
   }
+
   return null;
 }
 
