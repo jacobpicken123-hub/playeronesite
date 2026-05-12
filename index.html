@@ -5113,6 +5113,118 @@ async function cloudPushActive() {
   }
 }
 
+/* =====================================================
+   CLOUD DELETION HELPERS
+   ---------------------------------------------------------------
+   These exist because the original cloud sync was upsert-only.
+   When you deleted something locally, the cloud copy stayed alive,
+   and the next pull (on sign-in, refresh, or any realtime event)
+   would re-hydrate the deleted row from Supabase.
+
+   Each helper:
+   1. Issues an explicit DELETE to Supabase. CASCADE in the schema
+      means deleting a save cascades to seasons → teams/drivers/races
+      → race_results/sprint_results. So we only need to delete the
+      topmost entity in each case.
+   2. Strips the deleted entity's hashes from cloudLastPushHashes so
+      the next push doesn't try to re-create it.
+   3. Bumps pendingCloudWrites so the realtime echo of our own
+      DELETE doesn't trigger a pull-down that overwrites local state
+      during the brief window before our pull settles.
+
+   All helpers are safe to call when CLOUD.enabled is false — they
+   no-op silently. Local-only deletes still work as before.
+   ===================================================== */
+async function cloudDeleteSave(saveId) {
+  if (!CLOUD.enabled || !currentUser || !saveId) return;
+  pendingCloudWrites++;
+  try {
+    const { error } = await CLOUD.client.from('saves').delete().eq('id', saveId);
+    if (error) console.warn('[P1] cloudDeleteSave failed', error);
+    // Strip all hashes that referenced this save's seasons/teams/drivers/races
+    // (we don't track save:<id> hashes, but its children may be tracked)
+    for (const k of Object.keys(cloudLastPushHashes)) {
+      // We can't know which child belongs to which save without a lookup,
+      // so for a save-level delete just blow the whole cache. Next push
+      // will recompute hashes for surviving saves from scratch.
+      delete cloudLastPushHashes[k];
+    }
+    cloudSaveIds.delete(saveId);
+  } finally {
+    // Settle pending counter after a short delay so the realtime echo arrives during the hold window
+    setTimeout(() => { pendingCloudWrites = Math.max(0, pendingCloudWrites - 1); }, 600);
+  }
+}
+
+async function cloudDeleteSeason(seasonId) {
+  if (!CLOUD.enabled || !currentUser || !seasonId) return;
+  pendingCloudWrites++;
+  try {
+    const { error } = await CLOUD.client.from('seasons').delete().eq('id', seasonId);
+    if (error) console.warn('[P1] cloudDeleteSeason failed', error);
+    // Clean hashes for this season + any of its children that we track
+    delete cloudLastPushHashes[`season:${seasonId}`];
+    for (const k of Object.keys(cloudLastPushHashes)) {
+      // We don't store the season-id on child hash keys, so we can't
+      // selectively prune. Safe fallback: drop all team/driver/race/results
+      // hashes — they'll be recomputed on next push.
+      if (k.startsWith('team:') || k.startsWith('driver:') ||
+          k.startsWith('race:') || k.startsWith('results:') || k.startsWith('sprint:')) {
+        delete cloudLastPushHashes[k];
+      }
+    }
+  } finally {
+    setTimeout(() => { pendingCloudWrites = Math.max(0, pendingCloudWrites - 1); }, 600);
+  }
+}
+
+async function cloudDeleteDriver(driverId) {
+  if (!CLOUD.enabled || !currentUser || !driverId) return;
+  pendingCloudWrites++;
+  try {
+    const { error } = await CLOUD.client.from('drivers').delete().eq('id', driverId);
+    if (error) console.warn('[P1] cloudDeleteDriver failed', error);
+    delete cloudLastPushHashes[`driver:${driverId}`];
+    // Driver deletion cascades to race_results and sprint_results in the schema,
+    // so those child caches need clearing too — they'll be re-pushed next time.
+    for (const k of Object.keys(cloudLastPushHashes)) {
+      if (k.startsWith('results:') || k.startsWith('sprint:')) delete cloudLastPushHashes[k];
+    }
+  } finally {
+    setTimeout(() => { pendingCloudWrites = Math.max(0, pendingCloudWrites - 1); }, 600);
+  }
+}
+
+async function cloudDeleteTeam(teamId) {
+  if (!CLOUD.enabled || !currentUser || !teamId) return;
+  pendingCloudWrites++;
+  try {
+    const { error } = await CLOUD.client.from('teams').delete().eq('id', teamId);
+    if (error) console.warn('[P1] cloudDeleteTeam failed', error);
+    delete cloudLastPushHashes[`team:${teamId}`];
+    // Team deletion sets drivers.team_id = NULL (schema rule), so drivers may need re-push.
+    for (const k of Object.keys(cloudLastPushHashes)) {
+      if (k.startsWith('driver:')) delete cloudLastPushHashes[k];
+    }
+  } finally {
+    setTimeout(() => { pendingCloudWrites = Math.max(0, pendingCloudWrites - 1); }, 600);
+  }
+}
+
+async function cloudDeleteRace(raceId) {
+  if (!CLOUD.enabled || !currentUser || !raceId) return;
+  pendingCloudWrites++;
+  try {
+    const { error } = await CLOUD.client.from('races').delete().eq('id', raceId);
+    if (error) console.warn('[P1] cloudDeleteRace failed', error);
+    delete cloudLastPushHashes[`race:${raceId}`];
+    delete cloudLastPushHashes[`results:${raceId}`];
+    delete cloudLastPushHashes[`sprint:${raceId}`];
+  } finally {
+    setTimeout(() => { pendingCloudWrites = Math.max(0, pendingCloudWrites - 1); }, 600);
+  }
+}
+
 // Debounced sync — called from saveState; coalesces a flurry of edits into one push
 function scheduleCloudSync() {
   if (!CLOUD.enabled || !currentUser) return;
@@ -6382,6 +6494,10 @@ function createSave(name) {
 }
 
 function deleteSave(id) {
+  // Issue the cloud delete BEFORE removing from local state so the helper can
+  // still see the save_id in cloudSaveIds for cleanup. The promise fires-and-forgets;
+  // local state proceeds regardless of cloud success.
+  cloudDeleteSave(id);
   delete state.saves[id];
   if (state.activeSaveId === id) {
     state.activeSaveId = null;
@@ -6538,6 +6654,7 @@ function createSeason({
 
 function deleteSeason(id) {
   const save = activeSave(); if (!save) return;
+  cloudDeleteSeason(id);
   delete save.seasons[id];
   if (state.activeSeasonId === id) {
     state.activeSeasonId = null;
@@ -6581,6 +6698,7 @@ function toggleTeamDsq(id) {
 }
 function deleteDriver(id) {
   const s = activeSeason(); if (!s) return;
+  cloudDeleteDriver(id);
   s.drivers = s.drivers.filter(x => x.id !== id);
   s.races.forEach(r => {
     r.results = r.results.filter(x => x.driverId !== id);
@@ -6612,6 +6730,7 @@ function updateTeam(id, patch) {
 }
 function deleteTeam(id) {
   const s = activeSeason(); if (!s) return;
+  cloudDeleteTeam(id);
   s.teams = s.teams.filter(x => x.id !== id);
   s.drivers.forEach(d => { if (d.teamId === id) d.teamId = null; });
   saveState();
@@ -6636,6 +6755,7 @@ function updateRace(id, patch) {
 }
 function deleteRace(id) {
   const s = activeSeason(); if (!s) return;
+  cloudDeleteRace(id);
   s.races = s.races.filter(x => x.id !== id);
   s.races.forEach((r, i) => r.round = i + 1);
   saveState();
@@ -10101,6 +10221,9 @@ function openNewSeasonModal() {
 
 // Race-code → race metadata. Covers every F1.com / Wikipedia 3-letter abbreviation
 // I've seen in active rotation. Unknown codes still import as "{CODE} Grand Prix".
+// NOTE: this is the LEGACY hardcoded map kept only as a final fallback. The real
+// source of truth is now matchTrackPresetForCode() below, which consults the
+// TRACK_PRESETS library and any user-saved custom track presets.
 const F1_RACE_CODE_MAP = {
   BHR: { name: 'Bahrain Grand Prix',         circuit: 'Bahrain International', country: 'BHR' },
   SAU: { name: 'Saudi Arabian Grand Prix',   circuit: 'Jeddah Corniche',       country: 'KSA' },
@@ -10143,6 +10266,90 @@ const F1_RACE_CODE_MAP = {
   TUR: { name: 'Turkish Grand Prix',         circuit: 'Istanbul Park',         country: 'TUR' },
   POR: { name: 'Portuguese Grand Prix',      circuit: 'Algarve',               country: 'POR' },
 };
+
+// Maps F1.com pasted codes to track-preset matching hints. Each entry says:
+//   - "country" — the country code to look up in TRACK_PRESETS
+//   - "circuitContains" — a substring of the canonical circuit name (used to
+//     disambiguate when one country has multiple tracks, e.g. USA has Miami,
+//     Austin, and Las Vegas).
+const F1_CODE_TO_TRACK_HINT = {
+  BHR:  { country: 'BHR' },
+  SAU:  { country: 'KSA' },                                   // F1 uses SAU, presets use KSA
+  KSA:  { country: 'KSA' },
+  AUS:  { country: 'AUS' },
+  CHN:  { country: 'CHN' },
+  AZE:  { country: 'AZE' },
+  MIA:  { country: 'USA', circuitContains: 'Miami' },
+  EMI:  { country: 'ITA', circuitContains: 'Imola' },
+  IMO:  { country: 'ITA', circuitContains: 'Imola' },
+  MON:  { country: 'MCO' },                                   // F1 uses MON, presets use MCO
+  MCO:  { country: 'MCO' },
+  ESP:  { country: 'ESP', circuitContains: 'Catalunya' },     // ESP also has Valencia historically
+  CAN:  { country: 'CAN' },
+  AUT:  { country: 'AUT' },
+  GBR:  { country: 'GBR' },
+  HUN:  { country: 'HUN' },
+  BEL:  { country: 'BEL' },
+  NED:  { country: 'NED' },
+  NLD:  { country: 'NED' },
+  ITA:  { country: 'ITA', circuitContains: 'Monza' },         // ITA has Monza AND Imola
+  SIN:  { country: 'SGP' },                                   // F1 uses SIN, presets use SGP
+  SGP:  { country: 'SGP' },
+  JPN:  { country: 'JPN' },
+  QAT:  { country: 'QAT' },
+  USA:  { country: 'USA', circuitContains: 'Americas' },      // F1 USA = Austin (COTA)
+  COTA: { country: 'USA', circuitContains: 'Americas' },
+  MXC:  { country: 'MEX' },
+  MEX:  { country: 'MEX' },
+  SAP:  { country: 'BRA' },                                   // F1 uses SAP for São Paulo
+  BRA:  { country: 'BRA' },
+  LVG:  { country: 'USA', circuitContains: 'Vegas' },         // disambiguate vs Miami/Austin
+  LAS:  { country: 'USA', circuitContains: 'Vegas' },
+  ABU:  { country: 'UAE' },
+  UAE:  { country: 'UAE' },
+  FRA:  { country: 'FRA' },
+  GER:  { country: 'GER' },
+  DEU:  { country: 'GER' },
+  RUS:  { country: 'RUS' },
+  TUR:  { country: 'TUR' },
+  POR:  { country: 'POR' },
+};
+
+// Find a track preset (built-in or custom) that matches a pasted F1 race code.
+// Returns { name, circuit, country, length?, sprint?, source } or null if no match.
+// Priority:
+//   1. User's customTrackPresets (so user overrides always win)
+//   2. Built-in TRACK_PRESETS
+// Both sources are matched by country + optional circuitContains.
+function matchTrackPresetForCode(code) {
+  const codeKey = (code || '').toUpperCase().trim();
+  const hint = F1_CODE_TO_TRACK_HINT[codeKey];
+  if (!hint) return null;
+
+  // Helper: does this preset match the hint?
+  const matches = (preset) => {
+    if ((preset.country || '').toUpperCase() !== hint.country) return false;
+    if (hint.circuitContains) {
+      const c = (preset.circuit || '').toLowerCase();
+      return c.includes(hint.circuitContains.toLowerCase());
+    }
+    return true;
+  };
+
+  // 1. Try user customs first (most specific to this user)
+  const customs = state.customTrackPresets || [];
+  const customHit = customs.find(matches);
+  if (customHit) {
+    return { ...customHit, source: 'custom track preset' };
+  }
+  // 2. Then built-in TRACK_PRESETS — prefer 'Current' era when multiple match
+  const builtIn = TRACK_PRESETS.filter(matches);
+  if (builtIn.length) {
+    const preferred = builtIn.find(p => p.era === 'Current') || builtIn[0];
+    return { ...preferred, source: builtIn.find(p => p.era === 'Current') ? 'track preset (current)' : `track preset (${preferred.era})` };
+  }
+  return null;
+}
 
 // Same-row team-name normalisation. F1.com uses a few different spellings.
 // Maps the raw text → canonical team name, short code, and a default colour.
@@ -10415,23 +10622,22 @@ function buildSeasonFromImport(parsed, opts) {
     season.drivers.push(driverObj);
   }
 
-  // 3. Build races — one per header code (or per raceCodes override)
+  // 3. Build races — one per header code (or per raceCodes override).
   // Resolution priority for each race code:
-  //   (a) If opts.calendarPresetId points to a saved preset whose country codes
-  //       match the pasted codes (in order), use that preset's race info.
-  //   (b) If opts.raceCodes is supplied and length matches, use those codes
-  //       and look each one up in saved presets first, then F1_RACE_CODE_MAP.
-  //   (c) Fall back to the pasted parsed.headers (e.g. "R1" placeholders).
+  //   (a) Selected calendar preset's country-code index (if user picked one in modal)
+  //   (b) Any other saved calendar preset's index
+  //   (c) Track preset library (user customs first, then built-in TRACK_PRESETS)
+  //   (d) Hardcoded F1_RACE_CODE_MAP (legacy fallback)
+  //   (e) Generic "{CODE} Grand Prix"
   const headerCodes = (opts.raceCodes && opts.raceCodes.length === parsed.headers.length)
     ? opts.raceCodes
     : parsed.headers;
 
-  // Build a lookup index: country-code (uppercase) → race-from-preset
-  // We index ALL saved presets so any code can resolve regardless of which preset it's from.
-  // The user-selected preset (opts.calendarPresetId) is checked first so its entries win on conflicts.
+  // Build a lookup index from CALENDAR PRESETS (full saved season calendars).
+  // Selected preset wins on conflicts.
   const presetById = id => (state.calendarPresets || []).find(p => p.id === id);
   const codeIndex = {}; // 'BHR' -> { name, circuit, country, flagImage, sprint }
-  const indexPreset = (preset) => {
+  const indexCalPreset = (preset) => {
     if (!preset) return;
     preset.races.forEach(r => {
       const key = (r.country || '').toUpperCase().trim();
@@ -10446,10 +10652,8 @@ function buildSeasonFromImport(parsed, opts) {
       }
     });
   };
-  // 1. Selected preset first (highest priority)
-  if (opts.calendarPresetId) indexPreset(presetById(opts.calendarPresetId));
-  // 2. Then all other presets
-  (state.calendarPresets || []).forEach(p => indexPreset(p));
+  if (opts.calendarPresetId) indexCalPreset(presetById(opts.calendarPresetId));
+  (state.calendarPresets || []).forEach(p => indexCalPreset(p));
 
   // Detect which races had sprints — any race where ANY driver has sprintPoints > 0
   const hadSprint = parsed.headers.map((_, ri) =>
@@ -10458,10 +10662,18 @@ function buildSeasonFromImport(parsed, opts) {
 
   const raceObjs = headerCodes.map((code, idx) => {
     const codeKey = (code || '').toUpperCase().trim();
-    // Resolution order: saved-preset index → built-in F1 map → fallback
-    const meta = codeIndex[codeKey]
-                 || F1_RACE_CODE_MAP[codeKey]
-                 || { name: `${code} Grand Prix`, circuit: code, country: code };
+    // Step 1: calendar-preset country index
+    let meta = codeIndex[codeKey];
+    // Step 2: track preset library (user customs + built-in TRACK_PRESETS)
+    if (!meta) {
+      const tp = matchTrackPresetForCode(codeKey);
+      if (tp) meta = { name: tp.name, circuit: tp.circuit, country: tp.country, sprint: !!tp.sprint };
+    }
+    // Step 3: hardcoded F1 map (legacy)
+    if (!meta) meta = F1_RACE_CODE_MAP[codeKey];
+    // Step 4: generic fallback
+    if (!meta) meta = { name: `${code} Grand Prix`, circuit: code, country: code };
+
     return {
       id: uid(),
       round: idx + 1,
@@ -10590,7 +10802,7 @@ Red Bull
       <div class="field">
         <label>Race calendar codes <span style="font-weight:400;color:var(--text-muted);font-family:var(--f-body)">— space-separated, in calendar order</span></label>
         <input type="text" id="imp-races" placeholder="e.g. BHR SAU AUS AZE MIA MON ESP CAN AUT GBR HUN BEL NED ITA SIN JPN QAT USA MXC SAP LVG ABU" style="font-family:var(--f-mono);font-size:11px">
-        <span class="field-help">Codes get matched against your saved calendar presets first, then the built-in F1 map (BHR → Bahrain, SAU → Saudi Arabia…). Leave blank for generic round names (R1, R2…).</span>
+        <span class="field-help">Resolution order: (1) selected calendar preset above, (2) any saved calendar preset, (3) your custom track presets, (4) built-in track library, (5) generic "R1, R2…". F1.com code translations applied automatically (SAU→KSA, MON→MCO, SIN→SGP, MXC→MEX, SAP→BRA, ABU→UAE).</span>
       </div>
       <div id="imp-preview"></div>`,
     footer: `<button class="btn btn-ghost" data-act="cancel">Cancel</button><button class="btn btn-ghost" data-act="parse">⚙ PARSE</button><button class="btn btn-primary" data-act="ok" disabled>Build Season</button>`,
@@ -10663,12 +10875,20 @@ Red Bull
         // For each preview code, work out where it resolved
         const resolutions = previewHeaders.map(code => {
           const k = (code || '').toUpperCase().trim();
-          if (codeIndex[k]) return { code, name: codeIndex[k].name, source: `preset: ${codeIndex[k].source}` };
-          if (F1_RACE_CODE_MAP[k]) return { code, name: F1_RACE_CODE_MAP[k].name, source: 'F1 built-in' };
+          // Step 1: calendar preset
+          if (codeIndex[k]) return { code, name: codeIndex[k].name, source: `calendar preset: ${codeIndex[k].source}` };
+          // Step 2: track preset library (user customs + built-in)
+          const tp = matchTrackPresetForCode(k);
+          if (tp) return { code, name: tp.name, source: tp.source };
+          // Step 3: F1 hardcoded map
+          if (F1_RACE_CODE_MAP[k]) return { code, name: F1_RACE_CODE_MAP[k].name, source: 'F1 hardcoded map' };
+          // Step 4: generic fallback
           return { code, name: `${code} Grand Prix`, source: 'fallback' };
         });
-        const resolvedFromPreset = resolutions.filter(x => x.source.startsWith('preset')).length;
-        const resolvedFromBuiltIn = resolutions.filter(x => x.source === 'F1 built-in').length;
+        const fromCalPreset = resolutions.filter(x => x.source.startsWith('calendar preset')).length;
+        const fromCustomTrack = resolutions.filter(x => x.source === 'custom track preset').length;
+        const fromBuiltinTrack = resolutions.filter(x => x.source.startsWith('track preset')).length;
+        const fromF1Map = resolutions.filter(x => x.source === 'F1 hardcoded map').length;
         const fallback = resolutions.filter(x => x.source === 'fallback').length;
 
         const completedRaces = r.headers.length;
@@ -10677,13 +10897,15 @@ Red Bull
         const totalPoles = r.drivers.reduce((sum, d) => sum + d.cells.filter(c => c?.pole).length, 0);
 
         // Resolution status line — tells the user how many codes matched where
+        const statusParts = [];
+        if (fromCalPreset)    statusParts.push(`<span style="color:var(--green,#10b981)">● ${fromCalPreset} from calendar preset</span>`);
+        if (fromCustomTrack)  statusParts.push(`<span style="color:var(--sec-purple,#a78bfa)">● ${fromCustomTrack} from your custom track presets</span>`);
+        if (fromBuiltinTrack) statusParts.push(`<span style="color:var(--sec-blue,#60a5fa)">● ${fromBuiltinTrack} from built-in track library</span>`);
+        if (fromF1Map)        statusParts.push(`<span style="color:var(--sec-blue,#60a5fa)">● ${fromF1Map} from F1 map</span>`);
+        if (fallback)         statusParts.push(`<span style="color:var(--sec-yellow,#f59e0b)">● ${fallback} fell back to generic "Grand Prix" name</span>`);
         const resolutionStatus = previewHeaders.length ? `
           <div style="font-family:var(--f-mono);font-size:10px;color:var(--text-muted);margin-bottom:10px;padding:8px 12px;background:var(--bg-elev);border-radius:6px;border:1px solid var(--border-dim)">
-            ${resolvedFromPreset ? `<span style="color:var(--green,#10b981)">● ${resolvedFromPreset} matched from your presets</span>` : ''}
-            ${resolvedFromPreset && (resolvedFromBuiltIn || fallback) ? ' · ' : ''}
-            ${resolvedFromBuiltIn ? `<span style="color:var(--sec-blue,#60a5fa)">● ${resolvedFromBuiltIn} matched from F1 built-in</span>` : ''}
-            ${resolvedFromBuiltIn && fallback ? ' · ' : ''}
-            ${fallback ? `<span style="color:var(--sec-yellow,#f59e0b)">● ${fallback} fell back to "Grand Prix" name</span>` : ''}
+            ${statusParts.join(' · ')}
           </div>` : '';
 
         preview.innerHTML = `
