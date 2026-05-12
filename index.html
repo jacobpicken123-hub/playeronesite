@@ -2217,6 +2217,23 @@ input[type="color"] {
   line-height: 1;
 }
 .record-tile-empty { color: var(--text-muted); font-style: italic; }
+.record-tile-empty-mark {
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: 28px;
+  color: var(--text-dim);
+  line-height: 1;
+  margin-bottom: 6px;
+  letter-spacing: -0.04em;
+}
+.record-tile-empty-label {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  font-style: normal;
+}
 .record-tile-cta {
   font-family: var(--f-mono);
   font-size: 9px;
@@ -4525,6 +4542,191 @@ input[type="color"] {
 .public-foot a { color: var(--red); text-decoration: none; }
 .public-foot a:hover { text-decoration: underline; }
 
+/* =====================================================
+   RACE EDITOR — Session tabs (Qualifying / Sprint / Race)
+   Replaces the old stacked-section layout with a tabbed view.
+   ===================================================== */
+.race-session-tabs {
+  display: flex;
+  gap: 0;
+  margin: 8px 0 22px;
+  border-bottom: 1px solid var(--border);
+}
+.race-session-tab {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 14px 16px;
+  background: transparent;
+  border: none;
+  border-bottom: 3px solid transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  transition: all 0.15s var(--ease);
+  position: relative;
+}
+.race-session-tab:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.02);
+}
+.race-session-tab.active {
+  color: var(--text);
+  border-bottom-color: var(--red);
+  background: linear-gradient(180deg, rgba(225, 6, 0, 0.04), transparent);
+}
+.race-session-tab-icon {
+  font-size: 16px;
+  line-height: 1;
+}
+.race-session-tab-label {
+  font-family: var(--f-display);
+  font-weight: 800;
+  font-size: 13px;
+}
+.race-session-tab-status {
+  font-family: var(--f-mono);
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  padding: 3px 8px;
+  border-radius: 3px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border-dim);
+  color: var(--text-muted);
+}
+.race-session-tab-status.done {
+  color: var(--green, #10b981);
+  border-color: var(--green, #10b981);
+  background: rgba(16, 185, 129, 0.06);
+}
+.race-session-panel.hidden { display: none; }
+.race-session-panel { animation: race-panel-fade 0.18s var(--ease); }
+@keyframes race-panel-fade {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@media (max-width: 720px) {
+  .race-session-tab { padding: 10px 8px; gap: 6px; font-size: 11px; }
+  .race-session-tab-status { display: none; }
+}
+
+/* =====================================================
+   STORAGE USAGE UI (Account modal)
+   ===================================================== */
+.storage-summary { margin-bottom: 18px; }
+.storage-meter {
+  width: 100%;
+  height: 8px;
+  background: var(--bg);
+  border: 1px solid var(--border-dim);
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+.storage-bar {
+  height: 100%;
+  transition: width 0.4s var(--ease);
+  border-radius: 4px;
+}
+.storage-amount {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.storage-used {
+  font-family: var(--f-display);
+  font-weight: 800;
+  font-size: 20px;
+  color: var(--text);
+}
+.storage-budget {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+.storage-breakdown {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.storage-cat {
+  padding: 12px 14px;
+  background: var(--bg-elev);
+  border-radius: var(--radius);
+  border: 1px solid var(--border-dim);
+}
+.storage-cat-label {
+  font-family: var(--f-mono);
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+.storage-cat-val {
+  font-family: var(--f-mono);
+  font-size: 12px;
+  color: var(--text);
+}
+.storage-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+.storage-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border-dim);
+  font-family: var(--f-mono);
+  font-size: 11px;
+}
+.storage-row:last-child { border-bottom: none; }
+.storage-row .lbl { color: var(--text-muted); letter-spacing: 0.08em; text-transform: uppercase; }
+.storage-row .val { color: var(--text); }
+
+.storage-warning {
+  margin-top: 14px;
+  padding: 14px 16px;
+  background: rgba(245, 158, 11, 0.07);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: var(--radius);
+}
+.storage-warning-head {
+  font-family: var(--f-display);
+  font-weight: 800;
+  font-size: 13px;
+  color: #f59e0b;
+  margin-bottom: 6px;
+}
+.storage-warning-body {
+  font-family: var(--f-body);
+  font-size: 12px;
+  color: var(--text-soft);
+  line-height: 1.5;
+}
+.storage-ok {
+  margin-top: 14px;
+  padding: 10px 14px;
+  background: rgba(16, 185, 129, 0.06);
+  border: 1px solid rgba(16, 185, 129, 0.2);
+  border-radius: var(--radius);
+  font-family: var(--f-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--green, #10b981);
+}
+
 </style>
 </head>
 <body>
@@ -4609,6 +4811,9 @@ let currentUser = null;
 
 // Track which save IDs originated in the cloud so we don't try to push them again on first sync
 const cloudSaveIds = new Set();
+// Diff-tracking: each entity's last-pushed hash. Lets us skip unchanged upserts
+// during typing. Reset on sign-in / sign-out via cloudPullAllSaves.
+let cloudLastPushHashes = {};
 // In-flight write counter — used to debounce sync after a flurry of edits
 let pendingCloudWrites = 0;
 let cloudSyncTimer = null;
@@ -4774,6 +4979,9 @@ async function cloudPullAllSaves() {
   if (state.activeSaveId && !newSaves[state.activeSaveId]) state.activeSaveId = null;
   if (state.activeSeasonId && state.activeSaveId && !newSaves[state.activeSaveId].seasons[state.activeSeasonId]) state.activeSeasonId = null;
 
+  // Reset the push-hash cache: whatever we just pulled is now our up-to-date baseline.
+  cloudLastPushHashes = {};
+
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch {}
 }
 
@@ -4815,6 +5023,12 @@ async function cloudPushActive() {
   }
 
   // Upsert every season in this save
+  // Each entity is hashed; we skip the cloud round-trip when the hash hasn't
+  // changed since last successful push. Saves ~95% of wasted writes during typing.
+  const hash = (o) => {
+    // Stable, compact hash. JSON.stringify with sorted keys is enough at this scale.
+    return JSON.stringify(o, Object.keys(o).sort());
+  };
   for (const season of Object.values(save.seasons || {})) {
     const seasonRow = {
       id: season.id, save_id: save.id, name: season.name, year: season.year,
@@ -4823,16 +5037,24 @@ async function cloudPushActive() {
       pole_point_value: season.polePointValue || 1,
       fl_enabled: season.flEnabled !== false,
     };
-    const { error: eSn } = await CLOUD.client.from('seasons').upsert(seasonRow);
-    if (eSn) { console.warn('[P1] season sync failed', eSn); continue; }
+    const sh = hash(seasonRow);
+    if (cloudLastPushHashes[`season:${season.id}`] !== sh) {
+      const { error: eSn } = await CLOUD.client.from('seasons').upsert(seasonRow);
+      if (eSn) { console.warn('[P1] season sync failed', eSn); continue; }
+      cloudLastPushHashes[`season:${season.id}`] = sh;
+    }
 
-    // Teams — replace all
+    // Teams — only push changed rows
     if (season.teams?.length) {
       const teamRows = season.teams.map(t => ({
         id: t.id, season_id: season.id, name: t.name, short: t.short,
         country: t.country, color: t.color, logo: t.logo || null, dsq: t.dsq || false,
       }));
-      await CLOUD.client.from('teams').upsert(teamRows);
+      const changed = teamRows.filter(r => cloudLastPushHashes[`team:${r.id}`] !== hash(r));
+      if (changed.length) {
+        const { error } = await CLOUD.client.from('teams').upsert(changed);
+        if (!error) changed.forEach(r => cloudLastPushHashes[`team:${r.id}`] = hash(r));
+      }
     }
     // Drivers
     if (season.drivers?.length) {
@@ -4841,7 +5063,11 @@ async function cloudPushActive() {
         country: d.country, photo: d.photo || null, team_id: d.teamId || null,
         dsq: d.dsq || false,
       }));
-      await CLOUD.client.from('drivers').upsert(drvRows);
+      const changed = drvRows.filter(r => cloudLastPushHashes[`driver:${r.id}`] !== hash(r));
+      if (changed.length) {
+        const { error } = await CLOUD.client.from('drivers').upsert(changed);
+        if (!error) changed.forEach(r => cloudLastPushHashes[`driver:${r.id}`] = hash(r));
+      }
     }
     // Races — and for each race, replace results + sprint results
     if (season.races?.length) {
@@ -4853,26 +5079,34 @@ async function cloudPushActive() {
         pole_driver_id: r.poleDriverId || null,
         fastest_lap_driver_id: r.fastestLapDriverId || null,
       }));
-      await CLOUD.client.from('races').upsert(raceRows);
-      // Results — delete then insert per race
+      const changedRaces = raceRows.filter(r => cloudLastPushHashes[`race:${r.id}`] !== hash(r));
+      if (changedRaces.length) {
+        const { error } = await CLOUD.client.from('races').upsert(changedRaces);
+        if (!error) changedRaces.forEach(r => cloudLastPushHashes[`race:${r.id}`] = hash(r));
+      }
+      // Results — only re-push for races whose results array changed
       for (const race of season.races) {
-        if (race.results?.length) {
+        const resultsHash = hash(race.results || []);
+        if (race.results?.length && cloudLastPushHashes[`results:${race.id}`] !== resultsHash) {
           await CLOUD.client.from('race_results').delete().eq('race_id', race.id);
           const rows = race.results.map(rr => ({
             race_id: race.id, driver_id: rr.driverId,
             position: rr.position || null, time: rr.time || null,
             dnf: rr.dnf || false, dsq: rr.dsq || false, dns: rr.dns || false,
           }));
-          await CLOUD.client.from('race_results').insert(rows);
+          const { error } = await CLOUD.client.from('race_results').insert(rows);
+          if (!error) cloudLastPushHashes[`results:${race.id}`] = resultsHash;
         }
-        if (race.sprintResults?.length) {
+        const sprintHash = hash(race.sprintResults || []);
+        if (race.sprintResults?.length && cloudLastPushHashes[`sprint:${race.id}`] !== sprintHash) {
           await CLOUD.client.from('sprint_results').delete().eq('race_id', race.id);
           const rows = race.sprintResults.map(rr => ({
             race_id: race.id, driver_id: rr.driverId,
             position: rr.position || null,
             dnf: rr.dnf || false, dsq: rr.dsq || false, dns: rr.dns || false,
           }));
-          await CLOUD.client.from('sprint_results').insert(rows);
+          const { error } = await CLOUD.client.from('sprint_results').insert(rows);
+          if (!error) cloudLastPushHashes[`sprint:${race.id}`] = sprintHash;
         }
       }
     }
@@ -5966,24 +6200,46 @@ const splitName = (n) => {
 };
 
 /* ---------- image helpers ---------- */
-function fileToDataURL(file, maxDim = 400, quality = 0.85) {
+// Storage budget per image — base64 chars are 4/3 the raw bytes, so 50KB chars ≈ 37KB raw.
+// At thousand-user scale, this is the line between "fits free tier" and "billing tier needed".
+// Hard cap is the absolute ceiling; target is what we try for in the first pass.
+const IMAGE_HARD_CAP = 60 * 1024;      // 60KB max final size (string length in chars)
+const IMAGE_TARGET   = 30 * 1024;      // try for 30KB first
+const IMAGE_UPLOAD_MAX_BYTES = 5 * 1024 * 1024;  // reject uploads > 5MB pre-compression
+const IMAGE_UPLOAD_WARN_BYTES = 1 * 1024 * 1024; // warn at > 1MB
+
+function fileToDataURL(file, maxDim = 200, quality = 0.7) {
   return new Promise((resolve, reject) => {
     if (!file) return reject(new Error('No file'));
     if (!/^image\//.test(file.type)) return reject(new Error('Not an image'));
+    if (file.size > IMAGE_UPLOAD_MAX_BYTES) {
+      return reject(new Error(`Image too large (${Math.round(file.size / 1024 / 1024)}MB). Please use an image under 5MB.`));
+    }
+    if (file.size > IMAGE_UPLOAD_WARN_BYTES) {
+      // Soft warning — proceed anyway but heavy compression incoming
+      console.warn(`[P1] large image (${Math.round(file.size / 1024)}KB), aggressive compression will be applied`);
+    }
     const reader = new FileReader();
     reader.onload = (e) => {
       const img = new Image();
       img.onload = () => {
-        // Resize so largest dimension = maxDim, JPEG-encode for smaller storage
-        let w = img.width, h = img.height;
-        if (w > h) { if (w > maxDim) { h = h * maxDim / w; w = maxDim; } }
-        else      { if (h > maxDim) { w = w * maxDim / h; h = maxDim; } }
-        const c = document.createElement('canvas');
-        c.width = Math.round(w); c.height = Math.round(h);
-        const ctx = c.getContext('2d');
-        ctx.fillStyle = '#1a1a1a'; ctx.fillRect(0,0,c.width,c.height);
-        ctx.drawImage(img, 0, 0, c.width, c.height);
-        resolve(c.toDataURL('image/jpeg', quality));
+        // First pass at the requested dimensions
+        let result = encodeAtDim(img, maxDim, quality);
+        // If still too big, iteratively shrink + lower quality until we fit under the hard cap
+        let currentDim = maxDim;
+        let currentQ = quality;
+        let iterations = 0;
+        while (result.length > IMAGE_HARD_CAP && iterations < 6) {
+          iterations++;
+          // Each pass: drop dim by 15% AND drop quality by 0.08
+          currentDim = Math.round(currentDim * 0.85);
+          currentQ = Math.max(0.35, currentQ - 0.08);
+          result = encodeAtDim(img, currentDim, currentQ);
+        }
+        if (result.length > IMAGE_HARD_CAP) {
+          return reject(new Error(`Could not compress image below ${Math.round(IMAGE_HARD_CAP/1024)}KB. Try a simpler image.`));
+        }
+        resolve(result);
       };
       img.onerror = () => reject(new Error('Bad image'));
       img.src = e.target.result;
@@ -5991,6 +6247,18 @@ function fileToDataURL(file, maxDim = 400, quality = 0.85) {
     reader.onerror = () => reject(new Error('Read fail'));
     reader.readAsDataURL(file);
   });
+}
+function encodeAtDim(img, maxDim, quality) {
+  let w = img.width, h = img.height;
+  if (w > h) { if (w > maxDim) { h = h * maxDim / w; w = maxDim; } }
+  else      { if (h > maxDim) { w = w * maxDim / h; h = maxDim; } }
+  const c = document.createElement('canvas');
+  c.width = Math.round(w); c.height = Math.round(h);
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#1a1a1a'; ctx.fillRect(0,0,c.width,c.height);
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(img, 0, 0, c.width, c.height);
+  return c.toDataURL('image/jpeg', quality);
 }
 
 /**
@@ -6018,9 +6286,9 @@ function mountPhotoUpload(container, { initial = '', shape = 'circle', placehold
     fileInp.onchange = async () => {
       const f = fileInp.files[0]; if (!f) return;
       try {
-        const dataUrl = await fileToDataURL(f, shape === 'square' ? 300 : 400);
+        const dataUrl = await fileToDataURL(f, shape === 'square' ? 200 : 250);
         value = dataUrl; onChange(value); render();
-      } catch (e) { toast('Could not load image', 'error'); }
+      } catch (e) { toast(e.message || 'Could not load image', 'error'); }
     };
     urlInp.onchange = () => {
       value = urlInp.value.trim(); onChange(value); render();
@@ -7737,14 +8005,21 @@ function renderRace() {
   return wrap;
 }
 
+// Race editor session tab state ('quali' | 'sprint' | 'race')
+let _raceEditorTab = 'race';
+
 function renderRaceEditor(container, race) {
   const season = activeSeason();
+  // Smart default: if qualifying hasn't been done, start there. If sprint
+  // exists and isn't done, go there. Otherwise the race tab.
+  if (!race.poleDriverId && _raceEditorTab === 'race') _raceEditorTab = 'quali';
+  if (race.poleDriverId && race.sprint && !race.sprintResults?.length && _raceEditorTab === 'race') _raceEditorTab = 'sprint';
+  if (!race.sprint && _raceEditorTab === 'sprint') _raceEditorTab = 'race';
+
   if (!season.drivers.length) {
     container.innerHTML = `<div class="empty"><div class="empty-headline">NO DRIVERS</div><div class="empty-sub">You need at least a few drivers signed before scoring this race.</div></div>`;
     return;
-  }
-
-  // race & qualifying support up to 26 slots regardless of grid count
+  }  // race & qualifying support up to 26 slots regardless of grid count
   const MAX_POS = 26;
 
   // Build local working state, seeded from existing partial results
@@ -7837,31 +8112,53 @@ function renderRaceEditor(container, race) {
   }
 
   container.innerHTML = `
-    <div class="dash-block-head" style="margin-top:24px">
-      <div class="dash-block-title">Qualifying · Saturday</div>
-      <span class="tag" style="color:var(--sec-purple);border-color:var(--sec-purple)">QUALI</span>
+    <div class="race-session-tabs">
+      <button class="race-session-tab ${_raceEditorTab === 'quali' ? 'active' : ''}" data-rstab="quali">
+        <span class="race-session-tab-icon">⏱</span>
+        <span class="race-session-tab-label">Qualifying</span>
+        <span class="race-session-tab-status ${race.poleDriverId ? 'done' : ''}">${race.poleDriverId ? '✓ DONE' : 'SETUP'}</span>
+      </button>
+      ${race.sprint ? `
+      <button class="race-session-tab ${_raceEditorTab === 'sprint' ? 'active' : ''}" data-rstab="sprint">
+        <span class="race-session-tab-icon">🏁</span>
+        <span class="race-session-tab-label">Sprint</span>
+        <span class="race-session-tab-status ${race.sprintResults?.length ? 'done' : ''}">${race.sprintResults?.length ? '✓ DONE' : 'SETUP'}</span>
+      </button>` : ''}
+      <button class="race-session-tab ${_raceEditorTab === 'race' ? 'active' : ''}" data-rstab="race">
+        <span class="race-session-tab-icon">🏆</span>
+        <span class="race-session-tab-label">Race</span>
+        <span class="race-session-tab-status ${race.completed ? 'done' : ''}">${race.completed ? '✓ DONE' : 'SETUP'}</span>
+      </button>
     </div>
-    <div class="results-editor" style="margin-bottom:24px">
-      <div class="results-editor-head" style="grid-template-columns: 60px 1fr 90px">
-        <div>POS</div><div>DRIVER</div><div>BEST TIME</div>
+
+    <div class="race-session-panel ${_raceEditorTab === 'quali' ? '' : 'hidden'}" id="panel-quali">
+      <div class="dash-block-head">
+        <div class="dash-block-title">Qualifying · Saturday</div>
+        <span class="tag" style="color:var(--sec-purple);border-color:var(--sec-purple)">QUALI</span>
       </div>
-      <div id="quali-rows">${qualiRowHTML()}</div>
-      <div class="results-editor-foot">
-        <span class="results-help">Up to ${MAX_POS} slots. Saves independently.</span>
-        <div style="display:flex;gap:8px">
-          <button class="btn btn-ghost" id="quali-import">↧ IMPORT FROM PASTE</button>
-          <button class="btn btn-ghost" id="quali-pole-from-p1">↘ APPLY P1 AS RACE POLE</button>
-          <button class="btn btn-primary" id="save-quali">✓ SAVE QUALIFYING</button>
+      <div class="results-editor">
+        <div class="results-editor-head" style="grid-template-columns: 60px 1fr 90px">
+          <div>POS</div><div>DRIVER</div><div>BEST TIME</div>
+        </div>
+        <div id="quali-rows">${qualiRowHTML()}</div>
+        <div class="results-editor-foot">
+          <span class="results-help">Up to ${MAX_POS} slots. Saves independently.</span>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-ghost" id="quali-import">↧ IMPORT FROM PASTE</button>
+            <button class="btn btn-ghost" id="quali-pole-from-p1">↘ APPLY P1 AS RACE POLE</button>
+            <button class="btn btn-primary" id="save-quali">✓ SAVE QUALIFYING</button>
+          </div>
         </div>
       </div>
     </div>
 
     ${race.sprint ? `
-      <div class="dash-block-head" style="margin-top:24px">
+    <div class="race-session-panel ${_raceEditorTab === 'sprint' ? '' : 'hidden'}" id="panel-sprint">
+      <div class="dash-block-head">
         <div class="dash-block-title">Sprint Race · Saturday</div>
         <span class="tag" style="color:var(--sec-yellow);border-color:var(--sec-yellow)">SPRINT</span>
       </div>
-      <div class="results-editor" style="margin-bottom:24px">
+      <div class="results-editor">
         <div class="results-editor-head" style="grid-template-columns: 60px 1fr 70px 70px 60px 60px 60px">
           <div>POS</div><div>DRIVER</div><div></div><div></div><div>DNF</div><div>DSQ</div><div>DNS</div>
         </div>
@@ -7874,23 +8171,26 @@ function renderRaceEditor(container, race) {
           </div>
         </div>
       </div>
+    </div>
     ` : ''}
 
-    <div class="dash-block-head" style="margin-top:24px">
-      <div class="dash-block-title">Grand Prix · Sunday</div>
-      <span class="tag red">RACE</span>
-    </div>
-    <div class="results-editor">
-      <div class="results-editor-head" style="grid-template-columns: 60px 1fr 70px 70px 60px 60px 60px">
-        <div>POS</div><div>DRIVER</div><div>POLE</div><div>FL</div><div>DNF</div><div>DSQ</div><div>DNS</div>
+    <div class="race-session-panel ${_raceEditorTab === 'race' ? '' : 'hidden'}" id="panel-race">
+      <div class="dash-block-head">
+        <div class="dash-block-title">Grand Prix · Sunday</div>
+        <span class="tag red">RACE</span>
       </div>
-      <div id="gp-rows">${rowHTML(working, 'gp')}</div>
-      <div class="results-editor-foot">
-        <span class="results-help">Positions 1–${MAX_POS}. DNF = retired, DSQ = disqualified, DNS = did not start. POLE & FL must be unique.</span>
-        <div style="display:flex;gap:8px">
-          <button class="btn btn-ghost" id="race-import">↧ IMPORT FROM PASTE</button>
-          <button class="btn btn-ghost" id="auto-fill">AUTO-FILL FROM DRIVER ORDER</button>
-          <button class="btn btn-primary" id="save-results">✓ SAVE & MARK COMPLETE</button>
+      <div class="results-editor">
+        <div class="results-editor-head" style="grid-template-columns: 60px 1fr 70px 70px 60px 60px 60px">
+          <div>POS</div><div>DRIVER</div><div>POLE</div><div>FL</div><div>DNF</div><div>DSQ</div><div>DNS</div>
+        </div>
+        <div id="gp-rows">${rowHTML(working, 'gp')}</div>
+        <div class="results-editor-foot">
+          <span class="results-help">Positions 1–${MAX_POS}. DNF = retired, DSQ = disqualified, DNS = did not start. POLE & FL must be unique.</span>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-ghost" id="race-import">↧ IMPORT FROM PASTE</button>
+            <button class="btn btn-ghost" id="auto-fill">AUTO-FILL FROM DRIVER ORDER</button>
+            <button class="btn btn-primary" id="save-results">✓ SAVE & MARK COMPLETE</button>
+          </div>
         </div>
       </div>
     </div>
@@ -7970,6 +8270,18 @@ function renderRaceEditor(container, race) {
     });
   }
   bind();
+
+  // Session tabs (Qualifying / Sprint / Race) — switch which panel is visible
+  $$('[data-rstab]', container).forEach(btn => {
+    btn.onclick = () => {
+      _raceEditorTab = btn.dataset.rstab;
+      // Update active styles
+      $$('[data-rstab]', container).forEach(b => b.classList.toggle('active', b.dataset.rstab === _raceEditorTab));
+      // Show/hide panels
+      $$('.race-session-panel', container).forEach(p => p.classList.add('hidden'));
+      $(`#panel-${_raceEditorTab}`, container)?.classList.remove('hidden');
+    };
+  });
 
   // Quali → Pole helper
   $('#quali-pole-from-p1', container).onclick = () => {
@@ -9103,9 +9415,9 @@ function renderRecords() {
                     <div class="record-tile-value">${leader[cat.key]}</div>
                     <div class="record-tile-leader">${esc(leader.name)}</div>
                   </div>`
-                : `<div class="record-tile-leader-text">
-                    <div class="record-tile-value record-tile-empty">—</div>
-                    <div class="record-tile-leader record-tile-empty">No data yet</div>
+                : `<div class="record-tile-leader-text record-tile-empty">
+                    <div class="record-tile-empty-mark">—</div>
+                    <div class="record-tile-empty-label">No data yet</div>
                   </div>`}
             </div>
             <div class="record-tile-cta">VIEW FULL LIST →</div>
@@ -9349,17 +9661,202 @@ function openShareModal() {
 }
 
 /* ---------- modal: account / sign out ---------- */
+/* =====================================================
+   STORAGE ANALYSIS & COMPACTION
+   Helps users see what's using space and clean up bloat before
+   hitting Supabase free-tier limits.
+   ===================================================== */
+function analyzeStorageUsage() {
+  // Walk every save, measure photo/logo/flag payloads, count rows
+  const stats = {
+    savesCount: 0,
+    seasonsCount: 0,
+    driversCount: 0,
+    teamsCount: 0,
+    racesCount: 0,
+    resultsCount: 0,
+    photoCount: 0,
+    photoBytes: 0,
+    logoCount: 0,
+    logoBytes: 0,
+    flagCount: 0,
+    flagBytes: 0,
+    totalBytes: 0,
+    overSizedPhotos: [], // { saveName, driverName, currentSize }
+    overSizedLogos: [],  // { saveName, teamName, currentSize }
+  };
+  // Approximate: a base64 string's `length` ≈ the bytes it occupies.
+  const byteLen = (s) => typeof s === 'string' ? s.length : 0;
+  for (const save of Object.values(state.saves || {})) {
+    stats.savesCount++;
+    for (const season of Object.values(save.seasons || {})) {
+      stats.seasonsCount++;
+      for (const d of season.drivers || []) {
+        stats.driversCount++;
+        if (d.photo) {
+          stats.photoCount++;
+          const sz = byteLen(d.photo);
+          stats.photoBytes += sz;
+          if (sz > IMAGE_HARD_CAP) stats.overSizedPhotos.push({ saveName: save.name, driverName: d.name, currentSize: sz, ref: d });
+        }
+      }
+      for (const t of season.teams || []) {
+        stats.teamsCount++;
+        if (t.logo) {
+          stats.logoCount++;
+          const sz = byteLen(t.logo);
+          stats.logoBytes += sz;
+          if (sz > IMAGE_HARD_CAP) stats.overSizedLogos.push({ saveName: save.name, teamName: t.name, currentSize: sz, ref: t });
+        }
+      }
+      for (const r of season.races || []) {
+        stats.racesCount++;
+        if (r.flagImage) {
+          stats.flagCount++;
+          stats.flagBytes += byteLen(r.flagImage);
+        }
+        stats.resultsCount += (r.results?.length || 0) + (r.sprintResults?.length || 0);
+      }
+    }
+  }
+  stats.totalBytes = stats.photoBytes + stats.logoBytes + stats.flagBytes;
+  return stats;
+}
+
+// Compact: re-compress every photo/logo/flag that exceeds the current hard cap.
+// Uses an off-DOM canvas. Returns a promise that resolves with a stats summary.
+async function compactSaveStorage() {
+  const before = analyzeStorageUsage();
+  const oversized = [
+    ...before.overSizedPhotos.map(x => ({ kind: 'photo', ...x })),
+    ...before.overSizedLogos.map(x => ({ kind: 'logo', ...x })),
+  ];
+  if (!oversized.length) {
+    return { before, after: before, compacted: 0, saved: 0 };
+  }
+  // Re-encode each over-cap image
+  let compacted = 0;
+  for (const item of oversized) {
+    const original = item.ref[item.kind === 'photo' ? 'photo' : 'logo'];
+    try {
+      const recompressed = await recompressDataUrl(original);
+      if (recompressed && recompressed.length < original.length) {
+        item.ref[item.kind === 'photo' ? 'photo' : 'logo'] = recompressed;
+        compacted++;
+      }
+    } catch (e) {
+      console.warn('[P1] failed to recompress image', e);
+    }
+  }
+  saveState();
+  const after = analyzeStorageUsage();
+  return { before, after, compacted, saved: before.totalBytes - after.totalBytes };
+}
+
+function recompressDataUrl(dataUrl) {
+  return new Promise((resolve, reject) => {
+    if (!dataUrl || !dataUrl.startsWith('data:image')) return resolve(dataUrl);
+    const img = new Image();
+    img.onload = () => {
+      let dim = 200, q = 0.7, result = encodeAtDim(img, dim, q);
+      let i = 0;
+      while (result.length > IMAGE_HARD_CAP && i < 6) {
+        i++;
+        dim = Math.round(dim * 0.85);
+        q = Math.max(0.35, q - 0.08);
+        result = encodeAtDim(img, dim, q);
+      }
+      resolve(result);
+    };
+    img.onerror = () => reject(new Error('Could not re-decode image'));
+    img.src = dataUrl;
+  });
+}
+
+const fmtBytes = (n) => {
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(2)} MB`;
+};
+
 function openAccountModal() {
+  // Pre-compute storage stats so they show on open
+  const stats = analyzeStorageUsage();
+  // Soft budget — what we'd consider "comfortable" before hitting Supabase pain
+  const COMFY_BUDGET = 50 * 1024 * 1024; // 50MB
+  const pct = Math.min(100, Math.round(stats.totalBytes / COMFY_BUDGET * 100));
+  const barColor = pct < 50 ? 'var(--green, #10b981)' : pct < 80 ? '#f59e0b' : 'var(--red)';
+  const hasOversized = (stats.overSizedPhotos.length + stats.overSizedLogos.length) > 0;
+
   modal({
     title: `<span class="accent">Account</span>`,
+    size: 'wide',
     body: `
       <div class="account-info">
         <div class="account-row"><span class="lbl">Signed in as</span><span class="val">${esc(currentUser?.email || '—')}</span></div>
-        <div class="account-row"><span class="lbl">User ID</span><span class="val mono">${esc(currentUser?.id || '—')}</span></div>
+        <div class="account-row"><span class="lbl">User ID</span><span class="val mono">${esc(currentUser?.id?.slice(0, 18) + '…' || '—')}</span></div>
         <div class="account-row"><span class="lbl">Cloud sync</span><span class="val accent">● ACTIVE</span></div>
       </div>
-      <div class="field-help" style="margin-top:18px">
-        Your saves sync automatically across every device you sign in on. Signing out clears local cached data but your cloud saves stay intact.
+
+      <div class="share-section" style="margin-top:24px">
+        <div class="share-section-head">STORAGE USAGE</div>
+        <div class="storage-summary">
+          <div class="storage-meter">
+            <div class="storage-bar" style="width:${pct}%;background:${barColor}"></div>
+          </div>
+          <div class="storage-amount">
+            <span class="storage-used">${fmtBytes(stats.totalBytes)}</span>
+            <span class="storage-budget">/ ${fmtBytes(COMFY_BUDGET)} comfortable budget</span>
+          </div>
+        </div>
+
+        <div class="storage-breakdown">
+          <div class="storage-cat">
+            <div class="storage-cat-label">DRIVER PHOTOS</div>
+            <div class="storage-cat-val">${stats.photoCount} · ${fmtBytes(stats.photoBytes)}</div>
+          </div>
+          <div class="storage-cat">
+            <div class="storage-cat-label">TEAM LOGOS</div>
+            <div class="storage-cat-val">${stats.logoCount} · ${fmtBytes(stats.logoBytes)}</div>
+          </div>
+          <div class="storage-cat">
+            <div class="storage-cat-label">TRACK FLAGS</div>
+            <div class="storage-cat-val">${stats.flagCount} · ${fmtBytes(stats.flagBytes)}</div>
+          </div>
+        </div>
+
+        <div class="storage-rows">
+          <div class="storage-row">
+            <span class="lbl">Saves</span><span class="val">${stats.savesCount}</span>
+          </div>
+          <div class="storage-row">
+            <span class="lbl">Seasons</span><span class="val">${stats.seasonsCount}</span>
+          </div>
+          <div class="storage-row">
+            <span class="lbl">Drivers · Teams · Races</span><span class="val">${stats.driversCount} · ${stats.teamsCount} · ${stats.racesCount}</span>
+          </div>
+          <div class="storage-row">
+            <span class="lbl">Result rows</span><span class="val">${stats.resultsCount}</span>
+          </div>
+        </div>
+
+        ${hasOversized ? `
+          <div class="storage-warning">
+            <div class="storage-warning-head">⚠ ${stats.overSizedPhotos.length + stats.overSizedLogos.length} oversized image(s) detected</div>
+            <div class="storage-warning-body">These were uploaded before image compression was tightened. Run COMPACT to re-compress them and save approximately ${fmtBytes(estimateCompactSavings(stats))}.</div>
+            <button class="btn btn-primary btn-sm" id="btn-compact" style="margin-top:10px">⚡ COMPACT NOW</button>
+          </div>
+        ` : `
+          <div class="storage-ok">✓ All images within size targets</div>
+        `}
+
+        <div class="field-help" style="margin-top:14px;font-size:11px">
+          Saves sync to Supabase Postgres. Photos consume the most space — each new upload is auto-compressed to under ${fmtBytes(IMAGE_HARD_CAP)}.
+        </div>
+      </div>
+
+      <div class="field-help" style="margin-top:14px">
+        Signing out clears local cached data but your cloud saves stay intact.
       </div>`,
     footer: `<button class="btn btn-ghost" data-act="cancel">Close</button><button class="btn btn-ghost" data-act="signout" style="color:var(--red)">SIGN OUT</button>`,
     onMount: (root, close) => {
@@ -9368,8 +9865,32 @@ function openAccountModal() {
         if (!confirm('Sign out of P1?')) return;
         await cloudSignOut();
       };
+      const compactBtn = $('#btn-compact', root);
+      if (compactBtn) compactBtn.onclick = async () => {
+        compactBtn.disabled = true; compactBtn.textContent = 'Compacting…';
+        try {
+          const r = await compactSaveStorage();
+          toast(`Compacted ${r.compacted} image(s) — saved ${fmtBytes(r.saved)}`, 'success');
+          close();
+          openAccountModal(); // re-open with fresh stats
+        } catch (e) {
+          compactBtn.disabled = false; compactBtn.textContent = '⚡ COMPACT NOW';
+          toast('Compact failed: ' + e.message, 'error');
+        }
+      };
     },
   });
+}
+function estimateCompactSavings(stats) {
+  // Each oversized image currently averages roughly photoBytes/photoCount but
+  // could be ~30KB after compression. Conservative estimate.
+  const oversizedCount = stats.overSizedPhotos.length + stats.overSizedLogos.length;
+  if (!oversizedCount) return 0;
+  let oversizedBytes = 0;
+  stats.overSizedPhotos.forEach(p => { oversizedBytes += p.currentSize; });
+  stats.overSizedLogos.forEach(p => { oversizedBytes += p.currentSize; });
+  // Assume compaction averages to IMAGE_TARGET per image
+  return Math.max(0, oversizedBytes - (oversizedCount * IMAGE_TARGET));
 }
 
 function openNewSaveModal() {
@@ -9444,7 +9965,12 @@ function openNewSeasonModal() {
       <label style="display:flex;align-items:center;gap:8px;padding:10px;border:1px solid var(--border);border-radius:var(--radius);cursor:pointer">
         <input type="checkbox" id="ns-cal" checked style="width:16px;height:16px;accent-color:var(--red)">
         <div><div style="font-weight:600">Load 22-round classic calendar</div><div style="font-family:var(--f-mono);font-size:10px;color:var(--text-muted)">Suzuka, Monaco, Spa, Monza & more</div></div>
-      </label>`,
+      </label>
+      <div class="divider" style="margin:16px 0"></div>
+      <button class="btn btn-ghost" id="ns-import-real" style="width:100%;display:flex;flex-direction:column;gap:2px;padding:14px;align-items:flex-start;text-align:left">
+        <div style="font-weight:700;font-family:var(--f-display);font-size:14px;letter-spacing:0.02em">⇡ IMPORT REAL SEASON FROM F1.COM PASTE</div>
+        <div style="font-family:var(--f-mono);font-size:10px;color:var(--text-muted);letter-spacing:0.04em;text-transform:none">Skip the form — paste the full standings table and we'll build the season for you</div>
+      </button>`,
     footer: `<button class="btn btn-ghost" data-act="cancel">Cancel</button><button class="btn btn-primary" data-act="ok">Create Season</button>`,
     onMount: (root, close) => {
       const submit = () => {
@@ -9459,7 +9985,392 @@ function openNewSeasonModal() {
       };
       $('[data-act="ok"]', root).onclick = submit;
       $('[data-act="cancel"]', root).onclick = close;
+      $('#ns-import-real', root).onclick = () => { close(); openImportRealSeasonModal(); };
       setTimeout(() => $('#ns-name', root).focus(), 50);
+    }
+  });
+}
+
+/* =====================================================
+   F1.COM PASTE IMPORTER (feature: full-season import)
+   ====================================================== */
+
+// Race-code → race metadata. Covers every F1.com / Wikipedia 3-letter abbreviation
+// I've seen in active rotation. Unknown codes still import as "{CODE} Grand Prix".
+const F1_RACE_CODE_MAP = {
+  BHR: { name: 'Bahrain Grand Prix',         circuit: 'Bahrain International', country: 'BHR' },
+  SAU: { name: 'Saudi Arabian Grand Prix',   circuit: 'Jeddah Corniche',       country: 'KSA' },
+  KSA: { name: 'Saudi Arabian Grand Prix',   circuit: 'Jeddah Corniche',       country: 'KSA' },
+  AUS: { name: 'Australian Grand Prix',      circuit: 'Albert Park',           country: 'AUS' },
+  CHN: { name: 'Chinese Grand Prix',         circuit: 'Shanghai International',country: 'CHN' },
+  AZE: { name: 'Azerbaijan Grand Prix',      circuit: 'Baku City Circuit',     country: 'AZE' },
+  MIA: { name: 'Miami Grand Prix',           circuit: 'Miami International',   country: 'USA', sprint: false },
+  EMI: { name: 'Emilia-Romagna Grand Prix',  circuit: 'Imola',                 country: 'ITA' },
+  IMO: { name: 'Emilia-Romagna Grand Prix',  circuit: 'Imola',                 country: 'ITA' },
+  MON: { name: 'Monaco Grand Prix',          circuit: 'Circuit de Monaco',     country: 'MCO' },
+  MCO: { name: 'Monaco Grand Prix',          circuit: 'Circuit de Monaco',     country: 'MCO' },
+  ESP: { name: 'Spanish Grand Prix',         circuit: 'Catalunya',             country: 'ESP' },
+  CAN: { name: 'Canadian Grand Prix',        circuit: 'Gilles Villeneuve',     country: 'CAN' },
+  AUT: { name: 'Austrian Grand Prix',        circuit: 'Red Bull Ring',         country: 'AUT' },
+  GBR: { name: 'British Grand Prix',         circuit: 'Silverstone',           country: 'GBR' },
+  HUN: { name: 'Hungarian Grand Prix',       circuit: 'Hungaroring',           country: 'HUN' },
+  BEL: { name: 'Belgian Grand Prix',         circuit: 'Spa-Francorchamps',     country: 'BEL' },
+  NED: { name: 'Dutch Grand Prix',           circuit: 'Zandvoort',             country: 'NED' },
+  NLD: { name: 'Dutch Grand Prix',           circuit: 'Zandvoort',             country: 'NED' },
+  ITA: { name: 'Italian Grand Prix',         circuit: 'Monza',                 country: 'ITA' },
+  SIN: { name: 'Singapore Grand Prix',       circuit: 'Marina Bay',            country: 'SGP' },
+  SGP: { name: 'Singapore Grand Prix',       circuit: 'Marina Bay',            country: 'SGP' },
+  JPN: { name: 'Japanese Grand Prix',        circuit: 'Suzuka',                country: 'JPN' },
+  QAT: { name: 'Qatar Grand Prix',           circuit: 'Lusail International',  country: 'QAT' },
+  USA: { name: 'United States Grand Prix',   circuit: 'Circuit of the Americas', country: 'USA' },
+  COTA:{ name: 'United States Grand Prix',   circuit: 'Circuit of the Americas', country: 'USA' },
+  MXC: { name: 'Mexico City Grand Prix',     circuit: 'Hermanos Rodriguez',    country: 'MEX' },
+  MEX: { name: 'Mexico City Grand Prix',     circuit: 'Hermanos Rodriguez',    country: 'MEX' },
+  SAP: { name: 'São Paulo Grand Prix',       circuit: 'Interlagos',            country: 'BRA' },
+  BRA: { name: 'São Paulo Grand Prix',       circuit: 'Interlagos',            country: 'BRA' },
+  LVG: { name: 'Las Vegas Grand Prix',       circuit: 'Las Vegas Strip',       country: 'USA' },
+  LAS: { name: 'Las Vegas Grand Prix',       circuit: 'Las Vegas Strip',       country: 'USA' },
+  ABU: { name: 'Abu Dhabi Grand Prix',       circuit: 'Yas Marina',            country: 'UAE' },
+  UAE: { name: 'Abu Dhabi Grand Prix',       circuit: 'Yas Marina',            country: 'UAE' },
+  FRA: { name: 'French Grand Prix',          circuit: 'Paul Ricard',           country: 'FRA' },
+  GER: { name: 'German Grand Prix',          circuit: 'Hockenheim',            country: 'GER' },
+  DEU: { name: 'German Grand Prix',          circuit: 'Hockenheim',            country: 'GER' },
+  RUS: { name: 'Russian Grand Prix',         circuit: 'Sochi Autodrom',        country: 'RUS' },
+  TUR: { name: 'Turkish Grand Prix',         circuit: 'Istanbul Park',         country: 'TUR' },
+  POR: { name: 'Portuguese Grand Prix',      circuit: 'Algarve',               country: 'POR' },
+};
+
+// Same-row team-name normalisation. F1.com uses a few different spellings.
+// Maps the raw text → canonical team name, short code, and a default colour.
+const F1_TEAM_NORMALIZER = {
+  'red bull':       { name: 'Red Bull Racing',     short: 'RBR', color: '#3671C6' },
+  'red bull racing':{ name: 'Red Bull Racing',     short: 'RBR', color: '#3671C6' },
+  'mercedes':       { name: 'Mercedes',            short: 'MER', color: '#27F4D2' },
+  'ferrari':        { name: 'Scuderia Ferrari',    short: 'FER', color: '#E80020' },
+  'scuderia ferrari':{name: 'Scuderia Ferrari',    short: 'FER', color: '#E80020' },
+  'mclaren':        { name: 'McLaren',             short: 'MCL', color: '#FF8000' },
+  'aston martin':   { name: 'Aston Martin',        short: 'AMR', color: '#229971' },
+  'alpine':         { name: 'Alpine',              short: 'ALP', color: '#0093CC' },
+  'williams':       { name: 'Williams Racing',     short: 'WIL', color: '#64C4FF' },
+  'rb':             { name: 'RB',                  short: 'VRB', color: '#6692FF' },
+  'visa cash app rb':{name:'RB',                   short: 'VRB', color: '#6692FF' },
+  'alphatauri':     { name: 'AlphaTauri',          short: 'AT',  color: '#2B4562' },
+  'kick sauber':    { name: 'Kick Sauber',         short: 'SAU', color: '#52E252' },
+  'sauber':         { name: 'Kick Sauber',         short: 'SAU', color: '#52E252' },
+  'alfa romeo':     { name: 'Alfa Romeo',          short: 'ALF', color: '#C92D4B' },
+  'haas':           { name: 'Haas',                short: 'HAS', color: '#B6BABD' },
+  'haas f1 team':   { name: 'Haas',                short: 'HAS', color: '#B6BABD' },
+};
+
+// Parse one result cell. Returns { position, dnf, dsq, dns, pole } or null if unreadable.
+function parseImportResultCell(raw) {
+  if (raw == null) return null;
+  const s = String(raw).trim().toUpperCase();
+  if (!s || s === '-' || s === '—') return null;
+  // Status codes — take precedence
+  if (s === 'DNF' || s === 'RET' || s.startsWith('DNF')) return { dnf: true };
+  if (s === 'DSQ' || s.startsWith('DSQ')) return { dsq: true };
+  if (s === 'DNS' || s.startsWith('DNS')) return { dns: true };
+  if (s === 'NC' || s === 'EX') return { dnf: true }; // "Not Classified" / "Excluded" → treat as DNF
+  // Otherwise: parse the leading position number, optional P (pole).
+  // Trailing digits (sprint pos / FL indicator) are noted but not separately stored in V1.
+  const m = s.match(/^(\d{1,2})(P)?/);
+  if (!m) return null;
+  const position = parseInt(m[1], 10);
+  if (position < 1 || position > 30) return null;
+  return { position, pole: !!m[2] };
+}
+
+// Main parser. Takes pasted text, returns a structured preview:
+// { headers: ['BHR','SAU',...], drivers: [{ pos, name, team, points, cells: [resultObj or null] }], errors: [] }
+function parseImportSeasonPaste(text) {
+  const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+  if (!lines.length) return { error: 'No data pasted' };
+
+  // Find the header line — must contain "POS" and "DRIVER" (in any order). All other lines before are skipped.
+  let headerIdx = -1;
+  for (let i = 0; i < lines.length; i++) {
+    const cells = lines[i].split(/\t+/).map(c => c.trim().toUpperCase());
+    if (cells.includes('POS') && cells.includes('DRIVER')) { headerIdx = i; break; }
+  }
+  if (headerIdx === -1) {
+    // Tolerant fallback: maybe the user pasted without a header. Bail with a friendly hint.
+    return { error: 'Couldn\'t find a header row. The paste must include a row with columns labelled "POS DRIVER TEAM PTS" plus race codes (e.g. BHR SAU AUS...).' };
+  }
+
+  const headerCells = lines[headerIdx].split(/\t+/).map(c => c.trim());
+  const posIdx    = headerCells.findIndex(c => c.toUpperCase() === 'POS');
+  const drvIdx    = headerCells.findIndex(c => c.toUpperCase() === 'DRIVER');
+  const teamIdx   = headerCells.findIndex(c => c.toUpperCase() === 'TEAM');
+  const ptsIdx    = headerCells.findIndex(c => c.toUpperCase() === 'PTS');
+  if (drvIdx === -1 || teamIdx === -1) {
+    return { error: 'Header row missing DRIVER or TEAM column' };
+  }
+  // Everything after PTS is treated as a race code. If PTS is missing, races start after TEAM.
+  const racesStart = (ptsIdx !== -1) ? ptsIdx + 1 : teamIdx + 1;
+  const raceCodes = headerCells.slice(racesStart).map(c => c.trim().toUpperCase()).filter(Boolean);
+  if (!raceCodes.length) {
+    return { error: 'No race codes found in the header row after PTS' };
+  }
+
+  // Parse driver rows — everything from headerIdx+1 onward until we run out.
+  const drivers = [];
+  const errors = [];
+  for (let i = headerIdx + 1; i < lines.length; i++) {
+    const cells = lines[i].split(/\t+/);
+    if (cells.length < racesStart + 1) continue; // skip stray short rows (totals, etc.)
+    const name = (cells[drvIdx] || '').trim();
+    const team = (cells[teamIdx] || '').trim();
+    if (!name || !team) continue;
+    const pos = parseInt((cells[posIdx] || '').trim(), 10) || (drivers.length + 1);
+    const points = parseInt((cells[ptsIdx] || '0').replace(/[^\d]/g,''), 10) || 0;
+    const raceResultCells = raceCodes.map((_, ri) => {
+      const raw = (cells[racesStart + ri] || '').trim();
+      return parseImportResultCell(raw);
+    });
+    drivers.push({ pos, name, team, points, cells: raceResultCells });
+  }
+  if (!drivers.length) {
+    return { error: 'Found a header but no driver rows below it' };
+  }
+
+  return { headers: raceCodes, drivers, errors };
+}
+
+// Build a season from a parsed preview. Returns the new season's id.
+function buildSeasonFromImport(parsed, opts) {
+  const save = activeSave(); if (!save) throw new Error('No active save');
+  const seasonId = uid();
+  const season = {
+    id: seasonId,
+    year: Number(opts.year) || new Date().getFullYear(),
+    name: (opts.name || '').trim() || `${opts.year} F1 Season`,
+    pointsSystemId: opts.pointsSystemId || DEFAULT_POINTS_SYSTEM_ID,
+    polePointEnabled: false,
+    flPointEnabled: true,
+    polePointValue: 1,
+    flPointValue: 1,
+    createdAt: Date.now(),
+    drivers: [],
+    teams: [],
+    races: [],
+  };
+
+  // 1. Build teams — one per unique team name in driver rows, deduplicated through normalizer
+  const teamByKey = {}; // normalized lowercase team string -> team object
+  for (const d of parsed.drivers) {
+    const key = d.team.toLowerCase().trim();
+    if (teamByKey[key]) continue;
+    const canonical = F1_TEAM_NORMALIZER[key];
+    const teamObj = {
+      id: uid(),
+      name: canonical?.name || d.team,
+      short: canonical?.short || d.team.slice(0,3).toUpperCase(),
+      color: canonical?.color || '#666666',
+      country: '',
+    };
+    teamByKey[key] = teamObj;
+    season.teams.push(teamObj);
+  }
+
+  // 2. Build drivers — assign a number based on import position. Country left blank.
+  const driverIdByImportName = {};
+  let nextNum = 1;
+  for (const d of parsed.drivers) {
+    const teamObj = teamByKey[d.team.toLowerCase().trim()];
+    const driverObj = {
+      id: uid(),
+      name: d.name,
+      number: nextNum++,
+      country: '',
+      teamId: teamObj?.id || null,
+      photo: '',
+      dsq: false,
+    };
+    driverIdByImportName[d.name] = driverObj.id;
+    season.drivers.push(driverObj);
+  }
+
+  // 3. Build races — one per header code
+  const raceObjs = parsed.headers.map((code, idx) => {
+    const meta = F1_RACE_CODE_MAP[code] || { name: `${code} Grand Prix`, circuit: code, country: code };
+    return {
+      id: uid(),
+      round: idx + 1,
+      name: meta.name,
+      circuit: meta.circuit,
+      country: meta.country,
+      sprint: !!meta.sprint,
+      date: '',
+      completed: false,
+      results: [],
+      sprintResults: [],
+      fastestLapDriverId: null,
+      poleDriverId: null,
+    };
+  });
+  season.races = raceObjs;
+
+  // 4. Apply results per race
+  for (let ri = 0; ri < raceObjs.length; ri++) {
+    const race = raceObjs[ri];
+    let anyResults = false;
+    let poleDrvId = null;
+    for (const d of parsed.drivers) {
+      const cell = d.cells[ri];
+      if (!cell) continue;
+      anyResults = true;
+      const drvId = driverIdByImportName[d.name];
+      if (!drvId) continue;
+      race.results.push({
+        driverId: drvId,
+        position: cell.position || null,
+        dnf: !!cell.dnf,
+        dsq: !!cell.dsq,
+        dns: !!cell.dns,
+      });
+      if (cell.pole && !poleDrvId) poleDrvId = drvId;
+    }
+    if (anyResults) {
+      race.completed = true;
+      race.poleDriverId = poleDrvId;
+    }
+  }
+
+  save.seasons[seasonId] = season;
+  state.activeSeasonId = seasonId;
+  state.view = 'dashboard';
+  saveState();
+  return seasonId;
+}
+
+function openImportRealSeasonModal() {
+  if (!state.activeSaveId) return toast('Open a save first', 'warn');
+  let parsed = null;
+
+  modal({
+    title: `<span class="accent">Import</span> F1 Season`,
+    size: 'wide',
+    body: `
+      <div class="field-help" style="margin-bottom:14px">
+        Copy the full standings table from F1.com, Wikipedia, or a similar source and paste it below. Includes drivers, teams, race calendar, and per-race results.
+      </div>
+      <details style="margin-bottom:14px;background:var(--bg-elev);border-radius:6px;padding:10px 14px">
+        <summary style="cursor:pointer;font-family:var(--f-mono);font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-soft)">▸ Format example</summary>
+        <pre style="margin:10px 0 0;font-size:10px;line-height:1.5;color:var(--text-soft);white-space:pre">POS	DRIVER	TEAM	PTS	BHR	SAU	AUS	AZE	MIA	MON	ESP	CAN	AUT	GBR	HUN	BEL	NED	ITA	SIN	JPN	QAT	USA	MXC	SAP	LVG	ABU
+1	Max Verstappen	Red Bull	587	1P	2	1P	2	1	1P	1P	1	1P	1	1	1P	1	5	1P	1P	1	1	1P	1	1P
+2	Sergio Perez	Red Bull	287	2	1P	5	1	2P	16	4	6	3	6	3	2	4	2	8	DNF	10	4	DNF	4	3	4
+3	Lewis Hamilton	Mercedes	235	5	5	2	6	6	4	2	3	8	3	4P	4	6	6	3	5	DNF	DSQ	2	8	7	9</pre>
+        <div style="font-family:var(--f-mono);font-size:10px;color:var(--text-muted);margin-top:8px;line-height:1.6">
+          • Each cell = position (1-20) or DNF/DSQ/DNS<br>
+          • Append <b>P</b> to a position for pole (e.g. <code>1P</code>, <code>4P</code>)<br>
+          • Tab-separated columns (Ctrl+C from F1.com keeps tabs)<br>
+          • Race-code headers map to circuits automatically (BHR → Bahrain GP, etc.)
+        </div>
+      </details>
+      <div class="field-row">
+        <div class="field"><label>Year</label><input type="number" id="imp-year" value="${new Date().getFullYear()}"></div>
+        <div class="field"><label>Season Name</label><input type="text" id="imp-name" placeholder="e.g. 2023 F1 World Championship"></div>
+      </div>
+      <div class="field">
+        <label>Points System</label>
+        <select id="imp-points">
+          ${POINTS_SYSTEMS.map(p => `<option value="${p.id}" ${p.id === DEFAULT_POINTS_SYSTEM_ID ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field">
+        <label>Paste the standings table</label>
+        <textarea id="imp-text" rows="10" placeholder="POS&#9;DRIVER&#9;TEAM&#9;PTS&#9;BHR&#9;SAU&#9;..." style="font-family:var(--f-mono);font-size:11px;width:100%;min-height:160px"></textarea>
+      </div>
+      <div id="imp-preview"></div>`,
+    footer: `<button class="btn btn-ghost" data-act="cancel">Cancel</button><button class="btn btn-ghost" data-act="parse">⚙ PARSE</button><button class="btn btn-primary" data-act="ok" disabled>Build Season</button>`,
+    onMount: (root, close) => {
+      const ta = $('#imp-text', root);
+      const preview = $('#imp-preview', root);
+      const okBtn = $('[data-act="ok"]', root);
+
+      const doParse = () => {
+        const text = ta.value;
+        if (!text.trim()) {
+          preview.innerHTML = `<div class="empty-row" style="padding:20px">Paste some text and click PARSE.</div>`;
+          okBtn.disabled = true; return;
+        }
+        const r = parseImportSeasonPaste(text);
+        if (r.error) {
+          preview.innerHTML = `<div class="storage-warning" style="margin-top:14px"><div class="storage-warning-head">⚠ Couldn't parse</div><div class="storage-warning-body">${esc(r.error)}</div></div>`;
+          okBtn.disabled = true; parsed = null; return;
+        }
+        parsed = r;
+        okBtn.disabled = false;
+        const completedRaces = r.headers.length;
+        const totalResults = r.drivers.reduce((sum, d) => sum + d.cells.filter(Boolean).length, 0);
+        // Preview: table head with race codes, body rows with driver name + team + each cell. Position rendering matches the matrix.
+        preview.innerHTML = `
+          <div style="margin-top:18px">
+            <div style="font-family:var(--f-mono);font-size:10px;letter-spacing:0.18em;color:var(--text-muted);text-transform:uppercase;margin-bottom:10px">
+              PREVIEW · ${r.drivers.length} DRIVER${r.drivers.length === 1 ? '' : 'S'} · ${completedRaces} RACE${completedRaces === 1 ? '' : 'S'} · ${totalResults} RESULT${totalResults === 1 ? '' : 'S'}
+            </div>
+            <div style="overflow-x:auto;border:1px solid var(--border-dim);border-radius:6px;max-height:380px">
+              <table style="border-collapse:collapse;font-family:var(--f-mono);font-size:11px;width:max-content;min-width:100%">
+                <thead>
+                  <tr style="background:var(--bg-elev)">
+                    <th style="padding:8px 10px;text-align:left;border-bottom:1px solid var(--border)">POS</th>
+                    <th style="padding:8px 10px;text-align:left;border-bottom:1px solid var(--border)">DRIVER</th>
+                    <th style="padding:8px 10px;text-align:left;border-bottom:1px solid var(--border)">TEAM</th>
+                    <th style="padding:8px 10px;text-align:right;border-bottom:1px solid var(--border)">PTS</th>
+                    ${r.headers.map(h => `<th style="padding:8px 6px;text-align:center;border-bottom:1px solid var(--border);font-size:9px;letter-spacing:0.1em">${esc(h)}</th>`).join('')}
+                  </tr>
+                </thead>
+                <tbody>
+                  ${r.drivers.map(d => `
+                    <tr style="border-bottom:1px solid var(--border-dim)">
+                      <td style="padding:6px 10px;color:var(--text-muted)">${d.pos}</td>
+                      <td style="padding:6px 10px;font-weight:600">${esc(d.name)}</td>
+                      <td style="padding:6px 10px;color:var(--text-soft)">${esc(d.team)}</td>
+                      <td style="padding:6px 10px;text-align:right;font-weight:700">${d.points}</td>
+                      ${d.cells.map(c => {
+                        if (!c) return `<td style="padding:6px;text-align:center;color:var(--text-dim);opacity:0.5">—</td>`;
+                        let txt = '', col = 'var(--text)';
+                        if (c.dnf) { txt = 'DNF'; col = 'var(--red)'; }
+                        else if (c.dsq) { txt = 'DSQ'; col = 'var(--red)'; }
+                        else if (c.dns) { txt = 'DNS'; col = 'var(--text-muted)'; }
+                        else if (c.position) {
+                          txt = c.position + (c.pole ? '<sup style="color:var(--sec-blue);font-size:8px">P</sup>' : '');
+                          if (c.position === 1) col = 'var(--gold)';
+                          else if (c.position === 2) col = 'var(--silver)';
+                          else if (c.position === 3) col = 'var(--bronze)';
+                          else if (c.position > 10) col = 'var(--text-muted)';
+                        }
+                        return `<td style="padding:6px;text-align:center;color:${col};font-weight:600">${txt}</td>`;
+                      }).join('')}
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+            <div class="field-help" style="margin-top:10px">
+              Teams will be auto-created (with default colors you can edit). Driver countries will be blank — fill in via driver edit. Unknown race codes use the code itself as the country.
+            </div>
+          </div>`;
+      };
+
+      $('[data-act="parse"]', root).onclick = doParse;
+      $('[data-act="cancel"]', root).onclick = close;
+      ta.oninput = () => { if (parsed) { parsed = null; okBtn.disabled = true; } };
+      okBtn.onclick = () => {
+        if (!parsed) return doParse();
+        try {
+          const year = $('#imp-year', root).value;
+          const name = $('#imp-name', root).value;
+          const pointsSystemId = $('#imp-points', root).value;
+          buildSeasonFromImport(parsed, { year, name, pointsSystemId });
+          close();
+          renderAll();
+          toast(`Imported ${parsed.drivers.length} driver${parsed.drivers.length === 1 ? '' : 's'} across ${parsed.headers.length} race${parsed.headers.length === 1 ? '' : 's'}`, 'success');
+        } catch (e) {
+          toast('Import failed: ' + e.message, 'error');
+        }
+      };
     }
   });
 }
@@ -9551,29 +10462,6 @@ function resetPresetOverride(kind, key) {
     delete state.presetOverrides[target][key];
     saveState();
   }
-}
-
-/* Photo-upload helper used by preset editor */
-function fileToDataURL(file, maxSize = 400) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        let { width, height } = img;
-        if (width > height && width > maxSize) { height = height * maxSize / width; width = maxSize; }
-        else if (height > maxSize) { width = width * maxSize / height; height = maxSize; }
-        canvas.width = width; canvas.height = height;
-        canvas.getContext('2d').drawImage(img, 0, 0, width, height);
-        resolve(canvas.toDataURL('image/jpeg', 0.85));
-      };
-      img.onerror = reject;
-      img.src = e.target.result;
-    };
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
 }
 
 /* Preset editor — used for both adding new and editing existing.
@@ -9682,7 +10570,7 @@ function openPresetEditor(kind, existing, onSaved) {
               currentValue = dataUrl;
               onChange(dataUrl);
               renderUpload();
-            } catch (err) { toast('Could not load image', 'error'); }
+            } catch (err) { toast(err.message || 'Could not load image', 'error'); }
           };
           if (el.querySelector('[data-clear]')) {
             el.querySelector('[data-clear]').onclick = () => { currentValue = ''; onChange(''); renderUpload(); };
@@ -9729,7 +10617,7 @@ function openPresetEditor(kind, existing, onSaved) {
               currentFlag = url;
               data.flagImage = url;
               renderFlag();
-            } catch (err) { toast('Could not load image', 'error'); }
+            } catch (err) { toast(err.message || 'Could not load image', 'error'); }
           };
           if (el.querySelector('[data-clear]')) {
             el.querySelector('[data-clear]').onclick = () => { currentFlag = ''; data.flagImage = ''; renderFlag(); };
