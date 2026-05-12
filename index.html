@@ -4336,6 +4336,10 @@ async function cloudPushActive() {
       return;
     }
     cloudSaveIds.add(save.id);
+    // Populate _members locally so the SHARE modal immediately reflects us as owner
+    // (otherwise it sits empty until the next cloudPullAllSaves call).
+    save._members = [{ save_id: save.id, user_id: currentUser.id, role: 'owner' }];
+    save._cloud = true;
   } else {
     // Existing save → UPDATE name only
     const { error: eUpd } = await CLOUD.client.from('saves').update({ name: save.name }).eq('id', save.id);
@@ -4425,10 +4429,14 @@ function scheduleCloudSync() {
 /* ---------- COLLABORATION: invite + accept ---------- */
 async function cloudInvite(saveId, role = 'editor') {
   if (!CLOUD.enabled || !currentUser) throw new Error('Not signed in');
-  // We don't need the email server-side — the token is the secret.
-  // Pass a placeholder so the column isn't null.
+  // The RLS policy requires invited_by = auth.uid() — set it explicitly.
+  // We pass a placeholder email since the token is the real secret; if you later
+  // wire up SMTP, replace 'shared-link' with the recipient's actual email.
   const { data, error } = await CLOUD.client.from('invitations').insert({
-    save_id: saveId, invited_email: 'shared-link', role,
+    save_id: saveId,
+    invited_email: 'shared-link',
+    invited_by: currentUser.id,
+    role,
   }).select().single();
   if (error) throw error;
   return `${window.location.origin}${window.location.pathname}?invite=${data.token}`;
@@ -8394,7 +8402,13 @@ function openShareModal() {
   if (!state.activeSaveId) return;
   const save = state.saves[state.activeSaveId];
   const members = save?._members || [];
-  const isOwner = members.some(m => m.user_id === currentUser?.id && m.role === 'owner');
+  // Determine ownership: prefer the cloud member list, but fall back to "this save
+  // is in cloudSaveIds (we synced it) and we're signed in" — which means we MUST
+  // be the owner since only the creator gets that flag. This handles the gap
+  // between save creation and the next cloudPullAllSaves().
+  const isOwner = members.length
+    ? members.some(m => m.user_id === currentUser?.id && m.role === 'owner')
+    : (cloudSaveIds.has(save.id) && !!currentUser);
 
   modal({
     title: `<span class="accent">Share</span> ${esc(save.name)}`,
