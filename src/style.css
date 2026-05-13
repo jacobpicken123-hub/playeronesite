@@ -3969,3 +3969,441 @@ tr:hover td { background: rgba(255,255,255,0.012); }
   flex-direction: column;
   gap: 12px;
 }
+
+
+/* ============== 40. STANDINGS PAGE — full redesign ============== */
+
+/* Header: round-strip eyebrow + predict button */
+.f1-results-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.f1-round-strip {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+}
+.f1-round-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 5px 12px;
+  background: var(--red);
+  color: white;
+  font-family: var(--f-display);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  border-radius: var(--r-xs);
+  box-shadow: 0 0 16px var(--red-glow);
+}
+.f1-round-meta {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+/* Drivers / Constructors toggle — dark, segmented, broadcast style */
+.f1-filter-strip {
+  display: inline-flex;
+  padding: 4px;
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  margin-bottom: 24px;
+  position: relative;
+}
+.f1-filter {
+  background: transparent;
+  border: none;
+  padding: 9px 22px;
+  font-family: var(--f-display);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-radius: var(--r-sm);
+  transition: all 0.22s var(--ease);
+  position: relative;
+  z-index: 1;
+}
+.f1-filter:hover {
+  color: var(--text-soft);
+}
+.f1-filter.active {
+  background: linear-gradient(180deg, var(--red), #b8051f);
+  color: white;
+  box-shadow:
+    0 0 0 1px rgba(225,6,47,0.4),
+    0 4px 16px rgba(225,6,47,0.35),
+    0 1px 0 rgba(255,255,255,0.12) inset;
+}
+
+/* ============== Standings table — DRAMATIC redesign ============== */
+
+/* Reset the old quiet table style */
+.standings-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0 8px;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  overflow: visible;
+}
+
+/* Hide the table head — we'll put a compact column header in a separate strip */
+.standings-table thead th {
+  background: transparent;
+  border: none;
+  padding: 0 14px 8px;
+  font-family: var(--f-mono);
+  font-size: 9px;
+  letter-spacing: 0.2em;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  font-weight: 500;
+  text-align: right;
+}
+.standings-table thead th:nth-child(1),
+.standings-table thead th:nth-child(2),
+.standings-table thead th:nth-child(3) { text-align: left; }
+.standings-table thead th:nth-child(1) { padding-left: 24px; width: 56px; }
+
+/* Each row becomes a card — bigger, prouder, with team-color spine */
+.standings-table tbody tr.standings-row {
+  position: relative;
+  background: var(--bg-2);
+  border-radius: var(--r);
+  transition: all 0.22s var(--ease);
+  overflow: hidden;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.02) inset;
+}
+
+/* Subtle separator effect via outline + background on each cell instead of border-bottom */
+.standings-table tbody tr.standings-row > td {
+  background: var(--bg-2);
+  padding: 14px 14px;
+  border: 1px solid var(--border);
+  border-left: none;
+  border-right: none;
+  vertical-align: middle;
+  font-family: var(--f-body);
+  font-size: 13px;
+  transition: background 0.18s var(--ease);
+}
+.standings-table tbody tr.standings-row > td:first-child {
+  border-left: 1px solid var(--border);
+  border-top-left-radius: var(--r);
+  border-bottom-left-radius: var(--r);
+  padding-left: 22px;
+  position: relative;
+  width: 64px;
+}
+.standings-table tbody tr.standings-row > td:last-child {
+  border-right: 1px solid var(--border);
+  border-top-right-radius: var(--r);
+  border-bottom-right-radius: var(--r);
+  padding-right: 22px;
+}
+
+/* Team-color spine */
+.standings-table tbody tr.standings-row > td:first-child::before {
+  content: '';
+  position: absolute;
+  top: 0; bottom: 0;
+  left: 0;
+  width: 4px;
+  background: var(--team-color, var(--red));
+  opacity: 0.85;
+  transition: all 0.22s var(--ease);
+  box-shadow: 0 0 8px var(--team-color, var(--red-glow));
+}
+
+/* Hover state */
+.standings-table tbody tr.standings-row:hover > td {
+  background: var(--bg-3);
+  border-color: var(--border-hi);
+}
+.standings-table tbody tr.standings-row:hover > td:first-child::before {
+  width: 5px;
+}
+
+/* Position column — big bold number, gold/silver/bronze for podium */
+.standings-table tbody tr.standings-row > td.pos-cell {
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: 28px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  text-align: left;
+  letter-spacing: 0;
+}
+
+/* Podium gets dramatic treatment */
+.standings-table tbody tr.p1 > td.pos-cell {
+  color: var(--gold);
+  text-shadow: 0 0 24px rgba(255,215,107,0.7);
+  font-size: 34px;
+}
+.standings-table tbody tr.p1 > td {
+  background: linear-gradient(90deg, rgba(255,215,107,0.10), rgba(255,215,107,0.02) 40%, transparent 70%);
+  border-color: rgba(255,215,107,0.28);
+}
+.standings-table tbody tr.p1:hover > td {
+  background: linear-gradient(90deg, rgba(255,215,107,0.14), rgba(255,215,107,0.04) 40%, var(--bg-3) 70%);
+  border-color: rgba(255,215,107,0.4);
+}
+.standings-table tbody tr.p1 > td:first-child::before {
+  background: linear-gradient(180deg, var(--gold), var(--bronze));
+  width: 5px;
+  box-shadow: 0 0 20px rgba(255,215,107,0.6);
+}
+.standings-table tbody tr.p2 > td.pos-cell {
+  color: var(--silver);
+  text-shadow: 0 0 14px rgba(203,209,215,0.4);
+}
+.standings-table tbody tr.p2 > td:first-child::before {
+  background: linear-gradient(180deg, var(--silver), #6e747c);
+}
+.standings-table tbody tr.p3 > td.pos-cell {
+  color: var(--bronze);
+  text-shadow: 0 0 14px rgba(210,138,85,0.4);
+}
+.standings-table tbody tr.p3 > td:first-child::before {
+  background: linear-gradient(180deg, var(--bronze), #6b4225);
+}
+
+/* Driver cell — make the photo big and proud */
+.standings-table .driver-cell {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  padding: 2px 0;
+}
+
+.standings-table .standings-portrait {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  border: 2.5px solid var(--team-color, var(--border));
+  background-color: var(--bg-1);
+  background-size: cover;
+  background-position: center top;
+  display: grid;
+  place-items: center;
+  font-family: var(--f-display);
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--team-color, var(--text-soft));
+  flex-shrink: 0;
+  box-shadow:
+    0 0 0 3px var(--bg-2),
+    0 0 16px var(--team-color, var(--red-glow));
+  position: relative;
+  overflow: hidden;
+}
+/* Larger portrait + halo for top 3 */
+.standings-table tbody tr.p1 .standings-portrait {
+  width: 58px;
+  height: 58px;
+  border-width: 3px;
+  box-shadow:
+    0 0 0 3px var(--bg-2),
+    0 0 24px var(--team-color, var(--red-glow));
+}
+
+/* Driver number — big and team-colored */
+.standings-table .driver-cell-num {
+  font-family: var(--f-display);
+  font-size: 28px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--team-color, var(--red));
+  min-width: 36px;
+  text-align: center;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  text-shadow: 0 0 12px var(--team-color, var(--red-glow));
+  opacity: 0.85;
+}
+
+.standings-table .driver-cell-name-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.standings-table .driver-cell-name {
+  font-family: var(--f-display);
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--text);
+  text-transform: uppercase;
+  line-height: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+.standings-table .driver-cell-name > span:not(.first) {
+  font-size: 18px;
+}
+.standings-table .driver-cell-name .first {
+  font-family: var(--f-mono);
+  font-size: 9px;
+  font-weight: 400;
+  letter-spacing: 0.18em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  line-height: 1;
+}
+.standings-table .driver-cell-team {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  text-transform: uppercase;
+}
+
+/* Team pill in standings */
+.standings-table .team-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: var(--bg-1);
+  border: 1px solid var(--team-color, var(--border));
+  border-radius: var(--r-sm);
+  font-family: var(--f-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  color: var(--text);
+  text-transform: uppercase;
+}
+.standings-table .team-pill .team-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--team-color, var(--red));
+  box-shadow: 0 0 6px var(--team-color, var(--red-glow));
+}
+.standings-table .team-pill .team-logo.small {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1.5px solid var(--team-color);
+  background-size: cover;
+  background-position: center;
+  flex-shrink: 0;
+}
+
+/* Points cell — HUGE and dramatic */
+.standings-table tbody tr.standings-row > td.points-cell {
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: 32px;
+  color: var(--text);
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  line-height: 1;
+}
+.standings-table tbody tr.p1 > td.points-cell {
+  color: var(--gold);
+  font-size: 36px;
+  text-shadow: 0 0 16px rgba(255,215,107,0.4);
+}
+
+/* Gap cell */
+.standings-table tbody tr.standings-row > td.gap-cell {
+  font-family: var(--f-mono);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-muted);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Numeric stat cells */
+.standings-table tbody tr.standings-row > td.num {
+  font-family: var(--f-mono);
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text-soft);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+/* Zero stats fade out */
+.standings-table tbody tr.standings-row > td.num.zero { color: var(--text-dim); }
+
+/* Override the older "display: table-row !important" reset since we want td-level treatment */
+.standings-row { display: table-row !important; }
+.standings-row::before { display: none !important; }
+
+/* Constructor table — same treatment minus driver-specific stuff */
+.standings-table.constructors-table .team-logo {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+  border: 2px solid var(--team-color, var(--border));
+  background: var(--bg-1) center/cover no-repeat;
+  display: grid;
+  place-items: center;
+  font-family: var(--f-display);
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--team-color);
+  letter-spacing: 0.02em;
+  flex-shrink: 0;
+  box-shadow: 0 0 0 3px var(--bg-2), 0 0 16px var(--team-color, var(--red-glow));
+}
+
+/* Table shell — no border, transparent, just the rows */
+.f1-table-shell {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  overflow: visible;
+  padding: 0;
+}
+
+/* Trend indicator — for use with movement arrows */
+.standings-trend {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-family: var(--f-mono);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  margin-left: 6px;
+}
+.standings-trend.up { color: var(--sec-green); }
+.standings-trend.down { color: var(--red-light); }
+
+/* Empty state in standings */
+.empty-state {
+  padding: 80px 24px;
+  text-align: center;
+  font-family: var(--f-mono);
+  font-size: 12px;
+  letter-spacing: 0.18em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  background: var(--bg-1);
+  border: 1px dashed var(--border);
+  border-radius: var(--r-lg);
+}
