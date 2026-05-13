@@ -3954,21 +3954,29 @@ function renderStandings() {
               const teamMark = team?.logo
                 ? `<div class="team-logo small" style="background-image:url('${esc(team.logo)}');border-color:${color}"></div>`
                 : `<span class="team-dot" style="--team-color:${color}"></span>`;
-              return `<tr class="standings-row p${i+1}">
+              const { first, last } = splitName(drv.name);
+              return `<tr class="standings-row p${i+1}" style="--team-color:${color}">
                 <td class="pos-cell">${i+1}</td>
                 <td><div class="driver-cell">
                   ${photo}
-                  <span class="driver-cell-num" style="--driver-color:${color};color:${color}">${drv.number}</span>
-                  <div><div class="driver-cell-name">${esc(drv.name)}${row.championshipDsq ? ' <span class="tag" style="color:var(--red);border-color:var(--red);font-size:8px">DSQ</span>' : ''}</div><div class="driver-cell-team">${flag(drv.country)} ${esc(drv.country || '')}</div></div>
+                  <span class="driver-cell-num" style="--team-color:${color}">${drv.number || '–'}</span>
+                  <div class="driver-cell-name-wrap">
+                    <div class="driver-cell-name">
+                      ${first ? `<span class="first">${esc(first)}</span>` : ''}
+                      <span>${esc(last)}</span>
+                      ${row.championshipDsq ? '<span class="tag" style="color:var(--red);border-color:var(--red);font-size:8px;padding:2px 5px">DSQ</span>' : ''}
+                    </div>
+                    <div class="driver-cell-team">${flag(drv.country)} ${esc(drv.country || '')}</div>
+                  </div>
                 </div></td>
-                <td><span class="team-pill">${teamMark}${esc(teamName(season, drv.teamId))}</span></td>
+                <td><span class="team-pill" style="--team-color:${color}">${teamMark}${esc(teamName(season, drv.teamId))}</span></td>
                 <td class="points-cell">${row.points}</td>
                 <td class="gap-cell">${i === 0 ? '—' : '−' + (leaderPts - row.points)}</td>
-                <td class="num">${row.wins}</td>
-                <td class="num">${row.podiums}</td>
-                <td class="num">${row.polePositions}</td>
-                <td class="num">${row.fastestLaps}</td>
-                <td class="num">${row.dnfs}</td>
+                <td class="num ${row.wins ? '' : 'zero'}">${row.wins}</td>
+                <td class="num ${row.podiums ? '' : 'zero'}">${row.podiums}</td>
+                <td class="num ${row.polePositions ? '' : 'zero'}">${row.polePositions}</td>
+                <td class="num ${row.fastestLaps ? '' : 'zero'}">${row.fastestLaps}</td>
+                <td class="num ${row.dnfs ? '' : 'zero'}">${row.dnfs}</td>
               </tr>`;
             }).join('')}
           </tbody>
@@ -3976,23 +3984,29 @@ function renderStandings() {
     } else {
       root.innerHTML = tStand.length ? `
         <div class="f1-table-shell">
-        <table class="standings-table">
+        <table class="standings-table constructors-table">
           <thead><tr><th></th><th>CONSTRUCTOR</th><th class="num">PTS</th><th class="num">GAP</th><th class="num">W</th><th class="num">POD</th><th class="num">POLE</th><th class="num">FL</th></tr></thead>
           <tbody>
             ${tStand.map((row, i) => {
               const t = season.teams.find(x => x.id === row.teamId); if (!t) return '';
               const teamMark = t.logo
-                ? `<div class="team-logo" style="background-image:url('${esc(t.logo)}');border-color:${t.color}"></div>`
-                : `<div class="team-logo" style="border-color:${t.color};color:${t.color}">${esc(t.short || t.name.slice(0,3).toUpperCase())}</div>`;
-              return `<tr class="standings-row p${i+1}">
+                ? `<div class="team-logo" style="background-image:url('${esc(t.logo)}');--team-color:${t.color}"></div>`
+                : `<div class="team-logo" style="--team-color:${t.color}">${esc(t.short || t.name.slice(0,3).toUpperCase())}</div>`;
+              return `<tr class="standings-row p${i+1}" style="--team-color:${t.color}">
                 <td class="pos-cell">${i+1}</td>
-                <td><div class="driver-cell">${teamMark}<div><div class="driver-cell-name">${esc(t.name)}</div><div class="driver-cell-team">${esc(t.short)} · ${flagAndCode(t.country)}</div></div></div></td>
+                <td><div class="driver-cell">
+                  ${teamMark}
+                  <div class="driver-cell-name-wrap">
+                    <div class="driver-cell-name"><span>${esc(t.name)}</span></div>
+                    <div class="driver-cell-team">${esc(t.short || '')} · ${flagAndCode(t.country)}</div>
+                  </div>
+                </div></td>
                 <td class="points-cell">${row.points}</td>
                 <td class="gap-cell">${i === 0 ? '—' : '−' + (tLeaderPts - row.points)}</td>
-                <td class="num">${row.wins}</td>
-                <td class="num">${row.podiums}</td>
-                <td class="num">${row.polePositions}</td>
-                <td class="num">${row.fastestLaps}</td>
+                <td class="num ${row.wins ? '' : 'zero'}">${row.wins}</td>
+                <td class="num ${row.podiums ? '' : 'zero'}">${row.podiums}</td>
+                <td class="num ${row.polePositions ? '' : 'zero'}">${row.polePositions}</td>
+                <td class="num ${row.fastestLaps ? '' : 'zero'}">${row.fastestLaps}</td>
               </tr>`;
             }).join('')}
           </tbody>
