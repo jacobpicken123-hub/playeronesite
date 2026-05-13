@@ -260,11 +260,11 @@ img { display: block; max-width: 100%; }
   max-width: 1440px;
   margin: 0 auto;
   min-height: calc(100vh - 240px);
-  animation: page-enter 0.5s var(--ease-out);
+  animation: page-enter 0.28s var(--ease-out);
 }
 @keyframes page-enter {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
+  from { opacity: 0.85; }
+  to { opacity: 1; }
 }
 
 .footer {
@@ -4420,6 +4420,2617 @@ tr:hover td { background: rgba(255,255,255,0.012); }
 }
 
 
+/* =============================================================
+   35. ENHANCEMENT LAYER v4.0 — CINEMATIC POLISH
+   Purely additive. Adds: cursor-tracked card glow, 3D tilt,
+   number tickers, scroll reveals, ripple, page-fade, living
+   background, refined focus/buttons/modals/toasts.
+   ============================================================= */
+
+/* ---------- A. Living background (drifts subtly) ---------- */
+@keyframes p1-grid-drift {
+  from { background-position: -1px -1px, -1px -1px; }
+  to   { background-position: 23px 23px, 23px 23px; }
+}
+body::before {
+  animation: p1-grid-drift 32s linear infinite;
+  background-size: 24px 24px, 24px 24px;
+}
+@keyframes p1-aura-pulse {
+  0%, 100% { opacity: 0.55; }
+  50%      { opacity: 0.9; }
+}
+body { position: relative; }
+body > .p1-aura {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  background:
+    radial-gradient(ellipse 800px 400px at 12% 110%, rgba(225,6,47,0.10), transparent 60%),
+    radial-gradient(ellipse 600px 400px at 90% 10%, rgba(0,217,255,0.045), transparent 60%);
+  animation: p1-aura-pulse 11s ease-in-out infinite;
+  mix-blend-mode: screen;
+}
+
+/* Floating ambient sparks */
+.p1-sparks {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  overflow: hidden;
+}
+.p1-spark {
+  position: absolute;
+  width: 2px; height: 2px;
+  border-radius: 50%;
+  background: var(--red-light);
+  opacity: 0;
+  filter: drop-shadow(0 0 4px var(--red-glow));
+  animation: p1-spark-rise 12s linear infinite;
+}
+.p1-spark:nth-child(2) { background: var(--sec-cyan); filter: drop-shadow(0 0 4px rgba(0,217,255,0.4)); }
+.p1-spark:nth-child(4) { background: var(--sec-yellow); filter: drop-shadow(0 0 4px rgba(255,214,10,0.3)); }
+.p1-spark:nth-child(7) { background: var(--sec-cyan); }
+@keyframes p1-spark-rise {
+  0%   { transform: translate3d(0, 100vh, 0) scale(0.6); opacity: 0; }
+  8%   { opacity: 0.7; }
+  92%  { opacity: 0.5; }
+  100% { transform: translate3d(0, -10vh, 0) scale(1.1); opacity: 0; }
+}
+
+/* ---------- B. Cinematic entrance choreography ---------- */
+@keyframes p1-sweep-in {
+  from { opacity: 0; transform: translateY(-8px); clip-path: inset(0 100% 0 0); }
+  to   { opacity: 1; transform: translateY(0);    clip-path: inset(0 0 0 0); }
+}
+.topbar { animation: p1-sweep-in 0.7s var(--ease-out) both; }
+.tabs   { animation: p1-sweep-in 0.8s 0.1s var(--ease-out) both; }
+
+@keyframes p1-brand-scan {
+  0%   { transform: translateX(-110%); }
+  100% { transform: translateX(120%); }
+}
+.brand-mark { position: relative; overflow: hidden; border-radius: 4px; }
+.brand-mark::after {
+  content: '';
+  position: absolute; inset: 0;
+  background: linear-gradient(110deg, transparent 40%, rgba(255,255,255,0.45) 50%, transparent 60%);
+  animation: p1-brand-scan 5.5s ease-in-out infinite;
+  pointer-events: none;
+}
+
+/* Tab indicator: slightly larger hover state */
+.tab { transition: color 0.18s var(--ease), letter-spacing 0.28s var(--ease-out); }
+.tab:hover { letter-spacing: 0.08em; }
+
+/* ---------- C. Cursor-tracked spotlight cards ---------- */
+.universe-card, .season-card, .driver-card, .team-card, .save-card,
+.stat-leader-card, .record-tile, .dash-stat-card.leader, .signin-card,
+.charts-section, .dash-block, .dash-hero {
+  --mx: 50%;
+  --my: -100%;
+  position: relative;
+  isolation: isolate;
+}
+.universe-card::after, .season-card::after, .driver-card::after, .team-card::after,
+.save-card::after, .stat-leader-card::after, .record-tile::after,
+.dash-stat-card.leader::after, .signin-card::after {
+  content: '';
+  position: absolute; inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(420px circle at var(--mx) var(--my),
+    rgba(225, 6, 47, 0.16), transparent 45%);
+  opacity: 0;
+  transition: opacity 0.35s var(--ease);
+  pointer-events: none;
+  z-index: 0;
+  mix-blend-mode: screen;
+}
+.universe-card:hover::after, .season-card:hover::after, .driver-card:hover::after,
+.team-card:hover::after, .save-card:hover::after, .stat-leader-card:hover::after,
+.record-tile:hover::after, .dash-stat-card.leader:hover::after,
+.signin-card:hover::after { opacity: 1; }
+
+/* Driver card holographic sheen on hover */
+.driver-card {
+  perspective: 900px;
+  transform-style: preserve-3d;
+  transition: transform 0.4s var(--ease), border-color 0.22s var(--ease), box-shadow 0.22s var(--ease);
+  transform: rotateX(var(--tx, 0)) rotateY(var(--ty, 0));
+}
+.driver-card::before {
+  content: '';
+  position: absolute; inset: 0;
+  border-radius: inherit;
+  background: conic-gradient(from calc(var(--mx, 50%) * 3.6) at var(--mx, 50%) var(--my, 50%),
+    transparent 0deg, rgba(255,255,255,0.06) 40deg, transparent 80deg, transparent 360deg);
+  opacity: 0;
+  transition: opacity 0.4s var(--ease);
+  pointer-events: none;
+  z-index: 0;
+  mix-blend-mode: overlay;
+}
+.driver-card:hover::before { opacity: 1; }
+.driver-card > * { position: relative; z-index: 1; }
+
+/* ---------- D. Number ticker preparation ---------- */
+.dash-stat-num, .save-stat-num, .record-tile-value, .stat-leader-bignum-num,
+.progress-pct, .driver-card .driver-stat-num {
+  font-variant-numeric: tabular-nums;
+  transition: text-shadow 0.4s var(--ease);
+}
+.p1-tick-active { text-shadow: 0 0 18px var(--red-glow); }
+
+/* ---------- E. Scroll reveal ---------- */
+.p1-reveal {
+  opacity: 0;
+  transform: translateY(14px);
+  transition: opacity 0.55s var(--ease-out), transform 0.55s var(--ease-out);
+}
+.p1-revealed { opacity: 1; transform: translateY(0); }
+.f1-matrix-row.p1-reveal, .standings-row.p1-reveal,
+.f1-table-row.p1-reveal, .record-detail-row.p1-reveal,
+.rc-row.p1-reveal { transform: translateX(-12px); }
+.f1-matrix-row.p1-revealed, .standings-row.p1-revealed,
+.f1-table-row.p1-revealed, .record-detail-row.p1-revealed,
+.rc-row.p1-revealed { transform: translateX(0); }
+
+@media (prefers-reduced-motion: reduce) {
+  .p1-reveal { opacity: 1; transform: none; transition: none; }
+}
+
+/* ---------- F. Button ripple ---------- */
+.btn, .tab, .race-session-tab { position: relative; overflow: hidden; }
+.p1-ripple {
+  position: absolute;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.5);
+  transform: translate(-50%, -50%) scale(0);
+  animation: p1-ripple-out 0.65s var(--ease-out) forwards;
+  pointer-events: none;
+  z-index: 2;
+}
+.btn-primary .p1-ripple { background: rgba(255, 255, 255, 0.6); }
+.btn-danger  .p1-ripple { background: rgba(225, 6, 47, 0.35); }
+@keyframes p1-ripple-out {
+  to { transform: translate(-50%, -50%) scale(24); opacity: 0; }
+}
+
+/* Magnetic press */
+.btn { transition: transform 0.18s var(--ease), background 0.18s var(--ease),
+                   border-color 0.18s var(--ease), box-shadow 0.22s var(--ease),
+                   letter-spacing 0.22s var(--ease); }
+.btn:hover { letter-spacing: 0.07em; }
+.btn:active { transform: translateY(1px) scale(0.985); }
+.btn-primary:active { box-shadow: 0 1px 0 rgba(255,255,255,0.15) inset, 0 0 0 1px rgba(225,6,47,0.6), 0 0 24px rgba(225,6,47,0.5); }
+
+/* ---------- G. Form polish ---------- */
+input[type="text"], input[type="number"], input[type="email"], input[type="password"],
+input[type="date"], input[type="search"], select, textarea {
+  position: relative;
+}
+input:focus, select:focus, textarea:focus { animation: p1-input-focus 0.42s var(--ease-out); }
+@keyframes p1-input-focus {
+  0%   { box-shadow: 0 0 0 0 rgba(225,6,47,0); }
+  60%  { box-shadow: 0 0 0 8px rgba(225,6,47,0.18); }
+  100% { box-shadow: 0 0 0 3px rgba(225,6,47,0.18); }
+}
+input.p1-shake, select.p1-shake, textarea.p1-shake { animation: p1-shake 0.42s var(--ease); border-color: var(--red); }
+@keyframes p1-shake {
+  10%, 90% { transform: translateX(-1px); }
+  20%, 80% { transform: translateX(2px); }
+  30%, 50%, 70% { transform: translateX(-3px); }
+  40%, 60% { transform: translateX(3px); }
+}
+
+/* ---------- H. Modal & backdrop refinements ---------- */
+.modal-backdrop {
+  background:
+    radial-gradient(ellipse 100% 80% at 50% 50%, rgba(7,8,11,0.55), rgba(7,8,11,0.92) 90%);
+  backdrop-filter: blur(14px) saturate(160%);
+  -webkit-backdrop-filter: blur(14px) saturate(160%);
+}
+.modal {
+  box-shadow: var(--shadow-3), 0 0 0 1px rgba(225,6,47,0.22),
+              0 0 80px rgba(225,6,47,0.14),
+              inset 0 1px 0 rgba(255,255,255,0.04);
+}
+.modal::after {
+  content: '';
+  position: absolute; left: 0; right: 0; bottom: 0;
+  height: 80px;
+  background: radial-gradient(ellipse 60% 100% at 50% 100%, rgba(225,6,47,0.06), transparent);
+  pointer-events: none;
+}
+.modal-body > * { animation: slide-up 0.45s var(--ease-out) both; }
+.modal-body > *:nth-child(1) { animation-delay: 0.04s; }
+.modal-body > *:nth-child(2) { animation-delay: 0.09s; }
+.modal-body > *:nth-child(3) { animation-delay: 0.14s; }
+.modal-body > *:nth-child(4) { animation-delay: 0.19s; }
+.modal-body > *:nth-child(n+5) { animation-delay: 0.24s; }
+
+/* ---------- I. Toast polish ---------- */
+.toast {
+  box-shadow: var(--shadow-3), 0 0 0 1px rgba(225,6,47,0.12), 0 12px 32px rgba(0,0,0,0.6);
+  backdrop-filter: blur(10px) saturate(160%);
+  -webkit-backdrop-filter: blur(10px) saturate(160%);
+  background: linear-gradient(135deg, rgba(20,22,28,0.92), rgba(13,14,19,0.92));
+}
+.toast::after {
+  content: '';
+  position: absolute; left: 0; right: 0; bottom: 0;
+  height: 2px;
+  background: currentColor;
+  opacity: 0.5;
+  animation: p1-toast-bar 5s linear forwards;
+  transform-origin: left;
+}
+.toast.success::after { background: var(--sec-green); color: var(--sec-green); }
+.toast.warn::after    { background: var(--sec-yellow); color: var(--sec-yellow); }
+.toast.error::after   { background: var(--red); color: var(--red); }
+@keyframes p1-toast-bar {
+  from { transform: scaleX(1); }
+  to   { transform: scaleX(0); }
+}
+
+/* ---------- J. Page swap fade — kept subtle to avoid flicker ---------- */
+#app.p1-just-rendered {
+  animation: p1-page-in 0.22s var(--ease-out);
+}
+@keyframes p1-page-in {
+  from { opacity: 0.92; }
+  to   { opacity: 1; }
+}
+
+/* ---------- K. Race calendar speed-line ---------- */
+.f1-table-row { overflow: hidden; }
+.f1-table-row::after {
+  content: '';
+  position: absolute; top: 0; bottom: 0;
+  right: -40%; width: 40%;
+  background: linear-gradient(90deg, transparent, rgba(225,6,47,0.10), transparent);
+  transition: transform 0.6s var(--ease-out);
+  transform: translateX(0);
+  pointer-events: none;
+}
+.f1-table-row:hover::after { transform: translateX(-220%); }
+
+/* "Live" / next race pulsing aura */
+.tag-live, .tag.red, .pts-tag.red {
+  animation: p1-live-pulse 2.2s ease-in-out infinite;
+}
+@keyframes p1-live-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(225,6,47,0); }
+  50%      { box-shadow: 0 0 0 4px rgba(225,6,47,0.18); }
+}
+
+/* ---------- L. Stat matrix hover halo ---------- */
+.f1-matrix-row:hover .f1-matrix-driver-name { text-shadow: 0 0 18px var(--red-glow); }
+.mx-cell.mx-gold   { text-shadow: 0 0 14px rgba(255,215,107,0.5); }
+.mx-cell.mx-pole   { text-shadow: 0 0 14px rgba(96,165,250,0.55); }
+
+/* ---------- M. Loading skeleton ---------- */
+.p1-skeleton {
+  position: relative;
+  overflow: hidden;
+  background: var(--bg-2);
+  border-radius: var(--r-sm);
+}
+.p1-skeleton::after {
+  content: '';
+  position: absolute; inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.06), transparent);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+}
+
+/* ---------- N. Refined focus rings (broadcast style) ---------- */
+:focus-visible {
+  outline: none;
+}
+button:focus-visible, .btn:focus-visible, .tab:focus-visible,
+input:focus-visible, select:focus-visible, textarea:focus-visible,
+.universe-card:focus-visible, .season-card:focus-visible, .save-card:focus-visible {
+  box-shadow:
+    0 0 0 2px var(--bg),
+    0 0 0 3px var(--red),
+    0 0 16px rgba(225,6,47,0.45);
+  outline: none;
+}
+
+/* ---------- O. Hero polish ---------- */
+.dash-hero-year { transition: text-shadow 0.4s var(--ease); }
+.dash-hero-year:hover { text-shadow: 0 0 32px rgba(255,255,255,0.08); }
+.dash-hero::after {
+  animation: p1-aura-pulse 7s ease-in-out infinite;
+}
+
+.home-hero h1 {
+  position: relative;
+  animation: p1-hero-rise 0.9s var(--ease-out) both;
+}
+@keyframes p1-hero-rise {
+  from { opacity: 0; transform: translateY(20px); letter-spacing: -0.04em; filter: blur(6px); }
+  to   { opacity: 1; transform: translateY(0); letter-spacing: -0.02em; filter: blur(0); }
+}
+.home-hero p {
+  animation: slide-up 0.7s 0.18s var(--ease-out) both;
+}
+.home-hero-actions {
+  animation: slide-up 0.7s 0.28s var(--ease-out) both;
+}
+
+/* ---------- P. Dropdown polish ---------- */
+.dropdown { transition: transform 0.22s var(--ease), border-color 0.22s var(--ease), background 0.22s var(--ease); }
+.dropdown:hover { transform: translateY(-1px); }
+
+/* ---------- Q. Glass refinement on topbar / footer ---------- */
+.topbar { background: linear-gradient(180deg, rgba(20,22,28,0.78), rgba(13,14,19,0.82)); }
+.footer { backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); background: rgba(7,8,11,0.55); }
+
+/* ---------- R. Tab numbers glow when active ---------- */
+.tab.active { text-shadow: 0 0 18px rgba(225,6,47,0.35); }
+.tab.active .tab-num { text-shadow: 0 0 12px var(--red-glow); }
+
+/* ---------- S. Driver photo glow on team color ---------- */
+.driver-card:hover .driver-photo {
+  box-shadow: 0 0 0 2px var(--team-color, var(--red)),
+              0 0 24px var(--team-color, var(--red-glow));
+}
+.driver-card .driver-photo { transition: box-shadow 0.4s var(--ease); }
+
+/* ---------- T. Standings: subtle leader bar fill animation ---------- */
+@keyframes p1-leader-bar {
+  from { width: 0%; }
+  to   { width: var(--w, 60%); }
+}
+.standings-table tbody tr.standings-row:hover > td:first-child::before {
+  animation: p1-leader-bar 0.45s var(--ease-out);
+}
+
+/* ---------- U. Reduce motion ---------- */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.05s !important;
+  }
+  .p1-sparks, body > .p1-aura, .brand-mark::after { display: none !important; }
+}
+
+/* ---------- V. Mobile refinements ---------- */
+@media (max-width: 720px) {
+  body::before { background-size: 20px 20px, 20px 20px; }
+  .dash-hero { padding: 24px; }
+  .dash-hero-year { font-size: clamp(56px, 18vw, 96px); }
+  .modal { width: min(96vw, 560px); }
+}
+
+/* ---------- W. Print ---------- */
+@media print {
+  .chequer-strip, .topbar, .tabs, .footer, .p1-sparks, body > .p1-aura,
+  body::before, body::after { display: none !important; }
+  body { background: white; color: black; }
+}
+
+/* =============================================================
+   36. RACE CARDS — Calendar grid (replaces list view)
+   ============================================================= */
+.race-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 16px;
+  margin-top: 12px;
+}
+
+.race-card {
+  --accent-color: var(--red);
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+  cursor: pointer;
+  position: relative;
+  isolation: isolate;
+  transition: transform 0.25s var(--ease), border-color 0.22s var(--ease),
+              background 0.22s var(--ease), box-shadow 0.22s var(--ease);
+  display: flex;
+  flex-direction: column;
+}
+.race-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--accent-color), transparent 70%);
+  opacity: 0.6;
+  transition: opacity 0.22s var(--ease);
+  z-index: 2;
+}
+.race-card:hover {
+  border-color: var(--border-hi);
+  transform: translateY(-3px);
+  box-shadow: var(--shadow-3);
+  background: var(--bg-3);
+}
+.race-card:hover::before { opacity: 1; }
+.race-card.pending { background: linear-gradient(180deg, var(--bg-2), var(--bg-1)); }
+.race-card.pending .race-card-round { color: transparent; -webkit-text-stroke: 1.5px var(--accent-color); }
+.race-card.completed .race-card-round {
+  color: var(--text);
+  -webkit-text-stroke: 0;
+  background: linear-gradient(180deg, #fff, #999);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.race-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 18px 20px 6px;
+}
+.race-card-round-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  line-height: 1;
+}
+.race-card-round-lbl {
+  font-family: var(--f-mono);
+  font-size: 9px;
+  letter-spacing: 0.24em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+.race-card-round {
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: 44px;
+  line-height: 0.9;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  filter: drop-shadow(0 0 14px rgba(225,6,47,0.25));
+}
+.race-card-head-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.race-card-flag {
+  width: 44px; height: 30px;
+  border-radius: 4px;
+  border: 1px solid var(--border-hi);
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  background: var(--bg-1);
+  font-size: 18px;
+  flex-shrink: 0;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+}
+.race-card-flag img,
+.race-card-flag .race-flag-img,
+.race-card-flag .cf-img {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover;
+  display: block;
+  border-radius: 0;
+}
+.race-card-flag .cf-emoji { font-size: 18px; line-height: 1; }
+
+/* Inline country flag image — used by flagImg() helper. Renders reliably on
+   Windows where native flag emojis fall back to two-letter codepoint glyphs. */
+.cf-img {
+  display: inline-block;
+  vertical-align: middle;
+  border-radius: 2px;
+  object-fit: cover;
+  border: 1px solid rgba(0,0,0,0.4);
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.04);
+}
+.cf-emoji {
+  display: inline-block;
+  vertical-align: middle;
+  line-height: 1;
+}
+
+/* Track flag image in matrix column header and race rows */
+.race-flag-img {
+  display: inline-block;
+  vertical-align: middle;
+  object-fit: cover;
+  border-radius: 3px;
+  border: 1px solid rgba(0,0,0,0.4);
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.06);
+}
+.f1-matrix-flag {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin-bottom: 4px;
+}
+.f1-matrix-flag img, .f1-matrix-flag .race-flag-img {
+  width: 26px;
+  height: 17px;
+  border-radius: 3px;
+  display: block;
+}
+
+.race-card-sprint-badge {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--f-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  padding: 3px 7px;
+  border-radius: var(--r-xs);
+  background: rgba(255,214,10,0.10);
+  border: 1px solid rgba(255,214,10,0.55);
+  color: var(--sec-yellow);
+}
+.race-card-status-tag {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--f-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  padding: 3px 8px;
+  border-radius: var(--r-xs);
+  border: 1px solid currentColor;
+  text-transform: uppercase;
+}
+.race-card-status-tag.completed { color: var(--sec-green); background: rgba(16,220,136,0.08); }
+.race-card-status-tag.upcoming { color: var(--text-muted); background: var(--bg-1); }
+.race-card-status-tag.next {
+  color: var(--red-light);
+  background: var(--red-soft);
+  animation: p1-live-pulse 2.2s ease-in-out infinite;
+}
+
+.race-card-body {
+  padding: 8px 20px 16px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.race-card-name {
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: 19px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  line-height: 1.1;
+  color: var(--text);
+  margin: 0;
+}
+.race-card-circuit {
+  font-family: var(--f-serif);
+  font-style: italic;
+  font-size: 13px;
+  color: var(--text-soft);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.race-card-circuit::before {
+  content: '';
+  width: 24px;
+  height: 1px;
+  background: var(--accent-color);
+  opacity: 0.6;
+  flex-shrink: 0;
+}
+.race-card-meta-row {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  align-items: center;
+  padding: 6px 0;
+  border-top: 1px solid var(--border-dim);
+  border-bottom: 1px solid var(--border-dim);
+}
+.race-card-meta-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.race-card-meta-lbl {
+  font-family: var(--f-mono);
+  font-size: 8px;
+  letter-spacing: 0.2em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+.race-card-meta-val {
+  font-family: var(--f-mono);
+  font-size: 12px;
+  color: var(--text);
+  letter-spacing: 0.05em;
+  font-variant-numeric: tabular-nums;
+  text-transform: uppercase;
+}
+
+.race-card-winner {
+  --team-color: var(--gold);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  background: linear-gradient(135deg, rgba(255,215,107,0.04), var(--bg-1));
+  border: 1px solid var(--border-dim);
+  border-left: 3px solid var(--team-color);
+  border-radius: var(--r);
+  margin-top: auto;
+  transition: all 0.22s var(--ease);
+  position: relative;
+  overflow: hidden;
+}
+.race-card-winner::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 0% 50%, rgba(255,215,107,0.06), transparent 50%);
+  pointer-events: none;
+}
+.race-card:hover .race-card-winner {
+  border-color: var(--border-hi);
+  background: linear-gradient(135deg, rgba(255,215,107,0.07), var(--bg-2));
+}
+.race-card-winner-photo {
+  width: 46px; height: 46px;
+  border-radius: 50%;
+  border: 2px solid var(--team-color);
+  background: var(--bg-3) center/cover no-repeat;
+  display: grid;
+  place-items: center;
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--text);
+  flex-shrink: 0;
+  position: relative;
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.04) inset;
+}
+.race-card-winner-photo::after {
+  content: '🏆';
+  position: absolute;
+  bottom: -4px;
+  right: -4px;
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--gold), #b48a30);
+  font-size: 10px;
+  display: grid;
+  place-items: center;
+  border: 2px solid var(--bg-2);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+}
+.race-card-winner-info {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+  z-index: 1;
+}
+.race-card-winner-lbl {
+  font-family: var(--f-mono);
+  font-size: 8px;
+  letter-spacing: 0.22em;
+  color: var(--gold);
+  text-transform: uppercase;
+  margin-bottom: 2px;
+  font-weight: 700;
+}
+.race-card-winner-name {
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text);
+  line-height: 1.1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.race-card-winner-team {
+  font-family: var(--f-mono);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  margin-top: 3px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.race-card-winner-team::before {
+  content: '';
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--team-color);
+  flex-shrink: 0;
+}
+
+.race-card-pending-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px;
+  background: var(--bg-1);
+  border: 1px dashed var(--border);
+  border-radius: var(--r);
+  margin-top: auto;
+  font-family: var(--f-serif);
+  font-style: italic;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.race-card-pending-info::before {
+  content: '';
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--sec-cyan);
+  box-shadow: 0 0 8px var(--sec-cyan);
+  animation: pulse-dot 2.4s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+.race-card-actions {
+  display: flex;
+  gap: 6px;
+  padding: 10px 14px;
+  background: var(--bg-1);
+  border-top: 1px solid var(--border-dim);
+}
+.race-card-actions .btn {
+  flex: 1;
+  padding: 7px 10px;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+}
+.race-card-actions .btn-danger { flex: 0 0 auto; min-width: 40px; }
+
+/* Cursor-tracked glow on race cards */
+.race-card {
+  --mx: 50%;
+  --my: -100%;
+}
+.race-card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(380px circle at var(--mx) var(--my),
+    rgba(225, 6, 47, 0.14), transparent 50%);
+  opacity: 0;
+  transition: opacity 0.35s var(--ease);
+  pointer-events: none;
+  z-index: 0;
+  mix-blend-mode: screen;
+}
+.race-card:hover::after { opacity: 1; }
+.race-card > * { position: relative; z-index: 1; }
+
+@media (max-width: 480px) {
+  .race-card-grid { grid-template-columns: 1fr; }
+  .race-card-round { font-size: 36px; }
+  .race-card-name { font-size: 17px; }
+}
+
+/* =============================================================
+   DRIVER PORTRAIT SILHOUETTE — universal fallback
+   When a portrait div has no inner text/children (i.e. no photo and no
+   initials), render a centred silhouette icon via the ::before mask. This
+   replaces the old initials fallback across the whole app.
+   ============================================================= */
+.standings-portrait:empty:not([style*="background-image"]),
+.podium-portrait:empty:not([style*="background-image"]),
+.dash-leader-portrait:empty:not([style*="background-image"]),
+.driver-photo:empty:not([style*="background-image"]),
+.team-driver-portrait:empty:not([style*="background-image"]),
+.race-card-winner-photo:empty:not([style*="background-image"]),
+.f1-portrait:empty:not([style*="background-image"]),
+.result-row-portrait:empty:not([style*="background-image"]),
+.quali-row-portrait:empty:not([style*="background-image"]),
+.stat-leader-portrait:empty:not([style*="background-image"]),
+.h2h-portrait:empty:not([style*="background-image"]),
+.last5-portrait:empty:not([style*="background-image"]),
+.preset-portrait-driver:empty:not([style*="background-image"]) {
+  position: relative;
+  color: var(--text-muted);
+}
+.standings-portrait:empty:not([style*="background-image"])::before,
+.podium-portrait:empty:not([style*="background-image"])::before,
+.dash-leader-portrait:empty:not([style*="background-image"])::before,
+.driver-photo:empty:not([style*="background-image"])::before,
+.team-driver-portrait:empty:not([style*="background-image"])::before,
+.race-card-winner-photo:empty:not([style*="background-image"])::before,
+.f1-portrait:empty:not([style*="background-image"])::before,
+.result-row-portrait:empty:not([style*="background-image"])::before,
+.quali-row-portrait:empty:not([style*="background-image"])::before,
+.stat-leader-portrait:empty:not([style*="background-image"])::before,
+.h2h-portrait:empty:not([style*="background-image"])::before,
+.last5-portrait:empty:not([style*="background-image"])::before,
+.preset-portrait-driver:empty:not([style*="background-image"])::before {
+  content: '';
+  position: absolute;
+  inset: 15%;
+  background-color: currentColor;
+  opacity: 0.5;
+  -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 12.5c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.93 0-8.5 1.47-8.5 4.4V22h17v-3.1c0-2.93-5.57-4.4-8.5-4.4z'/></svg>") center/contain no-repeat;
+          mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 12.5c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.93 0-8.5 1.47-8.5 4.4V22h17v-3.1c0-2.93-5.57-4.4-8.5-4.4z'/></svg>") center/contain no-repeat;
+  pointer-events: none;
+}
+/* Photo upload widget — silhouette when preview is empty */
+.photo-preview:empty {
+  position: relative;
+  color: var(--text-dim);
+}
+.photo-preview:empty::before {
+  content: '';
+  position: absolute;
+  inset: 20%;
+  background-color: currentColor;
+  opacity: 0.45;
+  -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 12.5c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.93 0-8.5 1.47-8.5 4.4V22h17v-3.1c0-2.93-5.57-4.4-8.5-4.4z'/></svg>") center/contain no-repeat;
+          mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 12.5c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.93 0-8.5 1.47-8.5 4.4V22h17v-3.1c0-2.93-5.57-4.4-8.5-4.4z'/></svg>") center/contain no-repeat;
+  pointer-events: none;
+}
+
+/* =============================================================
+   RACE DETAIL PAGE — Full restyle
+   Hero card with flag backdrop, polished stat cards, refined timeline,
+   broadcast-style results table.
+   ============================================================= */
+
+/* Back link */
+.race-detail-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--text-muted);
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: all 0.22s var(--ease);
+  margin-bottom: 16px;
+}
+.race-detail-back:hover {
+  border-color: var(--red);
+  color: var(--red-light);
+  background: var(--red-soft);
+  box-shadow: 0 0 0 1px rgba(225,6,47,0.2);
+}
+.race-detail-back svg { transition: transform 0.22s var(--ease); }
+.race-detail-back:hover svg { transform: translateX(-4px); }
+
+/* Hero card — flag backdrop, dark gradient overlay, layered content */
+.race-hero {
+  position: relative;
+  border-radius: var(--r-xl);
+  overflow: hidden;
+  background: var(--bg-2);
+  border: 1px solid var(--border-hi);
+  margin-bottom: 18px;
+  isolation: isolate;
+  box-shadow: var(--shadow-3);
+}
+.race-hero-bg {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center;
+  opacity: 0.22;
+  filter: blur(14px) saturate(1.5);
+  transform: scale(1.18);
+  z-index: 0;
+}
+.race-hero-overlay {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 80% 60% at 20% 0%, rgba(225,6,47,0.18), transparent 60%),
+    linear-gradient(135deg, rgba(7,8,11,0.55) 0%, rgba(7,8,11,0.85) 50%, rgba(7,8,11,0.95) 100%);
+  z-index: 0;
+}
+.race-hero::after {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--red), transparent 70%);
+  z-index: 2;
+}
+.race-hero-content {
+  position: relative;
+  z-index: 1;
+  padding: 28px 32px 30px;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 22px;
+}
+
+.race-hero-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+.race-hero-round {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  line-height: 1;
+}
+.race-hero-round-lbl {
+  font-family: var(--f-mono);
+  font-size: 9px;
+  letter-spacing: 0.26em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+.race-hero-round-num {
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: 64px;
+  line-height: 0.85;
+  letter-spacing: -0.02em;
+  color: transparent;
+  -webkit-text-stroke: 1.6px var(--red);
+  font-variant-numeric: tabular-nums;
+  filter: drop-shadow(0 0 18px var(--red-glow));
+}
+.race-hero-flag {
+  width: 72px;
+  height: 48px;
+  border-radius: 6px;
+  overflow: hidden;
+  box-shadow: 0 6px 22px rgba(0,0,0,0.6), 0 0 0 1px rgba(255,255,255,0.08) inset;
+  display: grid;
+  place-items: center;
+  background: var(--bg-1);
+  flex-shrink: 0;
+}
+.race-hero-flag img, .race-hero-flag .race-flag-img {
+  width: 100% !important;
+  height: 100% !important;
+  object-fit: cover;
+  display: block;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+}
+
+.race-hero-main {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.race-hero-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--f-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  align-self: flex-start;
+}
+.race-hero-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+.race-hero.is-completed .race-hero-status { color: var(--sec-green); }
+.race-hero.is-completed .race-hero-status-dot {
+  background: var(--sec-green);
+  box-shadow: 0 0 12px var(--sec-green);
+}
+.race-hero.is-upcoming .race-hero-status { color: var(--red-light); }
+.race-hero.is-upcoming .race-hero-status-dot {
+  background: var(--red);
+  box-shadow: 0 0 12px var(--red-glow);
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+.race-hero-sprint-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: 3px;
+  background: rgba(255,214,10,0.12);
+  border: 1px solid rgba(255,214,10,0.5);
+  color: var(--sec-yellow);
+  font-size: 9px;
+  letter-spacing: 0.2em;
+}
+.race-hero-name {
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: clamp(36px, 5.5vw, 60px);
+  letter-spacing: 0.01em;
+  line-height: 0.95;
+  text-transform: uppercase;
+  margin: 4px 0 0;
+  background: linear-gradient(180deg, #fff 30%, #8a8d94);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.race-hero-circuit {
+  font-family: var(--f-serif);
+  font-style: italic;
+  font-size: 22px;
+  color: var(--text-soft);
+  line-height: 1.2;
+}
+.race-hero-country {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+.race-hero-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.race-hero-actions .btn {
+  background: rgba(20,22,28,0.55);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+/* Stats grid — replaces the old race-meta-strip */
+.race-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin-bottom: 22px;
+}
+.race-stat {
+  position: relative;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: 16px 20px 18px;
+  overflow: hidden;
+  transition: transform 0.22s var(--ease), border-color 0.22s var(--ease),
+              background 0.22s var(--ease), box-shadow 0.22s var(--ease);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  isolation: isolate;
+}
+.race-stat::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; bottom: 0;
+  width: 3px;
+  background: var(--border-hi);
+  transition: background 0.22s var(--ease), box-shadow 0.22s var(--ease);
+}
+.race-stat:hover {
+  border-color: var(--border-hi);
+  background: var(--bg-3);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-2);
+}
+.race-stat-icon {
+  position: absolute;
+  top: 14px;
+  right: 16px;
+  font-family: var(--f-display);
+  font-size: 20px;
+  color: var(--text-dim);
+  opacity: 0.6;
+  transition: opacity 0.22s var(--ease), transform 0.3s var(--ease-spring);
+  z-index: 0;
+}
+.race-stat:hover .race-stat-icon { opacity: 0.95; transform: scale(1.15) rotate(-8deg); }
+.race-stat-lbl {
+  font-family: var(--f-mono);
+  font-size: 9px;
+  letter-spacing: 0.22em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+.race-stat-val {
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: 16px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text);
+  line-height: 1.15;
+  word-break: break-word;
+}
+.race-stat.has-pole::before { background: var(--sec-blue); box-shadow: 0 0 14px rgba(96,165,250,0.4); }
+.race-stat.has-pole .race-stat-icon { color: var(--sec-blue); }
+.race-stat.has-pole .race-stat-val { color: var(--sec-blue); }
+.race-stat.has-fl::before { background: var(--sec-purple); box-shadow: 0 0 14px rgba(167,139,250,0.4); }
+.race-stat.has-fl .race-stat-icon { color: var(--sec-purple); }
+.race-stat.has-fl .race-stat-val { color: var(--sec-purple); }
+.race-stat.is-sprint::before { background: var(--sec-yellow); box-shadow: 0 0 14px rgba(255,214,10,0.4); }
+.race-stat.is-sprint .race-stat-icon { color: var(--sec-yellow); }
+.race-stat.is-sprint .race-stat-val { color: var(--sec-yellow); }
+
+/* Race timeline — restyled to feel like a session progress strip */
+.race-timeline {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  margin: 0 0 24px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  flex-wrap: unset;
+  list-style: none;
+}
+.race-timeline-step {
+  position: relative;
+  display: grid;
+  grid-template-columns: 44px 1fr;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  overflow: hidden;
+  transition: transform 0.22s var(--ease), border-color 0.22s var(--ease),
+              box-shadow 0.22s var(--ease);
+  isolation: isolate;
+}
+.race-timeline-step::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  background: var(--ts-color, var(--text-dim));
+  opacity: 0.7;
+}
+.race-timeline-step:hover {
+  border-color: var(--border-hi);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-2);
+}
+.race-timeline-icon {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  background: var(--bg-1);
+  border: 1px solid var(--border-dim);
+  border-radius: 50%;
+  color: var(--ts-color, var(--text-muted));
+  font-size: 18px;
+  line-height: 1;
+  flex-shrink: 0;
+  position: relative;
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.03) inset;
+}
+.race-timeline-icon::after {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--ts-color), transparent 70%);
+  opacity: 0.18;
+  z-index: -1;
+}
+.race-timeline-body { min-width: 0; }
+.race-timeline-title {
+  font-family: var(--f-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  margin-bottom: 4px;
+}
+.race-timeline-highlight {
+  font-family: var(--f-display);
+  font-weight: 600;
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  color: var(--text);
+  line-height: 1.25;
+}
+.race-timeline-highlight b {
+  color: var(--ts-color, var(--text));
+  font-weight: 700;
+}
+.race-timeline-sub {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: var(--text-muted);
+  margin-top: 4px;
+  text-transform: uppercase;
+}
+.race-timeline-connector { display: none; }
+
+/* Race results table — broadcast-style row layout */
+#race-content .results-editor {
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+  margin-top: 8px;
+}
+#race-content .results-editor-head {
+  background: linear-gradient(180deg, var(--bg-2), var(--bg-1));
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--border);
+}
+#race-content .results-editor-head > div {
+  font-family: var(--f-mono);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+#race-content .result-row {
+  --team-color: var(--text-dim);
+  position: relative;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--border-dim);
+  transition: background 0.18s var(--ease);
+  align-items: center;
+}
+#race-content .result-row:last-child { border-bottom: none; }
+#race-content .result-row::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; bottom: 0;
+  width: 3px;
+  background: var(--team-color);
+  opacity: 0;
+  transition: opacity 0.18s var(--ease);
+}
+#race-content .result-row:hover { background: var(--bg-3); }
+#race-content .result-row:hover::before { opacity: 1; }
+#race-content .result-row .driver-cell-name {
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text);
+  line-height: 1.15;
+}
+#race-content .result-row .driver-cell-team {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  margin-top: 2px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* Mobile: stack hero content more compactly */
+@media (max-width: 640px) {
+  .race-hero-content { padding: 22px 20px; }
+  .race-hero-round-num { font-size: 48px; }
+  .race-hero-flag { width: 56px; height: 38px; }
+  .race-hero-name { font-size: clamp(28px, 8vw, 40px); }
+  .race-hero-circuit { font-size: 18px; }
+  .race-hero-actions { flex-direction: column; }
+  .race-hero-actions .btn { width: 100%; justify-content: center; }
+}
+
+/* =============================================================
+   RACE READOUT — Podium
+   3-step podium with P1 raised in the centre, P2 silver, P3 bronze.
+   ============================================================= */
+.podium {
+  display: grid;
+  grid-template-columns: 1fr 1.15fr 1fr;
+  align-items: end;
+  gap: 14px;
+  margin: 28px auto 32px;
+}
+.podium-step {
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: 22px 18px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  transition: transform 0.25s var(--ease), box-shadow 0.25s var(--ease);
+  animation: podium-rise 0.55s var(--ease-spring) both;
+}
+@keyframes podium-rise {
+  from { opacity: 0; transform: translateY(20px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.podium-step::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 4px;
+  background: linear-gradient(90deg, transparent, currentColor, transparent);
+  opacity: 0.85;
+}
+.podium-step::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 50% 100%, currentColor, transparent 65%);
+  opacity: 0.08;
+  pointer-events: none;
+  z-index: 0;
+}
+.podium-step > * { position: relative; z-index: 1; }
+.podium-step:hover { transform: translateY(-3px); box-shadow: var(--shadow-3); }
+
+/* Tier styling — drives ::before stripe + radial wash via currentColor */
+.podium-step.p1 {
+  color: var(--gold);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--gold) 8%, var(--bg-2)), var(--bg-2));
+  border-color: color-mix(in srgb, var(--gold) 40%, var(--border-hi));
+  padding-top: 30px;
+  padding-bottom: 28px;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--gold) 25%, transparent),
+              0 0 32px rgba(255, 215, 107, 0.12);
+  animation-delay: 0.18s;
+}
+.podium-step.p2 {
+  color: var(--silver);
+  border-color: color-mix(in srgb, var(--silver) 30%, var(--border-hi));
+  animation-delay: 0.06s;
+}
+.podium-step.p3 {
+  color: var(--bronze);
+  border-color: color-mix(in srgb, var(--bronze) 30%, var(--border-hi));
+  animation-delay: 0.28s;
+}
+
+.podium-portrait {
+  width: 88px; height: 88px;
+  border-radius: 50%;
+  border: 3px solid currentColor;
+  background: var(--bg-3) center/cover no-repeat;
+  display: grid;
+  place-items: center;
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: 24px;
+  color: var(--text);
+  margin-bottom: 6px;
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.05) inset,
+              0 4px 18px rgba(0,0,0,0.5),
+              0 0 24px color-mix(in srgb, currentColor 30%, transparent);
+  flex-shrink: 0;
+}
+.podium-step.p1 .podium-portrait { width: 100px; height: 100px; font-size: 26px; }
+
+.podium-pos {
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: 44px;
+  line-height: 0.9;
+  letter-spacing: -0.02em;
+  color: currentColor;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 0 18px color-mix(in srgb, currentColor 40%, transparent);
+}
+.podium-step.p1 .podium-pos { font-size: 56px; }
+
+.podium-name {
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: 16px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text);
+  text-align: center;
+  line-height: 1.15;
+  margin-top: 4px;
+}
+.podium-step.p1 .podium-name { font-size: 18px; }
+
+.podium-team {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  text-align: center;
+}
+
+@media (max-width: 640px) {
+  .podium {
+    grid-template-columns: 1fr;
+    max-width: 360px;
+  }
+  .podium-step { padding: 18px; }
+  .podium-portrait { width: 72px; height: 72px; }
+  .podium-step.p1 .podium-portrait { width: 80px; height: 80px; }
+  .podium-pos { font-size: 36px; }
+  .podium-step.p1 .podium-pos { font-size: 42px; }
+}
+
+/* =============================================================
+   MULTI-PHOTO PRESET — gallery widget + photo picker modal
+   ============================================================= */
+.photo-gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 10px;
+}
+.photo-gallery-item {
+  background: var(--bg-1);
+  border: 1px solid var(--border-dim);
+  border-radius: var(--r);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  transition: border-color 0.22s var(--ease), transform 0.22s var(--ease),
+              box-shadow 0.22s var(--ease);
+}
+.photo-gallery-item:hover {
+  border-color: var(--border-hi);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-2);
+}
+.photo-gallery-item.is-default {
+  border-color: var(--gold);
+  box-shadow: 0 0 0 1px rgba(255,215,107,0.22), 0 0 16px rgba(255,215,107,0.15);
+}
+.photo-gallery-thumb {
+  position: relative;
+  aspect-ratio: 1;
+  background: var(--bg-3) center/cover no-repeat;
+  border-bottom: 1px solid var(--border-dim);
+}
+.photo-gallery-default-badge {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  font-family: var(--f-mono);
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  padding: 3px 6px;
+  border-radius: 3px;
+  background: linear-gradient(135deg, var(--gold), #b48a30);
+  color: #2a1d05;
+  text-transform: uppercase;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+}
+.photo-gallery-label {
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--border-dim);
+  padding: 8px 10px;
+  font-family: var(--f-mono);
+  font-size: 11px;
+  color: var(--text);
+  letter-spacing: 0.04em;
+  width: 100%;
+}
+.photo-gallery-label:focus {
+  outline: none;
+  background: var(--bg-2);
+  box-shadow: inset 0 -2px 0 var(--red);
+}
+.photo-gallery-label::placeholder { color: var(--text-dim); }
+
+.photo-gallery-actions {
+  display: flex;
+  gap: 0;
+  background: var(--bg-2);
+}
+.photo-gallery-btn {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 8px 6px;
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-family: var(--f-mono);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: all 0.22s var(--ease);
+}
+.photo-gallery-btn svg { transition: transform 0.3s var(--ease-spring); flex-shrink: 0; }
+.photo-gallery-btn.star:hover {
+  background: rgba(255,215,107,0.08);
+  color: var(--gold);
+}
+.photo-gallery-btn.star:hover svg { transform: rotate(-12deg) scale(1.1); }
+.photo-gallery-btn.star.active {
+  color: var(--gold);
+  background: rgba(255,215,107,0.06);
+}
+.photo-gallery-btn.remove {
+  flex: 0 0 36px;
+  border-left: 1px solid var(--border-dim);
+}
+.photo-gallery-btn.remove:hover {
+  background: rgba(225,6,47,0.08);
+  color: var(--red-light);
+}
+.photo-gallery-btn.remove:hover svg { transform: rotate(90deg); }
+
+.photo-gallery-add {
+  cursor: pointer;
+  display: block;
+  border: 1px dashed var(--border-hi);
+  border-radius: var(--r);
+  background: var(--bg-1);
+  aspect-ratio: 1;
+  transition: all 0.22s var(--ease);
+}
+.photo-gallery-add:hover {
+  border-color: var(--red);
+  background: var(--red-soft);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 14px rgba(225,6,47,0.15);
+}
+.photo-gallery-add-inner {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: var(--text-muted);
+  transition: color 0.22s var(--ease);
+}
+.photo-gallery-add:hover .photo-gallery-add-inner { color: var(--red-light); }
+.photo-gallery-add-icon {
+  font-family: var(--f-display);
+  font-size: 30px;
+  line-height: 1;
+}
+.photo-gallery-add-label {
+  font-family: var(--f-mono);
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+/* Photo picker modal — shown when signing a driver from a multi-photo preset */
+.photo-picker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 12px;
+}
+.photo-picker-card {
+  background: var(--bg-1);
+  border: 2px solid var(--border-hi);
+  border-radius: var(--r);
+  overflow: hidden;
+  cursor: pointer;
+  padding: 0;
+  transition: all 0.22s var(--ease);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+.photo-picker-card:hover {
+  border-color: var(--red);
+  transform: translateY(-3px) scale(1.02);
+  box-shadow: 0 8px 24px rgba(225,6,47,0.25), 0 0 0 1px rgba(225,6,47,0.4);
+}
+.photo-picker-card.is-default { border-color: var(--gold); }
+.photo-picker-card.is-default:hover {
+  border-color: var(--red);
+  box-shadow: 0 8px 24px rgba(225,6,47,0.25), 0 0 0 1px rgba(225,6,47,0.4);
+}
+.photo-picker-thumb {
+  position: relative;
+  aspect-ratio: 1;
+  background: var(--bg-3) center/cover no-repeat;
+  border-bottom: 1px solid var(--border-dim);
+}
+.photo-picker-default-badge {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  font-family: var(--f-mono);
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  padding: 3px 6px;
+  border-radius: 3px;
+  background: linear-gradient(135deg, var(--gold), #b48a30);
+  color: #2a1d05;
+  text-transform: uppercase;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+}
+.photo-picker-label {
+  padding: 8px 10px;
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text);
+  text-align: center;
+}
+
+/* =============================================================
+   TEAM CARDS — Constructors view (redesigned)
+   ============================================================= */
+.team-card {
+  --team-color: var(--red);
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  flex-direction: column;
+  transition: transform 0.25s var(--ease), border-color 0.22s var(--ease),
+              background 0.22s var(--ease), box-shadow 0.22s var(--ease);
+}
+.team-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 4px;
+  background: linear-gradient(90deg, var(--team-color), transparent 75%);
+  z-index: 2;
+}
+.team-card::after {
+  content: '';
+  position: absolute;
+  top: 0; right: 0;
+  width: 180px; height: 180px;
+  background: radial-gradient(circle at top right, var(--team-color), transparent 60%);
+  opacity: 0.08;
+  pointer-events: none;
+  z-index: 0;
+  transition: opacity 0.35s var(--ease);
+}
+.team-card:hover {
+  border-color: var(--border-hi);
+  transform: translateY(-3px);
+  box-shadow: var(--shadow-3);
+}
+.team-card:hover::after { opacity: 0.18; }
+.team-card.champ-dsq { opacity: 0.6; }
+.team-card.champ-dsq .team-card-name { text-decoration: line-through; }
+
+/* Header — logo + identity + total points */
+.team-card-head {
+  display: grid;
+  grid-template-columns: 64px 1fr auto;
+  gap: 16px;
+  padding: 22px 20px 18px;
+  align-items: center;
+  position: relative;
+  z-index: 1;
+}
+.team-card-logo {
+  width: 64px; height: 64px;
+  border-radius: 10px;
+  border: 1px solid var(--border-hi);
+  background: var(--bg-1) center/contain no-repeat;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.35), 0 0 0 1px rgba(255,255,255,0.04) inset;
+  transition: transform 0.3s var(--ease), box-shadow 0.3s var(--ease);
+  flex-shrink: 0;
+}
+.team-card:hover .team-card-logo {
+  transform: scale(1.06) rotate(-2deg);
+  box-shadow: 0 6px 18px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.08) inset,
+              0 0 22px color-mix(in srgb, var(--team-color) 30%, transparent);
+}
+.team-card-logo-fallback {
+  display: grid;
+  place-items: center;
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: 22px;
+  letter-spacing: 0.04em;
+  border-width: 2px;
+  background-image: linear-gradient(135deg, color-mix(in srgb, var(--team-color) 20%, var(--bg-1)), var(--bg-1));
+}
+.team-card-identity { min-width: 0; }
+.team-card-name {
+  font-family: var(--f-display);
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text);
+  margin: 0 0 6px;
+  line-height: 1.1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.team-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-family: var(--f-mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+.team-card-short {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 7px;
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-left: 2px solid var(--team-color);
+  border-radius: 3px;
+  color: var(--team-color);
+  font-weight: 700;
+}
+.team-card-country {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.team-card-country .cf-img { border-radius: 2px; }
+.team-card-dsq-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 7px;
+  border: 1px solid var(--red);
+  border-radius: 3px;
+  color: var(--red-light);
+  background: var(--red-soft);
+  font-weight: 700;
+  font-size: 8px;
+}
+
+.team-card-total {
+  text-align: right;
+  font-family: var(--f-display);
+  font-variant-numeric: tabular-nums;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0;
+  line-height: 0.9;
+}
+.team-card-total-val {
+  font-size: 32px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text);
+  background: linear-gradient(180deg, #fff, color-mix(in srgb, var(--team-color) 40%, #888));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.team-card-total-lbl {
+  font-family: var(--f-mono);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.2em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  margin-top: 4px;
+}
+
+/* Drivers list */
+.team-drivers-list {
+  background: linear-gradient(180deg, var(--bg-1), color-mix(in srgb, var(--team-color) 4%, var(--bg-1)));
+  border-top: 1px solid var(--border-dim);
+  border-bottom: 1px solid var(--border-dim);
+  position: relative;
+  z-index: 1;
+}
+.team-driver-row {
+  display: grid;
+  grid-template-columns: 32px 36px 1fr auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--border-dim);
+  transition: background 0.18s var(--ease);
+}
+.team-driver-row:last-child { border-bottom: none; }
+.team-driver-row:hover { background: rgba(255,255,255,0.02); }
+.team-driver-num {
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: 16px;
+  color: var(--team-color);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+.team-driver-portrait {
+  width: 36px; height: 36px;
+  border-radius: 50%;
+  border: 2px solid var(--team-color);
+  background: var(--bg-3) center/cover no-repeat;
+  display: grid;
+  place-items: center;
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: 10px;
+  color: var(--text-soft);
+  flex-shrink: 0;
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.04) inset;
+}
+.team-driver-portrait-empty {
+  background-color: var(--bg-3);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+.team-driver-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.team-driver-name {
+  font-family: var(--f-display);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--text);
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.team-driver-flag .cf-img { border-radius: 2px; }
+.team-driver-pts {
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.team-driver-pts-lbl {
+  font-family: var(--f-mono);
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  color: var(--text-muted);
+  margin-left: 2px;
+}
+
+.team-card-empty-roster {
+  padding: 22px 20px;
+  font-family: var(--f-serif);
+  font-style: italic;
+  font-size: 13px;
+  color: var(--text-muted);
+  text-align: center;
+  background: var(--bg-1);
+  border-top: 1px solid var(--border-dim);
+  border-bottom: 1px solid var(--border-dim);
+}
+
+/* Action footer — uniform pill buttons with hover personality */
+.team-card-actions {
+  display: flex;
+  gap: 6px;
+  padding: 10px 14px;
+  background: var(--bg-1);
+  position: relative;
+  z-index: 1;
+}
+.team-action-btn {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 12px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--text-muted);
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: all 0.22s var(--ease);
+  position: relative;
+  overflow: hidden;
+}
+.team-action-btn svg { transition: transform 0.3s var(--ease-spring); flex-shrink: 0; }
+.team-action-btn:active { transform: translateY(1px); }
+
+.team-action-btn.dsq:hover {
+  border-color: var(--sec-yellow);
+  background: rgba(255,214,10,0.08);
+  color: var(--sec-yellow);
+  box-shadow: 0 0 0 1px rgba(255,214,10,0.25), 0 4px 12px rgba(255,214,10,0.15);
+}
+.team-action-btn.dsq:hover svg { transform: rotate(-15deg); }
+.team-action-btn.dsq.active {
+  background: rgba(225,6,47,0.12);
+  border-color: var(--red);
+  color: var(--red-light);
+}
+
+.team-action-btn.edit:hover {
+  border-color: var(--sec-cyan);
+  background: rgba(0,217,255,0.08);
+  color: var(--sec-cyan);
+  box-shadow: 0 0 0 1px rgba(0,217,255,0.25), 0 4px 12px rgba(0,217,255,0.18);
+}
+.team-action-btn.edit:hover svg { transform: rotate(-12deg) scale(1.08); }
+
+.team-action-btn.delete {
+  flex: 0 0 auto;
+  min-width: 38px;
+  padding: 0;
+}
+.team-action-btn.delete:hover {
+  border-color: var(--red);
+  background: linear-gradient(180deg, var(--red), #b8051f);
+  color: white;
+  box-shadow: 0 0 0 1px rgba(225,6,47,0.4), 0 4px 14px rgba(225,6,47,0.3);
+}
+.team-action-btn.delete:hover svg { transform: rotate(90deg); }
+
+.grid-cards .team-card {
+  --mx: 50%;
+  --my: -100%;
+}
+
+/* =============================================================
+   PRESET MODAL — Driver / Team / Track preset rows (polished)
+   ============================================================= */
+
+.preset-search-bar {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 14px;
+  align-items: center;
+}
+.preset-search-bar input {
+  flex: 1;
+}
+.preset-search-bar input[type="text"] {
+  padding-left: 38px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%237d8088' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cline x1='21' y1='21' x2='16.65' y2='16.65'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: 12px center;
+}
+
+.preset-filters {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border-dim);
+}
+.preset-filter {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--text-muted);
+  padding: 6px 14px;
+  font-family: var(--f-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: all 0.2s var(--ease);
+  position: relative;
+  overflow: hidden;
+}
+.preset-filter:hover {
+  border-color: var(--border-hi);
+  color: var(--text);
+  background: var(--bg-3);
+}
+.preset-filter.active {
+  background: linear-gradient(180deg, rgba(225,6,47,0.18), rgba(225,6,47,0.08));
+  border-color: var(--red);
+  color: var(--red-light);
+  box-shadow: 0 0 0 1px rgba(225,6,47,0.25), 0 0 16px rgba(225,6,47,0.15);
+}
+
+.preset-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 56vh;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+.preset-list::-webkit-scrollbar { width: 8px; }
+.preset-list::-webkit-scrollbar-thumb { background: var(--border-hi); border-radius: 4px; }
+.preset-list::-webkit-scrollbar-thumb:hover { background: var(--text-dim); }
+
+.preset-empty {
+  padding: 48px 20px;
+  text-align: center;
+  font-family: var(--f-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  background: var(--bg-1);
+  border: 1px dashed var(--border);
+  border-radius: var(--r);
+}
+
+/* The row itself — used by all three preset modals */
+.preset-row {
+  --row-accent: var(--red);
+  display: grid;
+  grid-template-columns: 48px 44px 1fr auto auto auto;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 14px;
+  background: var(--bg-1);
+  border: 1px solid var(--border-dim);
+  border-radius: var(--r);
+  cursor: pointer;
+  transition: transform 0.25s var(--ease), background 0.22s var(--ease),
+              border-color 0.22s var(--ease), box-shadow 0.22s var(--ease);
+  position: relative;
+  isolation: isolate;
+  animation: preset-row-in 0.32s var(--ease-out) both;
+}
+@keyframes preset-row-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.preset-row::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; bottom: 0;
+  width: 2px;
+  background: var(--row-accent);
+  opacity: 0;
+  transition: opacity 0.22s var(--ease);
+  border-radius: var(--r) 0 0 var(--r);
+}
+.preset-row::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.015) 70%, transparent);
+  background-size: 200% 100%;
+  background-position: 100% 0;
+  pointer-events: none;
+  transition: background-position 0.7s var(--ease-out);
+}
+.preset-row:hover {
+  background: var(--bg-2);
+  border-color: var(--border-hi);
+  transform: translateX(3px);
+  box-shadow: var(--shadow-2);
+}
+.preset-row:hover::before { opacity: 1; }
+.preset-row:hover::after { background-position: 0% 0; }
+
+.preset-row.added {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.preset-row.added:hover {
+  transform: none;
+  background: var(--bg-1);
+}
+
+/* Track rows: wider rectangular flag, no driver-number column */
+.preset-row-track {
+  grid-template-columns: 64px 48px 1fr auto auto;
+}
+
+/* Portrait — round for driver/team, rectangular flag for track */
+.preset-portrait {
+  width: 44px; height: 44px;
+  border-radius: 50%;
+  border: 2px solid var(--border-hi);
+  background: var(--bg-2) center/cover no-repeat;
+  display: grid;
+  place-items: center;
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: 12px;
+  color: var(--text);
+  flex-shrink: 0;
+  position: relative;
+  z-index: 1;
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.03) inset;
+  transition: transform 0.3s var(--ease), border-color 0.22s var(--ease),
+              box-shadow 0.22s var(--ease);
+}
+.preset-row:hover .preset-portrait {
+  transform: scale(1.06);
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.05) inset, 0 4px 14px rgba(0,0,0,0.4);
+}
+.preset-portrait-fallback {
+  background-color: var(--bg-3);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  color: var(--text-soft);
+}
+
+.preset-portrait-flag {
+  width: 56px !important;
+  height: 36px !important;
+  border-radius: 4px;
+  border: 1px solid var(--border-hi);
+  background-size: cover;
+  background-position: center;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.04) inset;
+}
+.preset-portrait-flag.preset-portrait-fallback {
+  display: grid;
+  place-items: center;
+  font-family: var(--f-mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: var(--text-muted);
+}
+.preset-row:hover .preset-portrait-flag {
+  box-shadow: 0 4px 16px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.08) inset;
+}
+
+/* Driver number / team short / country code */
+.preset-num {
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: 20px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  letter-spacing: 0.02em;
+  z-index: 1;
+}
+.preset-num-country {
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  color: var(--text-dim);
+  font-family: var(--f-mono);
+  text-transform: uppercase;
+}
+
+.preset-info {
+  min-width: 0;
+  z-index: 1;
+}
+.preset-name {
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  line-height: 1.15;
+}
+.preset-meta {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  margin-top: 4px;
+}
+
+.preset-flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--f-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  z-index: 1;
+}
+.preset-flag .cf-img { border-radius: 2px; }
+
+/* Badges (MINE / EDITED / SPR) */
+.preset-badge {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--f-mono);
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  padding: 3px 7px;
+  border-radius: 3px;
+  border: 1px solid currentColor;
+  text-transform: uppercase;
+  line-height: 1;
+}
+.preset-badge.custom { color: var(--sec-purple); background: rgba(167,139,250,0.06); }
+.preset-badge.edited { color: var(--sec-cyan); background: rgba(0,217,255,0.06); }
+.preset-badge.sprint { color: var(--sec-yellow); background: rgba(255,214,10,0.08); }
+
+/* ---------- Edit button (square icon, rotates on hover) ---------- */
+.preset-edit-btn {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.25s var(--ease);
+  padding: 0;
+  z-index: 1;
+}
+.preset-edit-btn svg {
+  transition: transform 0.3s var(--ease-spring);
+}
+.preset-edit-btn:hover {
+  border-color: var(--sec-cyan);
+  background: rgba(0,217,255,0.08);
+  color: var(--sec-cyan);
+  box-shadow: 0 0 0 1px rgba(0,217,255,0.25), 0 4px 12px rgba(0,217,255,0.18);
+}
+.preset-edit-btn:hover svg {
+  transform: rotate(-12deg) scale(1.1);
+}
+.preset-edit-btn:active { transform: scale(0.94); }
+
+/* ---------- Add button (animated red gradient on hover) ---------- */
+.preset-add-btn {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: linear-gradient(180deg, var(--bg-2), var(--bg-1));
+  color: var(--text-soft);
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  padding: 0 16px;
+  height: 36px;
+  min-width: 88px;
+  cursor: pointer;
+  transition: all 0.25s var(--ease);
+  z-index: 1;
+}
+.preset-add-btn-label {
+  position: relative;
+  z-index: 2;
+  display: inline-block;
+  transition: transform 0.25s var(--ease), letter-spacing 0.25s var(--ease);
+}
+.preset-add-btn::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, var(--red), #b8051f);
+  transform: translateY(101%);
+  transition: transform 0.32s var(--ease-out);
+  z-index: 1;
+}
+.preset-add-btn::after {
+  content: '';
+  position: absolute;
+  top: 50%; left: 50%;
+  width: 200%; height: 200%;
+  background: radial-gradient(circle, rgba(255,255,255,0.25), transparent 50%);
+  transform: translate(-50%, -50%) scale(0);
+  transition: transform 0.4s var(--ease-out), opacity 0.5s var(--ease-out);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 1;
+}
+.preset-add-btn:hover {
+  border-color: var(--red);
+  color: white;
+  box-shadow: 0 0 0 1px rgba(225,6,47,0.4), 0 6px 20px rgba(225,6,47,0.25);
+}
+.preset-add-btn:hover::before { transform: translateY(0); }
+.preset-add-btn:hover .preset-add-btn-label { letter-spacing: 0.18em; }
+.preset-add-btn:active {
+  transform: translateY(1px);
+}
+.preset-add-btn:active::after {
+  transform: translate(-50%, -50%) scale(1);
+  opacity: 1;
+  transition: transform 0.25s var(--ease-out), opacity 0s;
+}
+
+/* Already-added state — green tag, no hover effect */
+.preset-add-btn.is-added {
+  background: rgba(16, 220, 136, 0.08);
+  border-color: rgba(16, 220, 136, 0.4);
+  color: var(--sec-green);
+  pointer-events: none;
+}
+.preset-add-btn.is-added::before { display: none; }
+
+/* Mobile / narrow modal */
+@media (max-width: 700px) {
+  .preset-row {
+    grid-template-columns: 44px 1fr auto;
+    gap: 10px;
+  }
+  .preset-row .preset-num,
+  .preset-row .preset-flag,
+  .preset-row .preset-edit-btn { display: none; }
+  .preset-row-track {
+    grid-template-columns: 56px 1fr auto;
+  }
+  .preset-add-btn { min-width: 64px; padding: 0 10px; font-size: 10px; }
+}
+
+/* ---------- Race editor row driver portrait ---------- */
+.result-row-portrait, .quali-row-portrait {
+  width: 36px; height: 36px;
+  border-radius: 50%;
+  border: 2px solid var(--driver-color, var(--border-hi));
+  background: var(--bg-3) center/cover no-repeat;
+  display: grid;
+  place-items: center;
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: 10px;
+  color: var(--text-soft);
+  flex-shrink: 0;
+}
+
+/* =============================================================
+   37. F1 MATRIX — Drivers race-result table polish
+   ============================================================= */
+
+/* Generic driver portrait used in matrix + dropdowns */
+.f1-portrait {
+  width: 44px; height: 44px;
+  border-radius: 50%;
+  border: 2px solid var(--border-hi);
+  background: var(--bg-3) center/cover no-repeat;
+  display: grid;
+  place-items: center;
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--text);
+  flex-shrink: 0;
+  position: relative;
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.03) inset;
+}
+.f1-portrait.small { width: 38px; height: 38px; font-size: 11px; }
+.f1-portrait.xs    { width: 28px; height: 28px; font-size: 10px; border-width: 1.5px; }
+
+/* Rank cell: crown for #1, gold/silver/bronze for 2/3, numbered for the rest */
+.f1-matrix .f1-matrix-rank {
+  width: 64px;
+  padding: 10px 12px;
+  text-align: center;
+}
+.f1-matrix-rank-cell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 8px;
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: 16px;
+  font-variant-numeric: tabular-nums;
+  background: var(--bg-1);
+  color: var(--text);
+  border: 1px solid var(--border-hi);
+  position: relative;
+}
+.f1-matrix-rank-cell.crown {
+  background: linear-gradient(135deg, #ffd76b, #b48a30);
+  color: #2a1d05;
+  border-color: var(--gold);
+  box-shadow: 0 0 20px rgba(255,215,107,0.45), 0 0 0 1px rgba(255,215,107,0.5) inset;
+  font-size: 0;
+}
+.f1-matrix-rank-cell.crown::before {
+  content: '';
+  width: 22px; height: 22px;
+  background: currentColor;
+  -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M3 7l5 4 4-7 4 7 5-4-2 11H5L3 7zm2 13h14v2H5v-2z'/></svg>") center/contain no-repeat;
+          mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M3 7l5 4 4-7 4 7 5-4-2 11H5L3 7zm2 13h14v2H5v-2z'/></svg>") center/contain no-repeat;
+}
+.f1-matrix-rank-cell.gold {
+  background: var(--bg-1);
+  color: var(--gold);
+  border-color: var(--gold);
+  box-shadow: 0 0 12px rgba(255,215,107,0.25);
+}
+.f1-matrix-rank-cell.silver {
+  background: var(--bg-1);
+  color: var(--silver);
+  border-color: var(--silver);
+}
+.f1-matrix-rank-cell.bronze {
+  background: var(--bg-1);
+  color: var(--bronze);
+  border-color: var(--bronze);
+  box-shadow: 0 0 12px rgba(210,138,85,0.2);
+}
+
+/* Driver cell — portrait + 2-line name */
+.f1-matrix-driver-name {
+  font-family: var(--f-display);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  text-transform: uppercase;
+  color: var(--text);
+  line-height: 1.05;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.f1-matrix-driver-name .first {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+.f1-matrix .f1-matrix-team .team-logo,
+.f1-matrix .f1-matrix-team .team-dot,
+.f1-matrix-team .cf-img {
+  margin-right: 8px;
+}
+.f1-matrix .f1-matrix-team {
+  text-align: left;
+  padding-left: 8px;
+  white-space: nowrap;
+}
+.f1-matrix .f1-matrix-team span {
+  font-family: var(--f-display);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-soft);
+  text-transform: capitalize;
+  vertical-align: middle;
+}
+.f1-matrix .f1-matrix-pts {
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: 18px;
+  color: var(--text);
+  text-align: left;
+  padding-left: 10px;
+}
+
+/* Position cells — broadcast-style pole/FL accents */
+.mx-cell {
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+  display: inline-block;
+  min-width: 22px;
+  text-align: center;
+  position: relative;
+}
+.mx-cell[data-fl="1"] {
+  text-decoration: underline;
+  text-decoration-color: var(--sec-purple);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+}
+.mx-cell.mx-empty { color: var(--text-dim); font-weight: 400; }
+.mx-pole {
+  font-family: var(--f-mono);
+  font-size: 8px;
+  font-weight: 700;
+  color: var(--sec-blue);
+  position: absolute;
+  top: -4px;
+  right: -10px;
+  letter-spacing: 0.05em;
+}
+
+/* Sprint result superscript */
+.mx-sprint {
+  font-family: var(--f-mono);
+  font-size: 7px;
+  font-weight: 700;
+  position: absolute;
+  bottom: -4px;
+  right: -8px;
+  padding: 1px 3px;
+  border-radius: 2px;
+  letter-spacing: 0.05em;
+}
+.mx-sprint.spr-gold { color: #1a0f00; background: var(--gold); }
+.mx-sprint.spr-silver { color: #1e2024; background: var(--silver); }
+.mx-sprint.spr-bronze { color: #2a1408; background: var(--bronze); }
+.mx-sprint.spr-pts { color: var(--sec-blue); background: rgba(96,165,250,0.18); }
+.mx-sprint.spr-out { color: var(--text-muted); background: var(--bg-1); }
+.mx-sprint.dnf, .mx-sprint.dsq { color: white; background: var(--red); }
+.mx-sprint.dns { color: var(--text-muted); background: var(--bg-1); }
+
+/* Matrix row hover treatment */
+.f1-matrix-row { transition: background 0.18s var(--ease); }
+.f1-matrix-row:hover > td:not(.f1-matrix-rank) {
+  background: rgba(255,255,255,0.025);
+}
+.f1-matrix-row.p1 > td.f1-matrix-pts { color: var(--gold); text-shadow: 0 0 10px rgba(255,215,107,0.3); }
+
+/* Legend strip below the matrix */
+.f1-matrix-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 14px 18px;
+  border-top: 1px solid var(--border);
+  font-family: var(--f-mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  background: linear-gradient(180deg, var(--bg-1), var(--bg-2));
+}
+.f1-matrix-legend b {
+  font-family: var(--f-display);
+  font-weight: 700;
+  margin-right: 4px;
+}
+
 </style>
 </head>
 <body>
@@ -5824,11 +8435,45 @@ const COUNTRY_FLAGS = {
   CHL: '🇨🇱',
 };
 const flag = (code) => COUNTRY_FLAGS[(code || '').toUpperCase()] || '🏁';
-const flagAndCode = (code) => code ? `${flag(code)} ${esc(code)}` : '???';
-// Returns HTML for a track flag — uses custom flagImage if set, otherwise emoji.
+// ISO-3 → ISO-2 mapping (for flagcdn.com SVG flags — needed because Windows
+// browsers render flag emojis as their underlying regional-indicator letters).
+const ISO3_TO_ISO2 = {
+  AUS: 'au', AUT: 'at', BHR: 'bh', CHN: 'cn', ESP: 'es', MON: 'mc', MCO: 'mc',
+  CAN: 'ca', AZE: 'az', FRA: 'fr', GBR: 'gb', HUN: 'hu', BEL: 'be', NED: 'nl',
+  NLD: 'nl', ITA: 'it', SGP: 'sg', RUS: 'ru', JPN: 'jp', USA: 'us', MEX: 'mx',
+  BRA: 'br', UAE: 'ae', ARE: 'ae', QAT: 'qa', KSA: 'sa', SAU: 'sa', POR: 'pt',
+  PRT: 'pt', TUR: 'tr', GER: 'de', DEU: 'de', KOR: 'kr', IND: 'in', MAL: 'my',
+  MYS: 'my', FIN: 'fi', DEN: 'dk', DNK: 'dk', SWE: 'se', NOR: 'no', POL: 'pl',
+  THA: 'th', NZL: 'nz', RSA: 'za', ZAF: 'za', VEN: 've', COL: 'co', ARG: 'ar',
+  CHE: 'ch', SUI: 'ch', LIE: 'li', IRL: 'ie', CZE: 'cz', JAM: 'jm', PHL: 'ph',
+  INA: 'id', IDN: 'id', SVK: 'sk', EST: 'ee', LTU: 'lt', LVA: 'lv', LUX: 'lu',
+  URY: 'uy', CHL: 'cl'
+};
+function flagSvgUrl(code) {
+  if (!code) return '';
+  const c = String(code).toUpperCase();
+  const iso2 = ISO3_TO_ISO2[c] || (c.length === 2 ? c.toLowerCase() : '');
+  return iso2 ? `https://flagcdn.com/${iso2}.svg` : '';
+}
+// Inline SVG flag image — drop-in replacement that renders reliably on Windows.
+function flagImg(code, w = 22, h = null) {
+  if (!code) return '';
+  const url = flagSvgUrl(code);
+  if (!url) return `<span class="cf-emoji">${flag(code)}</span>`;
+  const height = h ?? Math.round(w * 0.66);
+  return `<img class="cf-img" src="${url}" alt="" loading="lazy" style="width:${w}px;height:${height}px">`;
+}
+const flagAndCode = (code) => code ? `${flagImg(code, 18)} ${esc(code)}` : '???';
+// Returns HTML for a track flag — uses custom flagImage if set, otherwise SVG flag, otherwise emoji.
 function raceFlagHTML(race, size = 18) {
+  const w = size + 10;
+  const h = Math.round(w * 0.66);
   if (race?.flagImage) {
-    return `<span class="race-flag-img" style="background-image:url('${esc(race.flagImage)}');width:${size + 8}px;height:${Math.round((size + 8) * 0.65)}px"></span>`;
+    return `<img class="race-flag-img" src="${esc(race.flagImage)}" alt="" loading="lazy" style="width:${w}px;height:${h}px">`;
+  }
+  const url = flagSvgUrl(race?.country);
+  if (url) {
+    return `<img class="race-flag-img" src="${url}" alt="${esc(race?.country || '')}" loading="lazy" style="width:${w}px;height:${h}px">`;
   }
   return `<span style="font-size:${size}px">${flag(race?.country)}</span>`;
 }
@@ -6072,6 +8717,138 @@ function encodeAtDim(img, maxDim, quality) {
  * Render a photo-upload widget. The container should already exist in DOM.
  * options: { initial: dataURL or '', shape: 'circle'|'square', placeholder: string, onChange: (newValue) => void }
  */
+/* =====================================================
+   MULTI-PHOTO PRESET HELPERS
+   A driver preset can carry a gallery of photos (e.g. Hamilton at Mercedes
+   vs. Ferrari vs. McLaren). One photo is marked the default. When a driver
+   is signed from the preset, the user picks which photo to use.
+   Legacy presets that only have `photo` are normalised to a single-entry
+   gallery on read, so old saves keep working.
+   ===================================================== */
+function presetPhotosList(preset) {
+  if (!preset) return [];
+  if (Array.isArray(preset.photos) && preset.photos.length) {
+    return preset.photos.filter(p => p && p.url);
+  }
+  if (preset.photo) return [{ id: 'main', url: preset.photo, label: '', isDefault: true }];
+  return [];
+}
+function defaultPresetPhoto(preset) {
+  const all = presetPhotosList(preset);
+  if (!all.length) return '';
+  return (all.find(p => p.isDefault) || all[0]).url || '';
+}
+
+/* Photo gallery widget — used inside the driver preset editor.
+   Renders a grid of thumbnails with labels, a per-item "set as default"
+   star, and a remove button. The "ADD" tile uploads more (supports multi-
+   file selection so dropping in a batch is one click). */
+function mountPhotoGallery(container, initial, onChange) {
+  const items = (initial || []).map(p => ({
+    id: p.id || uid(),
+    url: p.url || '',
+    label: p.label || '',
+  })).filter(p => p.url);
+  let defaultId = (initial || []).find(p => p.isDefault)?.id || items[0]?.id || null;
+
+  function emit() {
+    onChange(items.map(p => ({ id: p.id, url: p.url, label: p.label, isDefault: p.id === defaultId })));
+  }
+
+  function render() {
+    container.innerHTML = `
+      <div class="photo-gallery">
+        ${items.map(p => `
+          <div class="photo-gallery-item ${p.id === defaultId ? 'is-default' : ''}" data-id="${p.id}">
+            <div class="photo-gallery-thumb" style="background-image:url('${esc(p.url)}')">${p.id === defaultId ? '<span class="photo-gallery-default-badge">DEFAULT</span>' : ''}</div>
+            <input class="photo-gallery-label" type="text" placeholder="Label (e.g. Mercedes era)" value="${esc(p.label || '')}" data-id="${p.id}" maxlength="40">
+            <div class="photo-gallery-actions">
+              <button type="button" class="photo-gallery-btn star ${p.id === defaultId ? 'active' : ''}" data-default="${p.id}" title="${p.id === defaultId ? 'Default photo' : 'Set as default'}">
+                <svg viewBox="0 0 24 24" width="12" height="12" fill="${p.id === defaultId ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15 8.5 22 9.3 17 14.2 18.2 21 12 17.8 5.8 21 7 14.2 2 9.3 9 8.5 12 2"/></svg>
+                <span>${p.id === defaultId ? 'DEFAULT' : 'SET DEFAULT'}</span>
+              </button>
+              <button type="button" class="photo-gallery-btn remove" data-remove="${p.id}" title="Remove this photo" aria-label="Remove photo">
+                <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
+              </button>
+            </div>
+          </div>
+        `).join('')}
+        <label class="photo-gallery-add">
+          <input type="file" accept="image/*" multiple style="display:none">
+          <div class="photo-gallery-add-inner">
+            <span class="photo-gallery-add-icon">＋</span>
+            <span class="photo-gallery-add-label">${items.length ? 'ADD ANOTHER' : 'ADD PHOTO'}</span>
+          </div>
+        </label>
+      </div>`;
+
+    $$('.photo-gallery-label', container).forEach(inp => {
+      inp.oninput = () => {
+        const item = items.find(p => p.id === inp.dataset.id);
+        if (item) { item.label = inp.value; emit(); }
+      };
+    });
+    $$('[data-default]', container).forEach(b => {
+      b.onclick = () => { defaultId = b.dataset.default; emit(); render(); };
+    });
+    $$('[data-remove]', container).forEach(b => {
+      b.onclick = () => {
+        const id = b.dataset.remove;
+        const idx = items.findIndex(p => p.id === id);
+        if (idx < 0) return;
+        items.splice(idx, 1);
+        if (defaultId === id) defaultId = items[0]?.id || null;
+        emit(); render();
+      };
+    });
+    container.querySelector('.photo-gallery-add input').onchange = async (e) => {
+      const files = Array.from(e.target.files || []);
+      for (const f of files) {
+        try {
+          const url = await fileToDataURL(f, 300);
+          const newItem = { id: uid(), url, label: '' };
+          items.push(newItem);
+          if (!defaultId) defaultId = newItem.id;
+        } catch (err) { toast(err.message || 'Could not load image', 'error'); }
+      }
+      emit(); render();
+    };
+  }
+
+  render();
+  emit();
+}
+
+/* Quick photo-picker modal — shown when signing a driver from a preset that
+   has multiple photos. The user clicks one thumbnail and that URL flows
+   through to the new driver. */
+function pickPresetPhoto(preset, onPick) {
+  const photos = presetPhotosList(preset);
+  if (photos.length <= 1) { onPick(photos[0]?.url || ''); return; }
+  modal({
+    title: `<span class="accent">Pick</span> a Photo`,
+    body: `
+      <div class="field-help" style="margin-bottom:14px">
+        <b>${esc(preset.name)}</b> has ${photos.length} photos saved. Choose which one to use for this driver — you can change it later.
+      </div>
+      <div class="photo-picker-grid">
+        ${photos.map(p => `
+          <button type="button" class="photo-picker-card ${p.isDefault ? 'is-default' : ''}" data-url="${esc(p.url)}">
+            <div class="photo-picker-thumb" style="background-image:url('${esc(p.url)}')">${p.isDefault ? '<span class="photo-picker-default-badge">DEFAULT</span>' : ''}</div>
+            <div class="photo-picker-label">${esc(p.label || 'Untitled')}</div>
+          </button>
+        `).join('')}
+      </div>`,
+    footer: `<button class="btn btn-ghost" data-act="cancel">Cancel</button>`,
+    onMount: (root, close) => {
+      $('[data-act="cancel"]', root).onclick = close;
+      $$('.photo-picker-card', root).forEach(b => {
+        b.onclick = () => { onPick(b.dataset.url); close(); };
+      });
+    }
+  });
+}
+
 function mountPhotoUpload(container, { initial = '', shape = 'circle', placeholder = '?', onChange = () => {} }) {
   let value = initial || '';
   function render() {
@@ -6972,7 +9749,7 @@ function renderDashboard() {
             const tc = drv ? teamColor(season, drv.teamId) : '#666';
             const portrait = drv?.photo
               ? `<div class="dash-leader-portrait" style="background-image:url('${esc(drv.photo)}');border-color:${tc}"></div>`
-              : `<div class="dash-leader-portrait" style="border-color:${tc};color:${tc}">${esc(driverInitials(drv?.name || ''))}</div>`;
+              : `<div class="dash-leader-portrait" style="border-color:${tc};color:${tc}"></div>`;
             return `<div class="dash-leader-row">
               ${portrait}
               <div>
@@ -7015,7 +9792,6 @@ function renderDashboard() {
             <div class="next-race-name">${esc(next.name)}</div>
             <div class="next-race-circuit">${esc(next.circuit || '—')}</div>
             <div class="next-race-meta">
-              <div class="next-race-meta-item"><div class="lbl">DATE</div><div class="val">${next.date ? fmtDate(new Date(next.date).getTime()) : 'TBD'}</div></div>
               <div class="next-race-meta-item"><div class="lbl">FORMAT</div><div class="val">${next.sprint ? 'SPRINT' : 'STANDARD'}</div></div>
               <div class="next-race-meta-item"><div class="lbl">ENTRIES</div><div class="val">${season.drivers.length}</div></div>
             </div>
@@ -7038,7 +9814,7 @@ function renderDashboard() {
                 const team = season.teams.find(t => t.id === drv.teamId);
                 const photo = drv.photo
                   ? `<div class="standings-portrait" style="--team-color:${color};background-image:url('${esc(drv.photo)}')"></div>`
-                  : `<div class="standings-portrait" style="--team-color:${color}">${esc(driverInitials(drv.name))}</div>`;
+                  : `<div class="standings-portrait" style="--team-color:${color}"></div>`;
                 const teamMark = team?.logo
                   ? `<span class="team-logo small" style="background-image:url('${esc(team.logo)}');border-color:${color}"></span>`
                   : `<span class="team-dot" style="--team-color:${color}"></span>`;
@@ -7086,7 +9862,7 @@ function renderDashboard() {
                   const color = teamColor(season, drv.teamId);
                   const portrait = drv.photo
                     ? `<div class="podium-portrait" style="color:${color};background-image:url('${esc(drv.photo)}')"></div>`
-                    : `<div class="podium-portrait" style="color:${color}"><span style="color:${color}">${esc(driverInitials(drv.name))}</span></div>`;
+                    : `<div class="podium-portrait" style="color:${color}"></div>`;
                   return `<div class="podium-step p${r.position}">
                     ${portrait}
                     <div class="podium-pos">${r.position}</div>
@@ -7186,7 +9962,7 @@ function renderDrivers() {
                 </div>
                 ${hasPhoto
                   ? `<div class="driver-photo" style="background-image:url('${esc(d.photo)}')"></div>`
-                  : `<div class="driver-photo driver-photo-empty">${esc(driverInitials(d.name))}</div>`}
+                  : `<div class="driver-photo driver-photo-empty"></div>`}
               </div>
             </div>`;
         }).join('')}
@@ -7251,12 +10027,18 @@ function openDriverModal(driverId) {
   const season = activeSeason();
   const editing = driverId ? season.drivers.find(d => d.id === driverId) : null;
   let photoValue = editing?.photo || '';
+  // If the driver's name matches a preset with multiple photos, surface a
+  // shortcut button so they can swap photos without re-uploading.
+  const matchedPreset = editing ? matchDriverPresetForName(editing.name) : null;
+  const presetPhotos = matchedPreset ? presetPhotosList(matchedPreset) : [];
+  const hasMultiPreset = presetPhotos.length > 1;
   modal({
     title: editing ? `Edit Driver` : `<span class="accent">Sign</span> a Driver`,
     body: `
       <div class="field">
-        <label>Photo</label>
+        <label>Photo${hasMultiPreset ? ` <span style="font-weight:400;color:var(--text-muted);font-family:var(--f-body);text-transform:none;letter-spacing:0">— ${presetPhotos.length} saved in preset</span>` : ''}</label>
         <div id="d-photo-mount"></div>
+        ${hasMultiPreset ? `<button type="button" class="btn btn-ghost btn-sm" id="d-browse-preset-photos" style="margin-top:10px;width:100%">📸 BROWSE PRESET PHOTOS (${presetPhotos.length})</button>` : ''}
       </div>
       <div class="field">
         <label>Full Name</label>
@@ -7281,13 +10063,23 @@ function openDriverModal(driverId) {
       </div>`,
     footer: `<button class="btn btn-ghost" data-act="cancel">Cancel</button><button class="btn btn-primary" data-act="ok">${editing ? 'Save' : 'Sign'}</button>`,
     onMount: (root, close) => {
-      const placeholder = editing ? driverInitials(editing.name) : '?';
-      mountPhotoUpload($('#d-photo-mount', root), {
+      const placeholder = '';
+      const photoWidget = mountPhotoUpload($('#d-photo-mount', root), {
         initial: photoValue,
         shape: 'circle',
         placeholder,
         onChange: (v) => { photoValue = v; }
       });
+      // "Browse preset photos" — only visible if the matched preset has >1 photos
+      const browseBtn = $('#d-browse-preset-photos', root);
+      if (browseBtn) {
+        browseBtn.onclick = () => {
+          pickPresetPhoto(matchedPreset, (url) => {
+            photoValue = url || '';
+            photoWidget.setValue(photoValue);
+          });
+        };
+      }
       // Live country flag preview
       const ctryInput = $('#d-ctry', root);
       const flagEl = $('#d-ctry-flag', root);
@@ -7334,31 +10126,57 @@ function renderTeams() {
       <div class="grid-cards">
         ${season.teams.map(t => {
           const drivers = season.drivers.filter(d => d.teamId === t.id).sort((a,b) => a.number - b.number);
-          const stripeClass = t.logo ? 'team-stripe-with-logo' : 'team-stripe';
+          const teamTotal = drivers.reduce((s, d) => s + (ptsMap[d.id] || 0), 0);
+          const logoBlock = t.logo
+            ? `<div class="team-card-logo" style="background-image:url('${esc(t.logo)}')"></div>`
+            : `<div class="team-card-logo team-card-logo-fallback" style="border-color:${t.color};color:${t.color}">${esc((t.short || t.name || '?').slice(0,3).toUpperCase())}</div>`;
           return `
-            <div class="team-card ${t.dsq ? 'champ-dsq' : ''}">
-              <div class="team-card-actions">
-                <button class="btn btn-sm btn-ghost btn-icon ${t.dsq ? 'active-dsq' : ''}" data-dsq-team="${t.id}" title="${t.dsq ? 'Reinstate to championship' : 'Disqualify from championship'}">${t.dsq ? '✓' : '⊘'}</button>
-                <button class="btn btn-sm btn-ghost btn-icon" data-edit-team="${t.id}" title="Edit">✎</button>
-                <button class="btn btn-sm btn-danger btn-icon" data-del-team="${t.id}" title="Delete">✕</button>
+            <div class="team-card ${t.dsq ? 'champ-dsq' : ''}" style="--team-color:${t.color}">
+              <div class="team-card-head">
+                ${logoBlock}
+                <div class="team-card-identity">
+                  <h3 class="team-card-name">${esc(t.name)}</h3>
+                  <div class="team-card-meta">
+                    ${t.short ? `<span class="team-card-short">${esc(t.short)}</span>` : ''}
+                    ${t.country ? `<span class="team-card-country">${flagImg(t.country, 16)}<span>${esc(t.country)}</span></span>` : ''}
+                    ${t.dsq ? `<span class="team-card-dsq-tag">DSQ</span>` : ''}
+                  </div>
+                </div>
+                <div class="team-card-total">
+                  <span class="team-card-total-val">${teamTotal}</span>
+                  <span class="team-card-total-lbl">PTS</span>
+                </div>
               </div>
-              <div class="${stripeClass}" style="--team-color:${t.color};background:${t.color}">
-                ${t.logo ? `<div class="team-logo" style="background-image:url('${esc(t.logo)}')"></div>` : ''}
-                <div class="team-short">${esc(t.short || '?')}</div>
-              </div>
-              <div class="team-card-body">
-                <div class="team-name">${esc(t.name)}</div>
-                <div class="team-country">${flagAndCode(t.country)}</div>
-                ${drivers.length ? `
-                  <div class="team-drivers-list">
-                    ${drivers.map(d => `
-                      <div class="team-driver-row" style="--team-color:${t.color}">
+              ${drivers.length ? `
+                <div class="team-drivers-list">
+                  ${drivers.map(d => {
+                    const portrait = d.photo
+                      ? `<div class="team-driver-portrait" style="background-image:url('${esc(d.photo)}')"></div>`
+                      : `<div class="team-driver-portrait team-driver-portrait-empty"></div>`;
+                    return `<div class="team-driver-row">
                         <span class="team-driver-num">${d.number}</span>
-                        <span class="team-driver-name">${esc(d.name)}</span>
-                        <span class="team-driver-pts">${ptsMap[d.id] || 0} PTS</span>
-                      </div>`).join('')}
-                  </div>` : `<div style="margin-top:12px;font-family:var(--f-mono);font-size:10px;color:var(--text-muted);letter-spacing:0.1em">NO DRIVERS ASSIGNED</div>`}
-                ${lastEditedBadge(t)}
+                        ${portrait}
+                        <div class="team-driver-info">
+                          <span class="team-driver-name">${esc(d.name)}</span>
+                          ${d.country ? `<span class="team-driver-flag">${flagImg(d.country, 14)}</span>` : ''}
+                        </div>
+                        <span class="team-driver-pts">${ptsMap[d.id] || 0}<span class="team-driver-pts-lbl"> PTS</span></span>
+                      </div>`;
+                  }).join('')}
+                </div>` : `<div class="team-card-empty-roster">No drivers signed</div>`}
+              ${lastEditedBadge(t)}
+              <div class="team-card-actions">
+                <button class="team-action-btn dsq ${t.dsq ? 'active' : ''}" data-dsq-team="${t.id}" title="${t.dsq ? 'Reinstate to championship' : 'Disqualify from championship'}">
+                  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><line x1="5.5" y1="18.5" x2="18.5" y2="5.5"/></svg>
+                  <span>${t.dsq ? 'REINSTATE' : 'DSQ'}</span>
+                </button>
+                <button class="team-action-btn edit" data-edit-team="${t.id}" title="Edit team">
+                  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                  <span>EDIT</span>
+                </button>
+                <button class="team-action-btn delete" data-del-team="${t.id}" title="Delete team">
+                  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
+                </button>
               </div>
             </div>`;
         }).join('')}
@@ -7473,68 +10291,74 @@ function renderCalendar() {
 
   // Last completed race for the R-XX label at top
   const lastCompleted = races.filter(r => r.completed).slice(-1)[0];
-  const upcomingDate = (() => {
-    const next = races.find(r => !r.completed);
-    if (!next || !next.date) return '';
-    const d = new Date(next.date);
-    if (isNaN(d.getTime())) return '';
-    return d.toLocaleDateString('en-US', { day: '2-digit', month: 'short' }).toUpperCase();
-  })();
 
   // Build the inner content based on the active filter pill
   let inner = '';
   if (_calFilter === 'races') {
+    // ID of the next pending round — used to flag the "NEXT" status tag
+    const nextPendingId = races.find(r => !r.completed)?.id || null;
     inner = races.length ? `
-      <div class="f1-table-shell">
-        <div class="f1-table">
-          <div class="f1-table-head">
-            <div>GRAND PRIX</div>
-            <div>DATE</div>
-            <div>WINNER</div>
-            <div>TEAM</div>
-            <div class="num">LAPS</div>
-            <div class="num">TIME</div>
-            <div></div>
-          </div>
-          ${races.map(r => {
-            const winner = r.completed && r.results?.length
-              ? r.results.find(x => x.position === 1)
-              : null;
-            const winnerDrv = winner ? season.drivers.find(d => d.id === winner.driverId) : null;
-            const winnerTeam = winnerDrv ? season.teams.find(t => t.id === winnerDrv.teamId) : null;
-            const teamColor = winnerTeam?.color || '#6b7280';
-            const dateLabel = r.date
-              ? new Date(r.date).toLocaleDateString('en-US', { day: '2-digit', month: 'short' }).toUpperCase()
-              : 'TBD';
-            const laps = winner ? (r.totalLaps || '—') : '—';
-            const time = winner && winner.time ? winner.time : (winnerDrv ? '—' : '');
-            return `
-              <div class="f1-table-row ${r.completed ? '' : 'pending'}" data-race="${r.id}">
-                <div class="f1-gp">
-                  <span class="f1-flag-pill">${raceFlagHTML(r, 22)}</span>
-                  <span class="f1-gp-name">${esc(shortGrandPrixName(r))}</span>
+      <div class="race-card-grid">
+        ${races.map(r => {
+          const winner = r.completed && r.results?.length
+            ? r.results.find(x => x.position === 1)
+            : null;
+          const winnerDrv = winner ? season.drivers.find(d => d.id === winner.driverId) : null;
+          const winnerTeam = winnerDrv ? season.teams.find(t => t.id === winnerDrv.teamId) : null;
+          const teamColor = winnerTeam?.color || 'var(--red)';
+          const accent = winnerTeam?.color || (r.completed ? 'var(--sec-green)' : (r.id === nextPendingId ? 'var(--red)' : 'var(--text-muted)'));
+          const laps = winner ? (r.totalLaps || '—') : '—';
+          const statusTag = r.completed
+            ? '<span class="race-card-status-tag completed">DONE</span>'
+            : (r.id === nextPendingId
+                ? '<span class="race-card-status-tag next">NEXT</span>'
+                : '<span class="race-card-status-tag upcoming">UPCOMING</span>');
+          const winnerPhoto = winnerDrv
+            ? (winnerDrv.photo
+                ? `<div class="race-card-winner-photo" style="background-image:url('${esc(winnerDrv.photo)}')"></div>`
+                : `<div class="race-card-winner-photo"></div>`)
+            : '';
+          const winnerBlock = r.completed && winnerDrv ? `
+            <div class="race-card-winner" style="--team-color:${teamColor}">
+              ${winnerPhoto}
+              <div class="race-card-winner-info">
+                <div class="race-card-winner-lbl">Winner · P1</div>
+                <div class="race-card-winner-name">${esc(winnerDrv.name)}</div>
+                <div class="race-card-winner-team">${esc(winnerTeam?.name || '')}</div>
+              </div>
+            </div>` : `
+            <div class="race-card-pending-info">awaiting lights-out</div>`;
+          return `
+            <div class="race-card ${r.completed ? 'completed' : 'pending'}" data-race="${r.id}" style="--accent-color:${accent}">
+              <div class="race-card-head">
+                <div class="race-card-round-stack">
+                  <span class="race-card-round-lbl">ROUND</span>
+                  <span class="race-card-round">${String(r.round).padStart(2, '0')}</span>
                 </div>
-                <div class="f1-date">${dateLabel}</div>
-                <div class="f1-winner">
-                  ${winnerDrv
-                    ? `<span class="f1-team-mark" style="background:${teamColor}"></span><span class="f1-winner-name">${esc(winnerDrv.name)}</span>`
-                    : `<span style="color:var(--text-muted);font-family:var(--f-serif);font-style:italic">awaiting lights-out</span>`}
+                <div class="race-card-head-right">
+                  ${r.sprint ? '<span class="race-card-sprint-badge">SPR</span>' : ''}
+                  ${statusTag}
+                  <div class="race-card-flag">${raceFlagHTML(r, 26)}</div>
                 </div>
-                <div class="f1-team">
-                  ${winnerTeam
-                    ? `<span class="f1-team-mark" style="background:${teamColor}"></span><span>${esc(winnerTeam.name)}</span>`
-                    : `<span style="color:var(--text-muted)">—</span>`}
-                </div>
-                <div class="f1-num">${laps}</div>
-                <div class="f1-num">${esc(time || '—')}</div>
-                <div class="f1-row-actions">
-                  ${r.sprint ? '<span class="f1-tag sprint">SPR</span>' : ''}
-                  <button class="f1-row-btn" data-edit-race="${r.id}" title="Edit info">✎</button>
-                  <button class="f1-row-btn danger" data-del-race="${r.id}" title="Remove">✕</button>
-                </div>
-              </div>`;
-          }).join('')}
-        </div>
+              </div>
+              <div class="race-card-body">
+                <h3 class="race-card-name">${esc(shortGrandPrixName(r))}</h3>
+                ${r.circuit ? `<div class="race-card-circuit">${esc(r.circuit)}</div>` : ''}
+                ${r.completed && laps !== '—' ? `
+                <div class="race-card-meta-row">
+                  <div class="race-card-meta-item">
+                    <span class="race-card-meta-lbl">Laps</span>
+                    <span class="race-card-meta-val">${laps}</span>
+                  </div>
+                </div>` : ''}
+                ${winnerBlock}
+              </div>
+              <div class="race-card-actions">
+                <button class="btn btn-sm btn-ghost" data-edit-race="${r.id}" title="Edit info">✎ EDIT</button>
+                <button class="btn btn-sm btn-danger btn-icon" data-del-race="${r.id}" title="Remove">✕</button>
+              </div>
+            </div>`;
+        }).join('')}
       </div>` : `
       <div class="empty">
         <div class="empty-headline">NO ROUNDS</div>
@@ -7584,11 +10408,11 @@ function renderCalendar() {
           }
         }
 
-        if (!r) return { html: '<span class="mx-cell empty">—</span>' + sprintBadge };
+        if (!r) return { html: '<span class="mx-cell mx-empty">—</span>' + sprintBadge };
         if (r.dns) return { html: `<span class="mx-cell mx-dns">DNS</span>${sprintBadge}` };
         if (r.dsq) return { html: `<span class="mx-cell mx-dsq">DSQ</span>${sprintBadge}` };
         if (r.dnf) return { html: `<span class="mx-cell mx-dnf">RET</span>${sprintBadge}` };
-        if (!r.position) return { html: '<span class="mx-cell empty">—</span>' + sprintBadge };
+        if (!r.position) return { html: '<span class="mx-cell mx-empty">—</span>' + sprintBadge };
 
         let cls = 'mx-out';
         if (r.position === 1) cls = 'mx-gold';
@@ -7628,19 +10452,27 @@ function renderCalendar() {
                   const tc = team?.color || '#6b7280';
                   const portrait = drv.photo
                     ? `<div class="f1-portrait small" style="background-image:url('${esc(drv.photo)}');border-color:${tc}"></div>`
-                    : `<div class="f1-portrait small" style="border-color:${tc};color:${tc}">${esc(driverInitials(drv.name))}</div>`;
+                    : `<div class="f1-portrait small" style="border-color:${tc};color:${tc}"></div>`;
                   const teamMark = team?.logo
                     ? `<div class="team-logo small" style="background-image:url('${esc(team.logo)}');border-color:${tc}"></div>`
                     : `<span class="team-dot" style="--team-color:${tc}"></span>`;
+                  const rankCls = i === 0 ? 'crown' : i === 1 ? 'gold' : i === 2 ? 'bronze' : '';
+                  const rankCell = i === 0
+                    ? '<span class="f1-matrix-rank-cell crown" aria-label="Championship leader"></span>'
+                    : `<span class="f1-matrix-rank-cell ${rankCls}">${i + 1}</span>`;
+                  const { first, last } = splitName(drv.name);
                   return `
-                    <tr class="f1-matrix-row" data-driver="${drv.id}">
-                      <td class="f1-matrix-rank">${i + 1}.</td>
+                    <tr class="f1-matrix-row ${i === 0 ? 'p1' : ''}" data-driver="${drv.id}" style="--team-color:${tc}">
+                      <td class="f1-matrix-rank">${rankCell}</td>
                       <td class="f1-matrix-driver">
                         <div class="f1-matrix-driver-cell">
                           ${portrait}
                           <div>
-                            <div class="f1-matrix-driver-name">${esc(drv.name)}${row.championshipDsq ? ' <span class="f1-tag dsq">DSQ</span>' : ''}</div>
-                            <div class="f1-matrix-driver-meta">${flag(drv.country)} ${esc(drv.country || '')} · #${drv.number}</div>
+                            <div class="f1-matrix-driver-name" style="color:${tc}">
+                              <span class="first">${esc(first || '')}</span>
+                              <span>${esc(last)}</span>
+                            </div>
+                            ${row.championshipDsq ? '<div class="f1-matrix-driver-meta"><span class="f1-tag dsq">CHAMP DSQ</span></div>' : ''}
                           </div>
                         </div>
                       </td>
@@ -7705,7 +10537,7 @@ function renderCalendar() {
           ? `<span class="f1-round-pill">R${String(lastCompleted.round).padStart(2,'0')}</span>
              <span class="f1-round-meta">${raceFlagHTML(lastCompleted, 14)} ${esc(shortGrandPrixName(lastCompleted))}</span>`
           : `<span class="f1-round-pill upcoming">R${String((races.find(r => !r.completed)?.round) || 1).padStart(2,'0')}</span>
-             <span class="f1-round-meta">${upcomingDate || 'TBD'} · NEXT ROUND</span>`}
+             <span class="f1-round-meta">NEXT ROUND</span>`}
       </div>
     </div>
 
@@ -7780,14 +10612,11 @@ function openRaceModal(raceId) {
         <span class="field-help">Auto-uses the country code emoji unless you upload a custom flag image (useful for fictional countries / made-up tracks).</span>
       </div>
 
-      <div class="field-row">
-        <div class="field"><label>Date</label><input type="date" id="r-date" value="${editing?.date || ''}"></div>
-        <div class="field" style="justify-content:flex-end">
-          <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-            <input type="checkbox" id="r-sprint" ${editing?.sprint ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--red)">
-            <span>Sprint format weekend</span>
-          </label>
-        </div>
+      <div class="field">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="r-sprint" ${editing?.sprint ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--red)">
+          <span>Sprint format weekend</span>
+        </label>
       </div>`,
     footer: `<button class="btn btn-ghost" data-act="cancel">Cancel</button><button class="btn btn-primary" data-act="ok">${editing ? 'Save' : 'Add Round'}</button>`,
     onMount: (root, close) => {
@@ -7830,10 +10659,9 @@ function openRaceModal(raceId) {
         if (!name) return toast('Race name required', 'error');
         const circuit = $('#r-circ', root).value.trim();
         const country = $('#r-ctry', root).value.trim().toUpperCase().slice(0, 3);
-        const date = $('#r-date', root).value;
         const sprint = $('#r-sprint', root).checked;
-        if (editing) updateRace(editing.id, { name, circuit, country, date, sprint, flagImage });
-        else addRace({ name, circuit, country, date, sprint, flagImage });
+        if (editing) updateRace(editing.id, { name, circuit, country, sprint, flagImage });
+        else addRace({ name, circuit, country, sprint, flagImage });
         close(); renderMain(); toast(editing ? 'Round updated' : 'Round added', 'success');
       };
     }
@@ -7847,30 +10675,72 @@ function renderRace() {
   if (!race) { state.view = 'calendar'; return renderCalendar(); }
   const wrap = document.createElement('div');
 
+  const poleDrv = race.poleDriverId ? season.drivers.find(d => d.id === race.poleDriverId) : null;
+  const flDrv = race.fastestLapDriverId ? season.drivers.find(d => d.id === race.fastestLapDriverId) : null;
+  const heroFlagUrl = race.flagImage || flagSvgUrl(race.country);
+
   wrap.innerHTML = `
-    <button class="race-back-btn" id="race-back">‹ ‹ BACK TO CALENDAR</button>
-    <div class="race-header" style="margin-top:12px">
-      <div class="race-header-left">
-        <div class="race-round-big ${race.completed ? '' : 'muted'}">${String(race.round).padStart(2,'0')}</div>
-        <div class="race-title-block">
-          <div class="eyebrow">${race.completed ? '✓ COMPLETED' : '▸ UPCOMING'} · ${esc(race.country)}</div>
-          <div class="name">${esc(race.name)}</div>
-          <div class="circuit">${esc(race.circuit || '')}</div>
+    <button class="race-detail-back" id="race-back">
+      <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+      BACK TO CALENDAR
+    </button>
+
+    <div class="race-hero ${race.completed ? 'is-completed' : 'is-upcoming'}">
+      ${heroFlagUrl ? `<div class="race-hero-bg" style="background-image:url('${esc(heroFlagUrl)}')"></div>` : ''}
+      <div class="race-hero-overlay"></div>
+      <div class="race-hero-content">
+        <div class="race-hero-top">
+          <div class="race-hero-round">
+            <span class="race-hero-round-lbl">Round</span>
+            <span class="race-hero-round-num">${String(race.round).padStart(2, '0')}</span>
+          </div>
+          <div class="race-hero-flag">${raceFlagHTML(race, 40)}</div>
         </div>
-      </div>
-      <div style="display:flex;gap:8px;align-items:center">
-        ${lastEditedBadge(race)}
-        <button class="btn btn-ghost" id="race-edit">✎ EDIT INFO</button>
-        ${race.completed ? `<button class="btn btn-danger" id="race-reset">RESET RESULTS</button>` : ''}
+        <div class="race-hero-main">
+          <div class="race-hero-status">
+            <span class="race-hero-status-dot"></span>
+            ${race.completed ? 'RACE COMPLETE' : 'AWAITING LIGHTS-OUT'}
+            ${race.sprint ? '<span class="race-hero-sprint-tag">SPRINT</span>' : ''}
+          </div>
+          <h1 class="race-hero-name">${esc(race.name)}</h1>
+          ${race.circuit ? `<div class="race-hero-circuit">${esc(race.circuit)}</div>` : ''}
+          ${race.country ? `<div class="race-hero-country">${esc(race.country)}</div>` : ''}
+        </div>
+        <div class="race-hero-actions">
+          ${lastEditedBadge(race)}
+          <button class="btn btn-ghost" id="race-edit">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px;vertical-align:-2px"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+            EDIT INFO
+          </button>
+          ${race.completed ? `<button class="btn btn-danger" id="race-reset">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px;vertical-align:-2px"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+            RESET RESULTS
+          </button>` : ''}
+        </div>
       </div>
     </div>
 
-    <div class="race-meta-strip">
-      <div class="race-meta-item"><div class="lbl">DATE</div><div class="val">${race.date ? fmtDate(new Date(race.date).getTime()) : 'TBD'}</div></div>
-      <div class="race-meta-item"><div class="lbl">FORMAT</div><div class="val">${race.sprint ? 'SPRINT WEEKEND' : 'STANDARD'}</div></div>
-      <div class="race-meta-item"><div class="lbl">ENTRIES</div><div class="val">${season.drivers.length}</div></div>
-      <div class="race-meta-item"><div class="lbl">POLE</div><div class="val">${race.poleDriverId ? esc(driverName(season, race.poleDriverId)) : '—'}</div></div>
-      <div class="race-meta-item"><div class="lbl">FASTEST LAP</div><div class="val">${race.fastestLapDriverId ? esc(driverName(season, race.fastestLapDriverId)) : '—'}</div></div>
+    <div class="race-stats-grid">
+      <div class="race-stat ${race.sprint ? 'is-sprint' : ''}">
+        <span class="race-stat-icon">${race.sprint ? '⚡' : '◐'}</span>
+        <span class="race-stat-lbl">Format</span>
+        <span class="race-stat-val">${race.sprint ? 'Sprint Weekend' : 'Standard'}</span>
+      </div>
+      <div class="race-stat">
+        <span class="race-stat-icon">▦</span>
+        <span class="race-stat-lbl">Entries</span>
+        <span class="race-stat-val">${season.drivers.length}</span>
+      </div>
+      <div class="race-stat ${poleDrv ? 'has-pole' : ''}">
+        <span class="race-stat-icon">P</span>
+        <span class="race-stat-lbl">Pole Position</span>
+        <span class="race-stat-val">${poleDrv ? esc(poleDrv.name) : '—'}</span>
+      </div>
+      <div class="race-stat ${flDrv ? 'has-fl' : ''}">
+        <span class="race-stat-icon">⚡</span>
+        <span class="race-stat-lbl">Fastest Lap</span>
+        <span class="race-stat-val">${flDrv ? esc(flDrv.name) : '—'}</span>
+      </div>
     </div>
 
     ${buildRaceTimelineHTML(race, season)}
@@ -7961,9 +10831,13 @@ function renderRaceEditor(container, race) {
       const team = season.teams.find(t => t.id === drv.teamId);
       const color = team?.color || '#666';
       const champDsq = drv.dsq || (team && team.dsq);
+      const portrait = drv.photo
+        ? `<div class="result-row-portrait" style="--driver-color:${color};background-image:url('${esc(drv.photo)}')"></div>`
+        : `<div class="result-row-portrait" style="--driver-color:${color}"></div>`;
       return `
-        <div class="result-row ${champDsq ? 'champ-dsq' : ''}" data-driver="${r.driverId}" style="grid-template-columns: 60px 1fr 70px 70px 60px 60px 60px">
+        <div class="result-row ${champDsq ? 'champ-dsq' : ''}" data-driver="${r.driverId}" style="grid-template-columns: 60px 44px 1fr 70px 70px 60px 60px 60px">
           <input class="result-pos-input" data-key="${key}-pos" type="number" min="1" max="${MAX_POS}" value="${r.position}" placeholder="—" ${champDsq ? 'disabled' : ''}>
+          ${portrait}
           <div class="result-driver">
             <span class="driver-cell-num" style="--driver-color:${color};color:${color};font-family:var(--f-display);font-weight:700;font-size:14px;width:28px">${drv.number}</span>
             <div>
@@ -7988,9 +10862,13 @@ function renderRaceEditor(container, race) {
       const team = season.teams.find(t => t.id === drv.teamId);
       const color = team?.color || '#666';
       const champDsq = drv.dsq || (team && team.dsq);
+      const portrait = drv.photo
+        ? `<div class="quali-row-portrait" style="--driver-color:${color};background-image:url('${esc(drv.photo)}')"></div>`
+        : `<div class="quali-row-portrait" style="--driver-color:${color}"></div>`;
       return `
-        <div class="quali-row ${champDsq ? 'champ-dsq' : ''}" data-driver="${r.driverId}">
+        <div class="quali-row ${champDsq ? 'champ-dsq' : ''}" data-driver="${r.driverId}" style="grid-template-columns: 60px 44px 1fr 90px">
           <input class="result-pos-input" data-key="quali-pos" type="number" min="1" max="${MAX_POS}" value="${r.position}" placeholder="—" ${champDsq ? 'disabled' : ''}>
+          ${portrait}
           <div class="result-driver">
             <span class="driver-cell-num" style="color:${color};font-family:var(--f-display);font-weight:700;font-size:14px;width:28px">${drv.number}</span>
             <div>
@@ -8031,8 +10909,8 @@ function renderRaceEditor(container, race) {
         <span class="tag" style="color:var(--sec-purple);border-color:var(--sec-purple)">QUALI</span>
       </div>
       <div class="results-editor">
-        <div class="results-editor-head" style="grid-template-columns: 60px 1fr 90px">
-          <div>POS</div><div>DRIVER</div><div>BEST TIME</div>
+        <div class="results-editor-head" style="grid-template-columns: 60px 44px 1fr 90px">
+          <div>POS</div><div></div><div>DRIVER</div><div>BEST TIME</div>
         </div>
         <div id="quali-rows">${qualiRowHTML()}</div>
         <div class="results-editor-foot">
@@ -8053,8 +10931,8 @@ function renderRaceEditor(container, race) {
         <span class="tag" style="color:var(--sec-yellow);border-color:var(--sec-yellow)">SPRINT</span>
       </div>
       <div class="results-editor">
-        <div class="results-editor-head" style="grid-template-columns: 60px 1fr 70px 70px 60px 60px 60px">
-          <div>POS</div><div>DRIVER</div><div></div><div></div><div>DNF</div><div>DSQ</div><div>DNS</div>
+        <div class="results-editor-head" style="grid-template-columns: 60px 44px 1fr 70px 70px 60px 60px 60px">
+          <div>POS</div><div></div><div>DRIVER</div><div></div><div></div><div>DNF</div><div>DSQ</div><div>DNS</div>
         </div>
         <div id="sprint-rows">${rowHTML(sprintWorking, 'sprint')}</div>
         <div class="results-editor-foot">
@@ -8074,8 +10952,8 @@ function renderRaceEditor(container, race) {
         <span class="tag red">RACE</span>
       </div>
       <div class="results-editor">
-        <div class="results-editor-head" style="grid-template-columns: 60px 1fr 70px 70px 60px 60px 60px">
-          <div>POS</div><div>DRIVER</div><div>POLE</div><div>FL</div><div>DNF</div><div>DSQ</div><div>DNS</div>
+        <div class="results-editor-head" style="grid-template-columns: 60px 44px 1fr 70px 70px 60px 60px 60px">
+          <div>POS</div><div></div><div>DRIVER</div><div>POLE</div><div>FL</div><div>DNF</div><div>DSQ</div><div>DNS</div>
         </div>
         <div id="gp-rows">${rowHTML(working, 'gp')}</div>
         <div class="results-editor-foot">
@@ -8322,7 +11200,7 @@ function renderRaceReadout(container, race) {
         const color = teamColor(season, drv.teamId);
         const portrait = drv.photo
           ? `<div class="podium-portrait" style="color:${color};background-image:url('${esc(drv.photo)}')"></div>`
-          : `<div class="podium-portrait" style="color:${color}"><span style="color:${color}">${esc(driverInitials(drv.name))}</span></div>`;
+          : `<div class="podium-portrait" style="color:${color}"></div>`;
         return `<div class="podium-step p${r.position}">
           ${portrait}
           <div class="podium-pos">${r.position}</div>
@@ -8359,16 +11237,16 @@ function renderRaceReadout(container, race) {
         const posColor = isStatus
           ? (r.dns ? 'var(--text-muted)' : 'var(--red)')
           : (r.position === 1 ? 'var(--gold)' : r.position === 2 ? 'var(--silver)' : r.position === 3 ? 'var(--bronze)' : 'var(--text)');
-        return `<div class="result-row" style="grid-template-columns: 60px 44px 1fr 80px 80px 80px">
+        return `<div class="result-row" style="grid-template-columns: 60px 44px 1fr 80px 80px 80px;--team-color:${color}">
           <div style="font-family:var(--f-display);font-weight:800;font-size:${posSize};letter-spacing:0.05em;color:${posColor}">${posDisplay}</div>
           <div>${portrait}</div>
           <div class="result-driver">
             <span class="driver-cell-num" style="color:${color};font-family:var(--f-display);font-weight:700;width:28px">${drv.number}</span>
-            <div><div class="driver-cell-name">${esc(drv.name)}</div><div class="driver-cell-team">${flag(drv.country)} ${esc(teamName(season, drv.teamId))}</div></div>
+            <div><div class="driver-cell-name">${esc(drv.name)}</div><div class="driver-cell-team">${flagImg(drv.country, 14)} ${esc(teamName(season, drv.teamId))}</div></div>
           </div>
-          <div style="font-family:var(--f-display);font-weight:800;font-size:18px">${pts || '—'}</div>
+          <div style="font-family:var(--f-display);font-weight:800;font-size:18px;color:${pts ? color : 'var(--text-dim)'}">${pts || '—'}</div>
           <div style="font-family:var(--f-mono);font-size:11px;letter-spacing:0.1em">${statusLabel}</div>
-          <div style="display:flex;gap:4px;flex-wrap:wrap">${isPole ? '<span class="tag" style="color:var(--sec-yellow);border-color:var(--sec-yellow)">POLE</span>' : ''}${isFL ? '<span class="tag" style="color:var(--sec-purple);border-color:var(--sec-purple)">FL</span>' : ''}</div>
+          <div style="display:flex;gap:4px;flex-wrap:wrap">${isPole ? '<span class="tag" style="color:var(--sec-blue);border-color:var(--sec-blue);background:rgba(96,165,250,0.08)">POLE</span>' : ''}${isFL ? '<span class="tag" style="color:var(--sec-purple);border-color:var(--sec-purple);background:rgba(167,139,250,0.08)">FL</span>' : ''}</div>
         </div>`;
       }).join('')}
     </div>
@@ -8662,7 +11540,7 @@ function renderStats() {
     const { first, last } = splitName(drv.name);
     const photo = drv.photo
       ? `<div class="stat-leader-portrait" style="background-image:url('${esc(drv.photo)}')"></div>`
-      : `<div class="stat-leader-portrait">${esc(driverInitials(drv.name))}</div>`;
+      : `<div class="stat-leader-portrait"></div>`;
     const teamMark = team
       ? (team.logo
         ? `<div class="stat-leader-team-mark" style="background-image:url('${esc(team.logo)}')"></div>`
@@ -8753,7 +11631,7 @@ function renderStats() {
               const drv = s.driver; if (!drv) return '';
               const photoStat = drv.photo
                 ? `<div class="h2h-portrait" style="--team-color:${s.teamColor};background-image:url('${esc(drv.photo)}');width:36px;height:36px"></div>`
-                : `<div class="h2h-portrait" style="--team-color:${s.teamColor};width:36px;height:36px;font-size:11px">${esc(driverInitials(drv.name))}</div>`;
+                : `<div class="h2h-portrait" style="--team-color:${s.teamColor};width:36px;height:36px;font-size:11px"></div>`;
               return `<tr data-driver="${drv.id}">
                 <td style="font-family:var(--f-display);font-weight:800;color:var(--text-dim)">${i+1}</td>
                 <td>${photoStat}</td>
@@ -8917,7 +11795,7 @@ function renderStatsCharts(season, stats) {
     while (last5.length < 5) last5.unshift({ race: null, status: '—', cls: 'empty' });
     const portrait = drv.photo
       ? `<div class="last5-portrait" style="background-image:url('${esc(drv.photo)}');border-color:${s.teamColor}"></div>`
-      : `<div class="last5-portrait" style="border-color:${s.teamColor};color:${s.teamColor}">${esc(driverInitials(drv.name))}</div>`;
+      : `<div class="last5-portrait" style="border-color:${s.teamColor};color:${s.teamColor}"></div>`;
     return `<div class="last5-card" style="--accent:${s.teamColor}">
       ${portrait}
       <div class="last5-body">
@@ -9084,7 +11962,7 @@ function openDriverSeasonDetail(driverId) {
 
   const photoHTML = drv.photo
     ? `<div class="h2h-portrait" style="--team-color:${teamColor};background-image:url('${esc(drv.photo)}')"></div>`
-    : `<div class="h2h-portrait" style="--team-color:${teamColor}">${esc(driverInitials(drv.name))}</div>`;
+    : `<div class="h2h-portrait" style="--team-color:${teamColor}"></div>`;
 
   modal({
     title: `${esc(drv.name)} <span class="accent">· ${season.year}</span>`,
@@ -9162,7 +12040,7 @@ function openHeadToHead() {
         const head = (s, side) => {
           const photo = s.driver.photo
             ? `<div class="h2h-portrait" style="--team-color:${s.teamColor};background-image:url('${esc(s.driver.photo)}')"></div>`
-            : `<div class="h2h-portrait" style="--team-color:${s.teamColor}">${esc(driverInitials(s.driver.name))}</div>`;
+            : `<div class="h2h-portrait" style="--team-color:${s.teamColor}"></div>`;
           return `<div class="h2h-driver-head ${side}">
             ${photo}
             <div>
@@ -10096,6 +12974,52 @@ function matchTrackPresetForCode(code) {
   return null;
 }
 
+// Normalise a driver name for matching: lowercase, strip diacritics & punctuation,
+// collapse whitespace. So "Sergio Pérez" ≡ "sergio perez", "LECLERC, Charles" ≡
+// "leclerc charles". Used by matchDriverPresetForName below.
+function normalizeDriverName(s) {
+  return (s || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '') // strip combining diacritics
+    .replace(/[^a-z\s]/g, ' ')        // drop punctuation, hyphens, apostrophes
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Find a driver preset (built-in or user custom) whose name matches a parsed name.
+// Priority: exact normalised match → unambiguous last-name match → null.
+// Returns { name, country, number, photo?, era, isCustom?, source } or null.
+function matchDriverPresetForName(name) {
+  const target = normalizeDriverName(name);
+  if (!target) return null;
+  const all = getEffectiveDriverPresets();
+
+  // Step 1: exact normalised match against the full name
+  const exact = all.find(p => normalizeDriverName(p.name) === target);
+  if (exact) {
+    const source = exact.isCustom
+      ? 'custom driver preset'
+      : (exact.era === 'Current' ? 'driver preset (current)' : `driver preset (${exact.era || 'historic'})`);
+    return { ...exact, source };
+  }
+
+  // Step 2: unambiguous last-name match — handles "Verstappen", "M. Verstappen",
+  // and stops short of matching multiple Schumachers (Michael, Ralf, Mick).
+  const lastName = target.split(' ').pop();
+  if (lastName && lastName.length >= 3) {
+    const candidates = all.filter(p => normalizeDriverName(p.name).split(' ').pop() === lastName);
+    if (candidates.length === 1) {
+      const m = candidates[0];
+      const source = m.isCustom
+        ? 'custom driver preset (last name)'
+        : `driver preset (last name, ${m.era || 'historic'})`;
+      return { ...m, source };
+    }
+  }
+  return null;
+}
+
 // Same-row team-name normalisation. F1.com uses a few different spellings.
 // Maps the raw text → canonical team name, short code, and a default colour.
 const F1_TEAM_NORMALIZER = {
@@ -10349,32 +13273,44 @@ function buildSeasonFromImport(parsed, opts) {
     season.teams.push(teamObj);
   }
 
-  // 2. Build drivers — assign a number based on import position. Country left blank.
+  // 2. Build drivers — match each parsed driver against the user's DRIVER PRESET
+  // library (built-in + customs). On match, pull through country, number, and
+  // photo. Unmatched drivers fall back to incremental numbers and blank fields.
   const driverIdByImportName = {};
+  const presetByDriverIdx = parsed.drivers.map(d => matchDriverPresetForName(d.name));
+  // Reserve numbers from matched presets first, so unmatched drivers don't collide.
+  const usedNumbers = new Set();
+  presetByDriverIdx.forEach(p => { if (p?.number) usedNumbers.add(p.number); });
   let nextNum = 1;
-  for (const d of parsed.drivers) {
+  const allocNumber = () => {
+    while (usedNumbers.has(nextNum) || nextNum > 99) nextNum++;
+    usedNumbers.add(nextNum);
+    return nextNum++;
+  };
+  parsed.drivers.forEach((d, i) => {
     const teamObj = teamByKey[d.team.toLowerCase().trim()];
+    const preset = presetByDriverIdx[i];
     const driverObj = {
       id: uid(),
-      name: d.name,
-      number: nextNum++,
-      country: '',
+      name: preset?.name || d.name,
+      number: preset?.number || allocNumber(),
+      country: preset?.country || '',
       teamId: teamObj?.id || null,
-      photo: '',
+      photo: preset?.photo || '',
       dsq: false,
     };
     driverIdByImportName[d.name] = driverObj.id;
     season.drivers.push(driverObj);
-  }
+  });
 
   // 3. Build races — one per header code (or per raceCodes override).
   // Simple resolution: compare each pasted code to the country code in each
   // calendar preset's races. Direct string match — no alias translation.
   // If no calendar preset has that country code, fall back to F1 built-in map,
   // then generic.
-  const headerCodes = (opts.raceCodes && opts.raceCodes.length === parsed.headers.length)
-    ? opts.raceCodes
-    : parsed.headers;
+  // Build per-race header codes — caller may supply a full or partial array.
+  // For any index without a user-supplied code, fall back to the parsed placeholder.
+  const headerCodes = parsed.headers.map((h, i) => (opts.raceCodes && opts.raceCodes[i]) || h);
 
   // Build a lookup index from CALENDAR PRESETS (full saved season calendars).
   // Selected preset wins on conflicts.
@@ -10407,9 +13343,22 @@ function buildSeasonFromImport(parsed, opts) {
     const codeKey = (code || '').toUpperCase().trim();
     // Step 1: direct match against calendar presets' country codes
     let meta = codeIndex[codeKey];
-    // Step 2: hardcoded F1 map (legacy fallback for codes the calendar doesn't have)
+    // Step 2: match against the user's TRACK PRESET library (built-in + custom).
+    // Handles 3-letter aliases (SAU↔KSA, MON↔MCO, SIN↔SGP, etc.) and ambiguity
+    // hints (MIA vs LVG vs USA, ITA vs IMO). This is the main resolution path.
+    if (!meta) {
+      const tp = matchTrackPresetForCode(codeKey);
+      if (tp) meta = {
+        name: tp.name,
+        circuit: tp.circuit,
+        country: tp.country,
+        sprint: !!tp.sprint,
+        flagImage: tp.flagImage || '',
+      };
+    }
+    // Step 3: hardcoded F1 map (legacy fallback for codes nothing else covers)
     if (!meta) meta = F1_RACE_CODE_MAP[codeKey];
-    // Step 3: generic fallback
+    // Step 4: generic fallback
     if (!meta) meta = { name: `${code} Grand Prix`, circuit: code, country: code };
 
     return {
@@ -10420,7 +13369,6 @@ function buildSeasonFromImport(parsed, opts) {
       country: meta.country,
       flagImage: meta.flagImage || '',
       sprint: hadSprint[idx] || !!meta.sprint,
-      date: '',
       completed: false,
       results: [],
       sprintResults: [],
@@ -10540,7 +13488,7 @@ Red Bull
       <div class="field">
         <label>Race calendar codes <span style="font-weight:400;color:var(--text-muted);font-family:var(--f-body)">— space-separated, in calendar order</span></label>
         <input type="text" id="imp-races" placeholder="e.g. BHR SAU AUS AZE MIA MON ESP CAN AUT GBR HUN BEL NED ITA SIN JPN QAT USA MXC SAP LVG ABU" style="font-family:var(--f-mono);font-size:11px">
-        <span class="field-help">Each pasted code is matched against the country code of each race in your saved calendar presets. If your preset has a race with country "BHR", pasting "BHR" pulls in that race's name, circuit, and sprint flag. Unmatched codes fall back to the F1 built-in map, then to generic "R1, R2…".</span>
+        <span class="field-help">Each code is matched in this order: (1) selected calendar preset's race country codes, (2) your <b>track preset library</b> (built-in circuits + your customs, with alias handling for SAU↔KSA, MON↔MCO, SIN↔SGP, etc.), (3) F1 built-in map, (4) generic "Grand Prix" fallback. A match pulls in the track's name, circuit, sprint flag, and uploaded flag image.</span>
       </div>
       <div id="imp-preview"></div>`,
     footer: `<button class="btn btn-ghost" data-act="cancel">Cancel</button><button class="btn btn-ghost" data-act="parse">⚙ PARSE</button><button class="btn btn-primary" data-act="ok" disabled>Build Season</button>`,
@@ -10592,9 +13540,13 @@ Red Bull
         parsed = r;
         okBtn.disabled = false;
 
-        // If user supplied race codes AND count matches, use those for the preview header
+        // If user supplied race codes, overlay them onto the headers position-by-position.
+        // Partial input works: type "BHR" alone and only R1 gets that code; R2..Rn keep
+        // the placeholder. Extra codes beyond the race count are ignored.
         const userCodes = racesInp.value.trim().split(/\s+/).filter(Boolean);
-        const previewHeaders = (userCodes.length === r.headers.length) ? userCodes : r.headers;
+        const previewHeaders = userCodes.length
+          ? r.headers.map((h, i) => userCodes[i] || h)
+          : r.headers;
 
         // Resolve each header code against (1) selected preset, (2) all presets, (3) F1 map
         // — same logic as buildSeasonFromImport, mirrored here so preview matches reality.
@@ -10610,34 +13562,46 @@ Red Bull
         if (selectedPid) indexPreset((state.calendarPresets || []).find(p => p.id === selectedPid));
         (state.calendarPresets || []).forEach(p => indexPreset(p));
 
-        // For each preview code, work out where it resolved.
-        // Simple logic: direct match against calendar preset country codes,
-        // then F1 hardcoded map fallback, then generic fallback. No alias translation.
+        // For each preview code, work out where it resolved. Order mirrors
+        // buildSeasonFromImport so the preview matches the actual outcome.
         const resolutions = previewHeaders.map(code => {
           const k = (code || '').toUpperCase().trim();
           // Step 1: direct match against calendar preset country codes
           if (codeIndex[k]) return { code, name: codeIndex[k].name, source: `calendar preset: ${codeIndex[k].source}` };
-          // Step 2: F1 hardcoded map
+          // Step 2: track preset library (built-in + user customs, with aliases)
+          const tp = matchTrackPresetForCode(k);
+          if (tp) return { code, name: tp.name, source: tp.source };
+          // Step 3: F1 hardcoded map
           if (F1_RACE_CODE_MAP[k]) return { code, name: F1_RACE_CODE_MAP[k].name, source: 'F1 hardcoded map' };
-          // Step 3: generic fallback
+          // Step 4: generic fallback
           return { code, name: `${code} Grand Prix`, source: 'fallback' };
         });
         const fromCalPreset = resolutions.filter(x => x.source.startsWith('calendar preset')).length;
+        const fromTrackPreset = resolutions.filter(x => x.source.startsWith('track preset') || x.source === 'custom track preset').length;
         const fromF1Map = resolutions.filter(x => x.source === 'F1 hardcoded map').length;
         const fallback = resolutions.filter(x => x.source === 'fallback').length;
+
+        // Resolve each driver against the DRIVER PRESET library (built-in + custom).
+        // Match by normalised name with last-name fallback for unambiguous cases.
+        const driverResolutions = r.drivers.map(d => matchDriverPresetForName(d.name));
+        const driversMatched = driverResolutions.filter(Boolean).length;
+        const driversUnmatched = r.drivers.length - driversMatched;
 
         const completedRaces = r.headers.length;
         const totalResults = r.drivers.reduce((sum, d) => sum + d.cells.filter(Boolean).length, 0);
         const totalSprintPoints = r.drivers.reduce((sum, d) => sum + d.cells.reduce((s, c) => s + (c?.sprintPoints || 0), 0), 0);
         const totalPoles = r.drivers.reduce((sum, d) => sum + d.cells.filter(c => c?.pole).length, 0);
 
-        // Resolution status line — tells the user how many codes matched where
+        // Resolution status line — tells the user how many codes / drivers matched where
         const statusParts = [];
-        if (fromCalPreset)    statusParts.push(`<span style="color:var(--green,#10b981)">● ${fromCalPreset} from calendar preset</span>`);
-        if (fromF1Map)        statusParts.push(`<span style="color:var(--sec-blue,#60a5fa)">● ${fromF1Map} from F1 map</span>`);
-        if (fallback)         statusParts.push(`<span style="color:var(--sec-yellow,#f59e0b)">● ${fallback} fell back to generic "Grand Prix" name</span>`);
-        const resolutionStatus = previewHeaders.length ? `
-          <div style="font-family:var(--f-mono);font-size:10px;color:var(--text-muted);margin-bottom:10px;padding:8px 12px;background:var(--bg-elev);border-radius:6px;border:1px solid var(--border-dim)">
+        if (fromCalPreset)    statusParts.push(`<span style="color:var(--green,#10b981)">● ${fromCalPreset} race${fromCalPreset === 1 ? '' : 's'} from calendar preset</span>`);
+        if (fromTrackPreset)  statusParts.push(`<span style="color:var(--sec-cyan,#00d9ff)">● ${fromTrackPreset} race${fromTrackPreset === 1 ? '' : 's'} from track preset library</span>`);
+        if (fromF1Map)        statusParts.push(`<span style="color:var(--sec-blue,#60a5fa)">● ${fromF1Map} race${fromF1Map === 1 ? '' : 's'} from F1 map</span>`);
+        if (fallback)         statusParts.push(`<span style="color:var(--sec-yellow,#f59e0b)">● ${fallback} race${fallback === 1 ? '' : 's'} fell back to generic name</span>`);
+        if (driversMatched)   statusParts.push(`<span style="color:var(--sec-purple,#a78bfa)">● ${driversMatched} driver${driversMatched === 1 ? '' : 's'} from preset library</span>`);
+        if (driversUnmatched) statusParts.push(`<span style="color:var(--text-muted)">● ${driversUnmatched} driver${driversUnmatched === 1 ? '' : 's'} unmatched (blank country/photo)</span>`);
+        const resolutionStatus = statusParts.length ? `
+          <div style="font-family:var(--f-mono);font-size:10px;color:var(--text-muted);margin-bottom:10px;padding:8px 12px;background:var(--bg-elev);border-radius:6px;border:1px solid var(--border-dim);line-height:1.8">
             ${statusParts.join(' · ')}
           </div>` : '';
 
@@ -10663,10 +13627,15 @@ Red Bull
                   </tr>
                 </thead>
                 <tbody>
-                  ${r.drivers.map(d => `
+                  ${r.drivers.map((d, dIdx) => {
+                    const dp = driverResolutions[dIdx];
+                    const matchBadge = dp
+                      ? `<span class="cf-img" style="display:inline-flex;align-items:center;margin-right:6px;width:auto;height:auto;border:none;box-shadow:none;background:transparent;padding:0">${flagImg(dp.country, 16)}</span><span title="Matched to ${esc(dp.source)} → #${dp.number}${dp.country ? ' · ' + esc(dp.country) : ''}" style="font-family:var(--f-mono);font-size:8px;letter-spacing:0.14em;color:var(--sec-purple);padding:2px 5px;border:1px solid currentColor;border-radius:2px;margin-left:6px;vertical-align:middle">PRESET #${dp.number}</span>`
+                      : '<span title="No preset match — country &amp; photo will be blank" style="font-family:var(--f-mono);font-size:8px;letter-spacing:0.14em;color:var(--text-dim);padding:2px 5px;border:1px dashed currentColor;border-radius:2px;margin-left:6px;vertical-align:middle">NO MATCH</span>';
+                    return `
                     <tr style="border-bottom:1px solid var(--border-dim)">
                       <td style="padding:6px 10px;color:var(--text-muted)">${d.pos}</td>
-                      <td style="padding:6px 10px;font-weight:600">${esc(d.name)}</td>
+                      <td style="padding:6px 10px;font-weight:600;white-space:nowrap">${matchBadge}${esc(d.name)}</td>
                       <td style="padding:6px 10px;color:var(--text-soft)">${esc(d.team)}</td>
                       <td style="padding:6px 10px;text-align:right;font-weight:700">${d.points}</td>
                       ${d.cells.map(c => {
@@ -10688,13 +13657,13 @@ Red Bull
                         }
                         return `<td style="padding:6px;text-align:center;color:${col};font-weight:600">${txt}</td>`;
                       }).join('')}
-                    </tr>
-                  `).join('')}
+                    </tr>`;
+                  }).join('')}
                 </tbody>
               </table>
             </div>
             <div class="field-help" style="margin-top:10px">
-              Teams will be auto-created (with default colors you can edit). Driver countries will be blank — fill in via driver edit. ${userCodes.length === r.headers.length ? 'Race codes mapped to real circuits.' : 'Optionally fill the race calendar field above to get real circuit names.'}
+              ${driversMatched ? `<span style="color:var(--sec-purple)">●</span> Matched drivers will inherit their preset's <b>real F1 number</b>, <b>country</b>, and <b>photo</b> (if a custom preset has one). ` : ''}Teams are auto-created with default colors you can edit. ${userCodes.length === r.headers.length ? 'Race codes mapped to real circuits.' : 'Optionally fill the race calendar field above to get real circuit names.'}
             </div>
           </div>`;
       };
@@ -10710,7 +13679,11 @@ Red Bull
           const name = $('#imp-name', root).value;
           const pointsSystemId = $('#imp-points', root).value;
           const userCodes = racesInp.value.trim().split(/\s+/).filter(Boolean);
-          const raceCodes = (userCodes.length === parsed.headers.length) ? userCodes : null;
+          // Partial-overlay: typed codes fill positions left-to-right, missing
+          // positions keep the parsed placeholder (R1, R2, …). Matches the preview.
+          const raceCodes = userCodes.length
+            ? parsed.headers.map((h, i) => userCodes[i] || h)
+            : null;
           const calendarPresetId = calSel.value || null;
           buildSeasonFromImport(parsed, { year, name, pointsSystemId, raceCodes, calendarPresetId });
           close();
@@ -10846,9 +13819,9 @@ function openPresetEditor(kind, existing, onSaved) {
       <div class="field"><label>Era</label><select id="pe-era">${eraOptions}</select></div>
     </div>
     <div class="field">
-      <label>Driver Photo</label>
+      <label>Driver Photos <span style="font-weight:400;color:var(--text-muted);font-family:var(--f-body);text-transform:none;letter-spacing:0">— add as many as you like (career eras, helmet variants, etc.)</span></label>
       <div id="pe-photo-mount"></div>
-      <span class="field-help">Photo is saved with the preset and copied onto every driver signed from it.</span>
+      <span class="field-help">Each driver signed from this preset can pick which photo to use. Mark one as <b>default</b> for auto-import (e.g. F1 paste imports).</span>
     </div>`;
 
   const teamFields = `
@@ -10929,7 +13902,15 @@ function openPresetEditor(kind, existing, onSaved) {
       };
 
       if (isDriver) {
-        mountUpload('pe-photo-mount', data.photo || '', (v) => { data.photo = v; });
+        // Multi-photo gallery — accepts the preset's `photos` array, normalising
+        // legacy single-photo presets so existing saves Just Work.
+        data.photos = presetPhotosList(data);
+        mountPhotoGallery($('#pe-photo-mount', root), data.photos, (next) => {
+          data.photos = next;
+          // Keep `photo` in sync with the default for back-compat — other call
+          // sites (matchDriverPresetForName, F1 import, etc.) still read `photo`.
+          data.photo = (next.find(p => p.isDefault) || next[0])?.url || '';
+        });
       } else if (isTeam) {
         mountUpload('pe-logo-mount', data.logo || '', (v) => { data.logo = v; });
         const cp = $('#pe-color', root);
@@ -10984,7 +13965,9 @@ function openPresetEditor(kind, existing, onSaved) {
         if (!name) return toast('Name required', 'error');
         if (isDriver) {
           const number = Math.max(1, Math.min(99, Number($('#pe-number', root).value) || 1));
-          const updated = { name, country, era, number, photo: data.photo || '' };
+          const photos = data.photos || [];
+          const defaultPhoto = (photos.find(p => p.isDefault) || photos[0])?.url || '';
+          const updated = { name, country, era, number, photos, photo: defaultPhoto };
           if (isEdit) savePresetEdit('driver', originalKey, updated);
           else addCustomPreset('driver', updated);
         } else if (isTeam) {
@@ -11071,20 +14054,24 @@ function openDriverPresetSearch() {
           const already = present.has(p.name.toLowerCase().trim());
           const portrait = p.photo
             ? `<div class="preset-portrait" style="background-image:url('${esc(p.photo)}')"></div>`
-            : `<div class="preset-portrait preset-portrait-fallback">${esc(driverInitials(p.name))}</div>`;
+            : `<div class="preset-portrait preset-portrait-fallback preset-portrait-driver"></div>`;
           const badges = [];
           if (p.isCustom) badges.push('<span class="preset-badge custom">MINE</span>');
           else if (state.presetOverrides?.drivers?.[p.presetKey]) badges.push('<span class="preset-badge edited">EDITED</span>');
           return `<div class="preset-row ${already ? 'added' : ''}" data-idx="${i}">
             ${portrait}
             <div class="preset-num">${p.number}</div>
-            <div>
+            <div class="preset-info">
               <div class="preset-name">${esc(p.name)} ${badges.join(' ')}</div>
               <div class="preset-meta">${esc(p.era)}</div>
             </div>
-            <div class="preset-flag">${flag(p.country)} ${esc(p.country || '')}</div>
-            <button class="preset-edit-btn" data-edit="${i}" title="Edit preset">✎</button>
-            <button class="preset-add-btn">${already ? '✓ ADDED' : '+ SIGN'}</button>
+            <div class="preset-flag">${flagImg(p.country, 18)} <span>${esc(p.country || '')}</span></div>
+            <button class="preset-edit-btn" data-edit="${i}" title="Edit preset" aria-label="Edit">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+            </button>
+            <button class="preset-add-btn ${already ? 'is-added' : ''}">
+              <span class="preset-add-btn-label">${already ? '✓ ADDED' : '+ SIGN'}</span>
+            </button>
           </div>`;
         }).join('');
         $$('.preset-row', list).forEach(row => {
@@ -11100,11 +14087,17 @@ function openDriverPresetSearch() {
             season.teams.forEach(t => teamCounts[t.id] = 0);
             season.drivers.forEach(d => { if (d.teamId) teamCounts[d.teamId] = (teamCounts[d.teamId] || 0) + 1; });
             const freeTeam = season.teams.find(t => teamCounts[t.id] < 2) || season.teams[0];
-            // Photo from preset is copied onto the new driver
-            addDriver({ name: p.name, number: num, country: p.country, teamId: freeTeam.id, photo: p.photo || '' });
-            toast(`${p.name} signed`, 'success');
-            renderList();
-            renderMain();
+            // If this preset has multiple photos, ask the user which one to use.
+            // Single-photo (or zero-photo) presets sign immediately.
+            const sign = (photoUrl) => {
+              addDriver({ name: p.name, number: num, country: p.country, teamId: freeTeam.id, photo: photoUrl || '' });
+              toast(`${p.name} signed`, 'success');
+              renderList();
+              renderMain();
+            };
+            const photos = presetPhotosList(p);
+            if (photos.length > 1) pickPresetPhoto(p, sign);
+            else sign(photos[0]?.url || '');
           };
         });
         $$('[data-edit]', list).forEach(b => b.onclick = (ev) => {
@@ -11173,16 +14166,20 @@ function openTeamPresetSearch() {
           const badges = [];
           if (p.isCustom) badges.push('<span class="preset-badge custom">MINE</span>');
           else if (state.presetOverrides?.teams?.[p.presetKey]) badges.push('<span class="preset-badge edited">EDITED</span>');
-          return `<div class="preset-row ${already ? 'added' : ''}" data-idx="${i}">
+          return `<div class="preset-row ${already ? 'added' : ''}" data-idx="${i}" style="--row-accent:${p.color}">
             ${swatch}
-            <div class="preset-num" style="color:${p.color};font-size:13px">${esc(p.short)}</div>
-            <div>
+            <div class="preset-num" style="color:${p.color}">${esc(p.short)}</div>
+            <div class="preset-info">
               <div class="preset-name">${esc(p.name)} ${badges.join(' ')}</div>
               <div class="preset-meta">${esc(p.era)}</div>
             </div>
-            <div class="preset-flag">${flag(p.country)} ${esc(p.country || '')}</div>
-            <button class="preset-edit-btn" data-edit="${i}" title="Edit preset">✎</button>
-            <button class="preset-add-btn">${already ? '✓ ADDED' : '+ ADD'}</button>
+            <div class="preset-flag">${flagImg(p.country, 18)} <span>${esc(p.country || '')}</span></div>
+            <button class="preset-edit-btn" data-edit="${i}" title="Edit preset" aria-label="Edit">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+            </button>
+            <button class="preset-add-btn ${already ? 'is-added' : ''}">
+              <span class="preset-add-btn-label">${already ? '✓ ADDED' : '+ ADD'}</span>
+            </button>
           </div>`;
         }).join('');
         $$('.preset-row', list).forEach(row => {
@@ -11261,24 +14258,30 @@ function openTrackPresetSearch() {
         }
         list.innerHTML = items.map((p, i) => {
           const already = present.has(p.name.toLowerCase().trim() + '|' + (p.country || '').toUpperCase());
-          const flagBlock = p.flagImage
-            ? `<div class="preset-portrait" style="background-image:url('${esc(p.flagImage)}');border-color:var(--border-hi);background-size:cover"></div>`
-            : `<div class="preset-portrait preset-portrait-fallback" style="font-size:20px;line-height:1">${flag(p.country)}</div>`;
+          // Rectangular flag display for tracks — uses uploaded flagImage if set,
+          // otherwise an SVG flag from flagcdn (renders reliably on Windows).
+          const flagUrl = p.flagImage || flagSvgUrl(p.country);
+          const flagBlock = flagUrl
+            ? `<div class="preset-portrait preset-portrait-flag" style="background-image:url('${esc(flagUrl)}')"></div>`
+            : `<div class="preset-portrait preset-portrait-flag preset-portrait-fallback">${esc((p.country || '?').slice(0,3))}</div>`;
           const badges = [];
           if (p.isCustom) badges.push('<span class="preset-badge custom">MINE</span>');
           else if (state.presetOverrides?.tracks?.[p.presetKey]) badges.push('<span class="preset-badge edited">EDITED</span>');
           if (p.sprint) badges.push('<span class="preset-badge sprint">SPR</span>');
           const lengthStr = p.length ? `${Number(p.length).toFixed(3)} km` : '';
-          return `<div class="preset-row ${already ? 'added' : ''}" data-idx="${i}">
+          return `<div class="preset-row preset-row-track ${already ? 'added' : ''}" data-idx="${i}">
             ${flagBlock}
-            <div class="preset-num" style="font-size:10px;font-family:var(--f-mono);color:var(--text-dim)">${esc(p.country || '')}</div>
-            <div>
+            <div class="preset-num preset-num-country">${esc(p.country || '')}</div>
+            <div class="preset-info">
               <div class="preset-name">${esc(p.name)} ${badges.join(' ')}</div>
               <div class="preset-meta">${esc(p.circuit || '')}${lengthStr ? ' · ' + lengthStr : ''} · ${esc(p.era)}</div>
             </div>
-            <div class="preset-flag"></div>
-            <button class="preset-edit-btn" data-edit="${i}" title="Edit preset">✎</button>
-            <button class="preset-add-btn">${already ? '✓ ADDED' : '+ ADD'}</button>
+            <button class="preset-edit-btn" data-edit="${i}" title="Edit preset" aria-label="Edit">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+            </button>
+            <button class="preset-add-btn ${already ? 'is-added' : ''}">
+              <span class="preset-add-btn-label">${already ? '✓ ADDED' : '+ ADD'}</span>
+            </button>
           </div>`;
         }).join('');
         $$('.preset-row', list).forEach(row => {
@@ -12643,6 +15646,246 @@ function renderAll() {
 
 // First-run friendly: if no saves at all and we're in 'home' view, leave hero visible.
 // If saves exist but user closed without active selection, that's fine.
+
+/* =====================================================
+   P1 ENHANCEMENT LAYER v4.0 — Cinematic micro-interactions
+   Purely additive. Runs after the app boots and re-attaches
+   on every #app / #modal-root mutation.
+   ===================================================== */
+(function P1Enhance() {
+  'use strict';
+  if (window.__p1Enhanced) return;
+  window.__p1Enhanced = true;
+
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  /* --- Inject ambient layers (aura + sparks) --- */
+  const aura = document.createElement('div');
+  aura.className = 'p1-aura';
+  aura.setAttribute('aria-hidden', 'true');
+  document.body.appendChild(aura);
+
+  if (!reduced) {
+    const sparks = document.createElement('div');
+    sparks.className = 'p1-sparks';
+    sparks.setAttribute('aria-hidden', 'true');
+    for (let i = 0; i < 14; i++) {
+      const s = document.createElement('span');
+      s.className = 'p1-spark';
+      s.style.left = (Math.random() * 100) + 'vw';
+      s.style.animationDelay = (Math.random() * 12) + 's';
+      s.style.animationDuration = (10 + Math.random() * 12) + 's';
+      sparks.appendChild(s);
+    }
+    document.body.appendChild(sparks);
+  }
+
+  /* --- 1. Cursor-tracked spotlight cards --- */
+  const SPOT_SEL = '.universe-card, .season-card, .driver-card, .team-card, .save-card, ' +
+                   '.stat-leader-card, .record-tile, .dash-stat-card.leader, .signin-card, ' +
+                   '.charts-section, .dash-block, .dash-hero';
+  function onSpotMove(e) {
+    const el = e.currentTarget;
+    const r = el.getBoundingClientRect();
+    const x = ((e.clientX - r.left) / r.width) * 100;
+    const y = ((e.clientY - r.top) / r.height) * 100;
+    el.style.setProperty('--mx', x + '%');
+    el.style.setProperty('--my', y + '%');
+  }
+  function onSpotLeave(e) {
+    const el = e.currentTarget;
+    el.style.setProperty('--mx', '50%');
+    el.style.setProperty('--my', '-100%');
+    el.style.removeProperty('--tx');
+    el.style.removeProperty('--ty');
+  }
+  function attachSpotlight(root) {
+    root.querySelectorAll(SPOT_SEL).forEach(el => {
+      if (el.dataset.p1Spot) return;
+      el.dataset.p1Spot = '1';
+      el.addEventListener('pointermove', onSpotMove, { passive: true });
+      el.addEventListener('pointerleave', onSpotLeave, { passive: true });
+    });
+  }
+
+  /* --- 2. 3D tilt on driver cards --- */
+  function onTiltMove(e) {
+    const el = e.currentTarget;
+    const r = el.getBoundingClientRect();
+    const dx = ((e.clientX - r.left) / r.width)  - 0.5;
+    const dy = ((e.clientY - r.top)  / r.height) - 0.5;
+    el.style.setProperty('--tx', (dy * -5).toFixed(2) + 'deg');
+    el.style.setProperty('--ty', (dx *  5).toFixed(2) + 'deg');
+  }
+  function attachTilt(root) {
+    if (reduced) return;
+    root.querySelectorAll('.driver-card').forEach(el => {
+      if (el.dataset.p1Tilt) return;
+      el.dataset.p1Tilt = '1';
+      el.addEventListener('pointermove', onTiltMove, { passive: true });
+    });
+  }
+
+  /* --- 3. Number tickers — only on FIRST bootstrap to avoid re-render flicker.
+     Without this gate the ticker would fire every time #app re-renders (tab swap,
+     data refresh, etc.) and users would see numbers visibly counting up again
+     and again, which reads as flicker. --- */
+  const TICK_SEL = '.dash-stat-num, .save-stat-num, .record-tile-value, .stat-leader-bignum-num, ' +
+                   '.driver-card .driver-stat-num';
+  let tickersAllowed = true;
+  function tickNumbers(root) {
+    if (reduced || !tickersAllowed) return;
+    root.querySelectorAll(TICK_SEL).forEach(el => {
+      if (el.dataset.p1Ticked) return;
+      const raw = (el.textContent || '').trim();
+      const match = raw.match(/^(-?\d+(?:[.,]\d+)?)(.*)$/);
+      if (!match) return;
+      const target = parseFloat(match[1].replace(',', ''));
+      const suffix = match[2] || '';
+      if (!isFinite(target) || Math.abs(target) < 1) return;
+      // Skip elements not currently in viewport — no point ticking off-screen,
+      // and avoids a "0" flash when the user scrolls into them later.
+      const r = el.getBoundingClientRect();
+      if (r.bottom < 0 || r.top > (window.innerHeight || 0)) return;
+      el.dataset.p1Ticked = '1';
+      const isFloat = /[.,]/.test(match[1]);
+      const dur = Math.min(700, 260 + Math.min(Math.abs(target), 400) * 1.1);
+      const start = performance.now();
+      // Set initial display to 0+suffix synchronously so we never flash the raw
+      // value first (which would otherwise cause one frame of "500 PTS" → "0 PTS").
+      el.textContent = (isFloat ? '0.0' : '0') + suffix;
+      el.classList.add('p1-tick-active');
+      function step(now) {
+        const p = Math.min(1, (now - start) / dur);
+        const eased = 1 - Math.pow(1 - p, 3);
+        const v = target * eased;
+        el.textContent = (isFloat ? v.toFixed(1) : Math.round(v)) + suffix;
+        if (p < 1) requestAnimationFrame(step);
+        else {
+          el.textContent = raw;
+          setTimeout(() => el.classList.remove('p1-tick-active'), 350);
+        }
+      }
+      requestAnimationFrame(step);
+    });
+  }
+
+  /* --- 4. Scroll reveal — viewport-aware. Elements already on-screen at attach
+     time skip the entrance animation (no opacity:0 flash). Only off-screen
+     elements get the reveal class and animate in when scrolled into view. --- */
+  const REVEAL_SEL = '.f1-matrix-row, .standings-row, .f1-table-row, .driver-card, .team-card, ' +
+                     '.record-tile, .universe-card, .save-card, .stat-leader-card, ' +
+                     '.record-detail-row, .rc-row, .race-meta-cell, .gp-row';
+  const revealObs = ('IntersectionObserver' in window)
+    ? new IntersectionObserver(entries => {
+        entries.forEach(e => {
+          if (e.isIntersecting) {
+            e.target.classList.add('p1-revealed');
+            revealObs.unobserve(e.target);
+          }
+        });
+      }, { threshold: 0.06, rootMargin: '0px 0px -30px 0px' })
+    : null;
+  function attachReveal(root) {
+    if (!revealObs || reduced) return;
+    const vh = window.innerHeight || 0;
+    root.querySelectorAll(REVEAL_SEL).forEach(el => {
+      if (el.dataset.p1Reveal) return;
+      el.dataset.p1Reveal = '1';
+      const r = el.getBoundingClientRect();
+      // If element is already visible (or above the fold), skip the entrance —
+      // just mark it revealed so the CSS keeps it at opacity 1 / transform none.
+      if (r.top < vh && r.bottom > 0) {
+        el.classList.add('p1-reveal', 'p1-revealed');
+        return;
+      }
+      el.classList.add('p1-reveal');
+      revealObs.observe(el);
+    });
+  }
+
+  /* --- 5. Button ripple (global delegation) --- */
+  document.addEventListener('pointerdown', (e) => {
+    const btn = e.target.closest('.btn, .tab, .race-session-tab');
+    if (!btn) return;
+    if (getComputedStyle(btn).position === 'static') btn.style.position = 'relative';
+    const r = btn.getBoundingClientRect();
+    const dot = document.createElement('span');
+    dot.className = 'p1-ripple';
+    dot.style.left = (e.clientX - r.left) + 'px';
+    dot.style.top  = (e.clientY - r.top)  + 'px';
+    btn.appendChild(dot);
+    setTimeout(() => dot.remove(), 700);
+  }, { passive: true });
+
+  /* --- 6. Page swap fade on #app re-render --- */
+  let fadeTimer = null;
+  function flashFade() {
+    const app = document.getElementById('app');
+    if (!app) return;
+    app.classList.add('p1-just-rendered');
+    clearTimeout(fadeTimer);
+    fadeTimer = setTimeout(() => app.classList.remove('p1-just-rendered'), 480);
+  }
+
+  /* --- Refresh pass: attach effects to current DOM --- */
+  function refresh(root) {
+    const r = root || document;
+    attachSpotlight(r);
+    attachTilt(r);
+    attachReveal(r);
+    tickNumbers(r);
+  }
+
+  /* --- Initial pass + watch for re-renders.
+     Two observers split the work to avoid flicker:
+     1) Direct-child observer on #app — only fires on real tab swaps
+        (when renderMain() replaces #app's children). Triggers the subtle
+        page-fade once per swap.
+     2) Subtree observer on #app — fires on any descendant change, but only
+        runs refresh() (no fade). Picks up newly-mounted cards/rows so they
+        get their spotlight glow, tilt, etc. */
+  function bootstrap() {
+    // Initial pass — after this, disable number tickers so subsequent renders
+    // don't visibly count numbers up again (a major source of flicker).
+    refresh();
+    setTimeout(() => { tickersAllowed = false; }, 1200);
+
+    const app = document.getElementById('app');
+    if (app) {
+      let pendingFade = false;
+      new MutationObserver(() => {
+        if (pendingFade) return;
+        pendingFade = true;
+        requestAnimationFrame(() => {
+          pendingFade = false;
+          flashFade();
+        });
+      }).observe(app, { childList: true, subtree: false });
+
+      let pendingRefresh = false;
+      new MutationObserver(() => {
+        if (pendingRefresh) return;
+        pendingRefresh = true;
+        requestAnimationFrame(() => {
+          pendingRefresh = false;
+          refresh(app);
+        });
+      }).observe(app, { childList: true, subtree: true });
+    }
+    const modalRoot = document.getElementById('modal-root');
+    if (modalRoot) {
+      new MutationObserver(() => requestAnimationFrame(() => refresh(modalRoot)))
+        .observe(modalRoot, { childList: true, subtree: true });
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', bootstrap);
+  } else {
+    bootstrap();
+  }
+})();
 
 </script>
 </body>
