@@ -1357,11 +1357,41 @@ const COUNTRY_FLAGS = {
   CHL: '🇨🇱',
 };
 const flag = (code) => COUNTRY_FLAGS[(code || '').toUpperCase()] || '🏁';
-const flagAndCode = (code) => code ? `${flag(code)} ${esc(code)}` : '???';
-// Returns HTML for a track flag — uses custom flagImage if set, otherwise emoji.
+const ISO3_TO_ISO2 = {
+  AUS: 'au', AUT: 'at', BHR: 'bh', CHN: 'cn', ESP: 'es', MON: 'mc', MCO: 'mc',
+  CAN: 'ca', AZE: 'az', FRA: 'fr', GBR: 'gb', HUN: 'hu', BEL: 'be', NED: 'nl',
+  NLD: 'nl', ITA: 'it', SGP: 'sg', RUS: 'ru', JPN: 'jp', USA: 'us', MEX: 'mx',
+  BRA: 'br', UAE: 'ae', ARE: 'ae', QAT: 'qa', KSA: 'sa', SAU: 'sa', POR: 'pt',
+  PRT: 'pt', TUR: 'tr', GER: 'de', DEU: 'de', KOR: 'kr', IND: 'in', MAL: 'my',
+  MYS: 'my', FIN: 'fi', DEN: 'dk', DNK: 'dk', SWE: 'se', NOR: 'no', POL: 'pl',
+  THA: 'th', NZL: 'nz', RSA: 'za', ZAF: 'za', VEN: 've', COL: 'co', ARG: 'ar',
+  CHE: 'ch', SUI: 'ch', LIE: 'li', IRL: 'ie', CZE: 'cz', JAM: 'jm', PHL: 'ph',
+  INA: 'id', IDN: 'id', SVK: 'sk', EST: 'ee', LTU: 'lt', LVA: 'lv', LUX: 'lu',
+  URY: 'uy', CHL: 'cl'
+};
+function flagSvgUrl(code) {
+  if (!code) return '';
+  const c = String(code).toUpperCase();
+  const iso2 = ISO3_TO_ISO2[c] || (c.length === 2 ? c.toLowerCase() : '');
+  return iso2 ? `https://flagcdn.com/${iso2}.svg` : '';
+}
+function flagImg(code, w = 22, h = null) {
+  if (!code) return '';
+  const url = flagSvgUrl(code);
+  if (!url) return `<span class="cf-emoji">${flag(code)}</span>`;
+  const height = h ?? Math.round(w * 0.66);
+  return `<img class="cf-img" src="${url}" alt="" loading="lazy" style="width:${w}px;height:${height}px">`;
+}
+const flagAndCode = (code) => code ? `${flagImg(code, 18)} ${esc(code)}` : '???';
 function raceFlagHTML(race, size = 18) {
+  const w = size + 10;
+  const h = Math.round(w * 0.66);
   if (race?.flagImage) {
-    return `<span class="race-flag-img" style="background-image:url('${esc(race.flagImage)}');width:${size + 8}px;height:${Math.round((size + 8) * 0.65)}px"></span>`;
+    return `<img class="race-flag-img" src="${esc(race.flagImage)}" alt="" loading="lazy" style="width:${w}px;height:${h}px">`;
+  }
+  const url = flagSvgUrl(race?.country);
+  if (url) {
+    return `<img class="race-flag-img" src="${url}" alt="${esc(race?.country || '')}" loading="lazy" style="width:${w}px;height:${h}px">`;
   }
   return `<span style="font-size:${size}px">${flag(race?.country)}</span>`;
 }
@@ -1605,6 +1635,131 @@ function encodeAtDim(img, maxDim, quality) {
  * Render a photo-upload widget. The container should already exist in DOM.
  * options: { initial: dataURL or '', shape: 'circle'|'square', placeholder: string, onChange: (newValue) => void }
  */
+/* =====================================================
+   MULTI-PHOTO PRESET HELPERS
+   A driver preset can carry a gallery of photos (e.g. Hamilton at Mercedes
+   vs. Ferrari vs. McLaren). One photo is marked the default. When a driver
+   is signed from the preset, the user picks which photo to use.
+   Legacy presets that only have `photo` are normalised to a single-entry
+   gallery on read, so old saves keep working.
+   ===================================================== */
+function presetPhotosList(preset) {
+  if (!preset) return [];
+  if (Array.isArray(preset.photos) && preset.photos.length) {
+    return preset.photos.filter(p => p && p.url);
+  }
+  if (preset.photo) return [{ id: 'main', url: preset.photo, label: '', isDefault: true }];
+  return [];
+}
+function defaultPresetPhoto(preset) {
+  const all = presetPhotosList(preset);
+  if (!all.length) return '';
+  return (all.find(p => p.isDefault) || all[0]).url || '';
+}
+
+function mountPhotoGallery(container, initial, onChange) {
+  const items = (initial || []).map(p => ({
+    id: p.id || uid(),
+    url: p.url || '',
+    label: p.label || '',
+  })).filter(p => p.url);
+  let defaultId = (initial || []).find(p => p.isDefault)?.id || items[0]?.id || null;
+
+  function emit() {
+    onChange(items.map(p => ({ id: p.id, url: p.url, label: p.label, isDefault: p.id === defaultId })));
+  }
+
+  function render() {
+    container.innerHTML = `
+      <div class="photo-gallery">
+        ${items.map(p => `
+          <div class="photo-gallery-item ${p.id === defaultId ? 'is-default' : ''}" data-id="${p.id}">
+            <div class="photo-gallery-thumb" style="background-image:url('${esc(p.url)}')">${p.id === defaultId ? '<span class="photo-gallery-default-badge">DEFAULT</span>' : ''}</div>
+            <input class="photo-gallery-label" type="text" placeholder="Label (e.g. Mercedes era)" value="${esc(p.label || '')}" data-id="${p.id}" maxlength="40">
+            <div class="photo-gallery-actions">
+              <button type="button" class="photo-gallery-btn star ${p.id === defaultId ? 'active' : ''}" data-default="${p.id}" title="${p.id === defaultId ? 'Default photo' : 'Set as default'}">
+                <svg viewBox="0 0 24 24" width="12" height="12" fill="${p.id === defaultId ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15 8.5 22 9.3 17 14.2 18.2 21 12 17.8 5.8 21 7 14.2 2 9.3 9 8.5 12 2"/></svg>
+                <span>${p.id === defaultId ? 'DEFAULT' : 'SET DEFAULT'}</span>
+              </button>
+              <button type="button" class="photo-gallery-btn remove" data-remove="${p.id}" title="Remove this photo" aria-label="Remove photo">
+                <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
+              </button>
+            </div>
+          </div>
+        `).join('')}
+        <label class="photo-gallery-add">
+          <input type="file" accept="image/*" multiple style="display:none">
+          <div class="photo-gallery-add-inner">
+            <span class="photo-gallery-add-icon">＋</span>
+            <span class="photo-gallery-add-label">${items.length ? 'ADD ANOTHER' : 'ADD PHOTO'}</span>
+          </div>
+        </label>
+      </div>`;
+
+    $$('.photo-gallery-label', container).forEach(inp => {
+      inp.oninput = () => {
+        const item = items.find(p => p.id === inp.dataset.id);
+        if (item) { item.label = inp.value; emit(); }
+      };
+    });
+    $$('[data-default]', container).forEach(b => {
+      b.onclick = () => { defaultId = b.dataset.default; emit(); render(); };
+    });
+    $$('[data-remove]', container).forEach(b => {
+      b.onclick = () => {
+        const id = b.dataset.remove;
+        const idx = items.findIndex(p => p.id === id);
+        if (idx < 0) return;
+        items.splice(idx, 1);
+        if (defaultId === id) defaultId = items[0]?.id || null;
+        emit(); render();
+      };
+    });
+    container.querySelector('.photo-gallery-add input').onchange = async (e) => {
+      const files = Array.from(e.target.files || []);
+      for (const f of files) {
+        try {
+          const url = await fileToDataURL(f, 300);
+          const newItem = { id: uid(), url, label: '' };
+          items.push(newItem);
+          if (!defaultId) defaultId = newItem.id;
+        } catch (err) { toast(err.message || 'Could not load image', 'error'); }
+      }
+      emit(); render();
+    };
+  }
+
+  render();
+  emit();
+}
+
+function pickPresetPhoto(preset, onPick) {
+  const photos = presetPhotosList(preset);
+  if (photos.length <= 1) { onPick(photos[0]?.url || ''); return; }
+  modal({
+    title: `<span class="accent">Pick</span> a Photo`,
+    body: `
+      <div class="field-help" style="margin-bottom:14px">
+        <b>${esc(preset.name)}</b> has ${photos.length} photos saved. Choose which one to use for this driver — you can change it later.
+      </div>
+      <div class="photo-picker-grid">
+        ${photos.map(p => `
+          <button type="button" class="photo-picker-card ${p.isDefault ? 'is-default' : ''}" data-url="${esc(p.url)}">
+            <div class="photo-picker-thumb" style="background-image:url('${esc(p.url)}')">${p.isDefault ? '<span class="photo-picker-default-badge">DEFAULT</span>' : ''}</div>
+            <div class="photo-picker-label">${esc(p.label || 'Untitled')}</div>
+          </button>
+        `).join('')}
+      </div>`,
+    footer: `<button class="btn btn-ghost" data-act="cancel">Cancel</button>`,
+    onMount: (root, close) => {
+      $('[data-act="cancel"]', root).onclick = close;
+      $$('.photo-picker-card', root).forEach(b => {
+        b.onclick = () => { onPick(b.dataset.url); close(); };
+      });
+    }
+  });
+}
+
 function mountPhotoUpload(container, { initial = '', shape = 'circle', placeholder = '?', onChange = () => {} }) {
   let value = initial || '';
   function render() {
@@ -2505,7 +2660,7 @@ function renderDashboard() {
             const tc = drv ? teamColor(season, drv.teamId) : '#666';
             const portrait = drv?.photo
               ? `<div class="dash-leader-portrait" style="background-image:url('${esc(drv.photo)}');border-color:${tc}"></div>`
-              : `<div class="dash-leader-portrait" style="border-color:${tc};color:${tc}">${esc(driverInitials(drv?.name || ''))}</div>`;
+              : `<div class="dash-leader-portrait" style="border-color:${tc};color:${tc}"></div>`;
             return `<div class="dash-leader-row">
               ${portrait}
               <div>
@@ -2548,7 +2703,6 @@ function renderDashboard() {
             <div class="next-race-name">${esc(next.name)}</div>
             <div class="next-race-circuit">${esc(next.circuit || '—')}</div>
             <div class="next-race-meta">
-              <div class="next-race-meta-item"><div class="lbl">DATE</div><div class="val">${next.date ? fmtDate(new Date(next.date).getTime()) : 'TBD'}</div></div>
               <div class="next-race-meta-item"><div class="lbl">FORMAT</div><div class="val">${next.sprint ? 'SPRINT' : 'STANDARD'}</div></div>
               <div class="next-race-meta-item"><div class="lbl">ENTRIES</div><div class="val">${season.drivers.length}</div></div>
             </div>
@@ -2571,7 +2725,7 @@ function renderDashboard() {
                 const team = season.teams.find(t => t.id === drv.teamId);
                 const photo = drv.photo
                   ? `<div class="standings-portrait" style="--team-color:${color};background-image:url('${esc(drv.photo)}')"></div>`
-                  : `<div class="standings-portrait" style="--team-color:${color}">${esc(driverInitials(drv.name))}</div>`;
+                  : `<div class="standings-portrait" style="--team-color:${color}"></div>`;
                 const teamMark = team?.logo
                   ? `<span class="team-logo small" style="background-image:url('${esc(team.logo)}');border-color:${color}"></span>`
                   : `<span class="team-dot" style="--team-color:${color}"></span>`;
@@ -2619,7 +2773,7 @@ function renderDashboard() {
                   const color = teamColor(season, drv.teamId);
                   const portrait = drv.photo
                     ? `<div class="podium-portrait" style="color:${color};background-image:url('${esc(drv.photo)}')"></div>`
-                    : `<div class="podium-portrait" style="color:${color}"><span style="color:${color}">${esc(driverInitials(drv.name))}</span></div>`;
+                    : `<div class="podium-portrait" style="color:${color}"></div>`;
                   return `<div class="podium-step p${r.position}">
                     ${portrait}
                     <div class="podium-pos">${r.position}</div>
@@ -2719,7 +2873,7 @@ function renderDrivers() {
                 </div>
                 ${hasPhoto
                   ? `<div class="driver-photo" style="background-image:url('${esc(d.photo)}')"></div>`
-                  : `<div class="driver-photo driver-photo-empty">${esc(driverInitials(d.name))}</div>`}
+                  : `<div class="driver-photo driver-photo-empty"></div>`}
               </div>
             </div>`;
         }).join('')}
@@ -2784,12 +2938,16 @@ function openDriverModal(driverId) {
   const season = activeSeason();
   const editing = driverId ? season.drivers.find(d => d.id === driverId) : null;
   let photoValue = editing?.photo || '';
+  const matchedPreset = editing ? matchDriverPresetForName(editing.name) : null;
+  const presetPhotos = matchedPreset ? presetPhotosList(matchedPreset) : [];
+  const hasMultiPreset = presetPhotos.length > 1;
   modal({
     title: editing ? `Edit Driver` : `<span class="accent">Sign</span> a Driver`,
     body: `
       <div class="field">
-        <label>Photo</label>
+        <label>Photo${hasMultiPreset ? ` <span style="font-weight:400;color:var(--text-muted);font-family:var(--f-body);text-transform:none;letter-spacing:0">— ${presetPhotos.length} saved in preset</span>` : ''}</label>
         <div id="d-photo-mount"></div>
+        ${hasMultiPreset ? `<button type="button" class="btn btn-ghost btn-sm" id="d-browse-preset-photos" style="margin-top:10px;width:100%">📸 BROWSE PRESET PHOTOS (${presetPhotos.length})</button>` : ''}
       </div>
       <div class="field">
         <label>Full Name</label>
@@ -2814,13 +2972,22 @@ function openDriverModal(driverId) {
       </div>`,
     footer: `<button class="btn btn-ghost" data-act="cancel">Cancel</button><button class="btn btn-primary" data-act="ok">${editing ? 'Save' : 'Sign'}</button>`,
     onMount: (root, close) => {
-      const placeholder = editing ? driverInitials(editing.name) : '?';
-      mountPhotoUpload($('#d-photo-mount', root), {
+      const placeholder = '';
+      const photoWidget = mountPhotoUpload($('#d-photo-mount', root), {
         initial: photoValue,
         shape: 'circle',
         placeholder,
         onChange: (v) => { photoValue = v; }
       });
+      const browseBtn = $('#d-browse-preset-photos', root);
+      if (browseBtn) {
+        browseBtn.onclick = () => {
+          pickPresetPhoto(matchedPreset, (url) => {
+            photoValue = url || '';
+            photoWidget.setValue(photoValue);
+          });
+        };
+      }
       // Live country flag preview
       const ctryInput = $('#d-ctry', root);
       const flagEl = $('#d-ctry-flag', root);
@@ -2867,31 +3034,57 @@ function renderTeams() {
       <div class="grid-cards">
         ${season.teams.map(t => {
           const drivers = season.drivers.filter(d => d.teamId === t.id).sort((a,b) => a.number - b.number);
-          const stripeClass = t.logo ? 'team-stripe-with-logo' : 'team-stripe';
+          const teamTotal = drivers.reduce((s, d) => s + (ptsMap[d.id] || 0), 0);
+          const logoBlock = t.logo
+            ? `<div class="team-card-logo" style="background-image:url('${esc(t.logo)}')"></div>`
+            : `<div class="team-card-logo team-card-logo-fallback" style="border-color:${t.color};color:${t.color}">${esc((t.short || t.name || '?').slice(0,3).toUpperCase())}</div>`;
           return `
-            <div class="team-card ${t.dsq ? 'champ-dsq' : ''}">
-              <div class="team-card-actions">
-                <button class="btn btn-sm btn-ghost btn-icon ${t.dsq ? 'active-dsq' : ''}" data-dsq-team="${t.id}" title="${t.dsq ? 'Reinstate to championship' : 'Disqualify from championship'}">${t.dsq ? '✓' : '⊘'}</button>
-                <button class="btn btn-sm btn-ghost btn-icon" data-edit-team="${t.id}" title="Edit">✎</button>
-                <button class="btn btn-sm btn-danger btn-icon" data-del-team="${t.id}" title="Delete">✕</button>
+            <div class="team-card ${t.dsq ? 'champ-dsq' : ''}" style="--team-color:${t.color}">
+              <div class="team-card-head">
+                ${logoBlock}
+                <div class="team-card-identity">
+                  <h3 class="team-card-name">${esc(t.name)}</h3>
+                  <div class="team-card-meta">
+                    ${t.short ? `<span class="team-card-short">${esc(t.short)}</span>` : ''}
+                    ${t.country ? `<span class="team-card-country">${flagImg(t.country, 16)}<span>${esc(t.country)}</span></span>` : ''}
+                    ${t.dsq ? `<span class="team-card-dsq-tag">DSQ</span>` : ''}
+                  </div>
+                </div>
+                <div class="team-card-total">
+                  <span class="team-card-total-val">${teamTotal}</span>
+                  <span class="team-card-total-lbl">PTS</span>
+                </div>
               </div>
-              <div class="${stripeClass}" style="--team-color:${t.color};background:${t.color}">
-                ${t.logo ? `<div class="team-logo" style="background-image:url('${esc(t.logo)}')"></div>` : ''}
-                <div class="team-short">${esc(t.short || '?')}</div>
-              </div>
-              <div class="team-card-body">
-                <div class="team-name">${esc(t.name)}</div>
-                <div class="team-country">${flagAndCode(t.country)}</div>
-                ${drivers.length ? `
-                  <div class="team-drivers-list">
-                    ${drivers.map(d => `
-                      <div class="team-driver-row" style="--team-color:${t.color}">
+              ${drivers.length ? `
+                <div class="team-drivers-list">
+                  ${drivers.map(d => {
+                    const portrait = d.photo
+                      ? `<div class="team-driver-portrait" style="background-image:url('${esc(d.photo)}')"></div>`
+                      : `<div class="team-driver-portrait team-driver-portrait-empty"></div>`;
+                    return `<div class="team-driver-row">
                         <span class="team-driver-num">${d.number}</span>
-                        <span class="team-driver-name">${esc(d.name)}</span>
-                        <span class="team-driver-pts">${ptsMap[d.id] || 0} PTS</span>
-                      </div>`).join('')}
-                  </div>` : `<div style="margin-top:12px;font-family:var(--f-mono);font-size:10px;color:var(--text-muted);letter-spacing:0.1em">NO DRIVERS ASSIGNED</div>`}
-                ${lastEditedBadge(t)}
+                        ${portrait}
+                        <div class="team-driver-info">
+                          <span class="team-driver-name">${esc(d.name)}</span>
+                          ${d.country ? `<span class="team-driver-flag">${flagImg(d.country, 14)}</span>` : ''}
+                        </div>
+                        <span class="team-driver-pts">${ptsMap[d.id] || 0}<span class="team-driver-pts-lbl"> PTS</span></span>
+                      </div>`;
+                  }).join('')}
+                </div>` : `<div class="team-card-empty-roster">No drivers signed</div>`}
+              ${lastEditedBadge(t)}
+              <div class="team-card-actions">
+                <button class="team-action-btn dsq ${t.dsq ? 'active' : ''}" data-dsq-team="${t.id}" title="${t.dsq ? 'Reinstate to championship' : 'Disqualify from championship'}">
+                  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><line x1="5.5" y1="18.5" x2="18.5" y2="5.5"/></svg>
+                  <span>${t.dsq ? 'REINSTATE' : 'DSQ'}</span>
+                </button>
+                <button class="team-action-btn edit" data-edit-team="${t.id}" title="Edit team">
+                  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                  <span>EDIT</span>
+                </button>
+                <button class="team-action-btn delete" data-del-team="${t.id}" title="Delete team">
+                  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
+                </button>
               </div>
             </div>`;
         }).join('')}
@@ -3006,68 +3199,73 @@ function renderCalendar() {
 
   // Last completed race for the R-XX label at top
   const lastCompleted = races.filter(r => r.completed).slice(-1)[0];
-  const upcomingDate = (() => {
-    const next = races.find(r => !r.completed);
-    if (!next || !next.date) return '';
-    const d = new Date(next.date);
-    if (isNaN(d.getTime())) return '';
-    return d.toLocaleDateString('en-US', { day: '2-digit', month: 'short' }).toUpperCase();
-  })();
 
   // Build the inner content based on the active filter pill
   let inner = '';
   if (_calFilter === 'races') {
+    const nextPendingId = races.find(r => !r.completed)?.id || null;
     inner = races.length ? `
-      <div class="f1-table-shell">
-        <div class="f1-table">
-          <div class="f1-table-head">
-            <div>GRAND PRIX</div>
-            <div>DATE</div>
-            <div>WINNER</div>
-            <div>TEAM</div>
-            <div class="num">LAPS</div>
-            <div class="num">TIME</div>
-            <div></div>
-          </div>
-          ${races.map(r => {
-            const winner = r.completed && r.results?.length
-              ? r.results.find(x => x.position === 1)
-              : null;
-            const winnerDrv = winner ? season.drivers.find(d => d.id === winner.driverId) : null;
-            const winnerTeam = winnerDrv ? season.teams.find(t => t.id === winnerDrv.teamId) : null;
-            const teamColor = winnerTeam?.color || '#6b7280';
-            const dateLabel = r.date
-              ? new Date(r.date).toLocaleDateString('en-US', { day: '2-digit', month: 'short' }).toUpperCase()
-              : 'TBD';
-            const laps = winner ? (r.totalLaps || '—') : '—';
-            const time = winner && winner.time ? winner.time : (winnerDrv ? '—' : '');
-            return `
-              <div class="f1-table-row ${r.completed ? '' : 'pending'}" data-race="${r.id}">
-                <div class="f1-gp">
-                  <span class="f1-flag-pill">${raceFlagHTML(r, 22)}</span>
-                  <span class="f1-gp-name">${esc(shortGrandPrixName(r))}</span>
+      <div class="race-card-grid">
+        ${races.map(r => {
+          const winner = r.completed && r.results?.length
+            ? r.results.find(x => x.position === 1)
+            : null;
+          const winnerDrv = winner ? season.drivers.find(d => d.id === winner.driverId) : null;
+          const winnerTeam = winnerDrv ? season.teams.find(t => t.id === winnerDrv.teamId) : null;
+          const teamColor = winnerTeam?.color || 'var(--red)';
+          const accent = winnerTeam?.color || (r.completed ? 'var(--sec-green)' : (r.id === nextPendingId ? 'var(--red)' : 'var(--text-muted)'));
+          const laps = winner ? (r.totalLaps || '—') : '—';
+          const statusTag = r.completed
+            ? '<span class="race-card-status-tag completed">DONE</span>'
+            : (r.id === nextPendingId
+                ? '<span class="race-card-status-tag next">NEXT</span>'
+                : '<span class="race-card-status-tag upcoming">UPCOMING</span>');
+          const winnerPhoto = winnerDrv
+            ? (winnerDrv.photo
+                ? `<div class="race-card-winner-photo" style="background-image:url('${esc(winnerDrv.photo)}')"></div>`
+                : `<div class="race-card-winner-photo"></div>`)
+            : '';
+          const winnerBlock = r.completed && winnerDrv ? `
+            <div class="race-card-winner" style="--team-color:${teamColor}">
+              ${winnerPhoto}
+              <div class="race-card-winner-info">
+                <div class="race-card-winner-lbl">Winner · P1</div>
+                <div class="race-card-winner-name">${esc(winnerDrv.name)}</div>
+                <div class="race-card-winner-team">${esc(winnerTeam?.name || '')}</div>
+              </div>
+            </div>` : `
+            <div class="race-card-pending-info">awaiting lights-out</div>`;
+          return `
+            <div class="race-card ${r.completed ? 'completed' : 'pending'}" data-race="${r.id}" style="--accent-color:${accent}">
+              <div class="race-card-head">
+                <div class="race-card-round-stack">
+                  <span class="race-card-round-lbl">ROUND</span>
+                  <span class="race-card-round">${String(r.round).padStart(2, '0')}</span>
                 </div>
-                <div class="f1-date">${dateLabel}</div>
-                <div class="f1-winner">
-                  ${winnerDrv
-                    ? `<span class="f1-team-mark" style="background:${teamColor}"></span><span class="f1-winner-name">${esc(winnerDrv.name)}</span>`
-                    : `<span style="color:var(--text-muted);font-family:var(--f-serif);font-style:italic">awaiting lights-out</span>`}
+                <div class="race-card-head-right">
+                  ${r.sprint ? '<span class="race-card-sprint-badge">SPR</span>' : ''}
+                  ${statusTag}
+                  <div class="race-card-flag">${raceFlagHTML(r, 26)}</div>
                 </div>
-                <div class="f1-team">
-                  ${winnerTeam
-                    ? `<span class="f1-team-mark" style="background:${teamColor}"></span><span>${esc(winnerTeam.name)}</span>`
-                    : `<span style="color:var(--text-muted)">—</span>`}
-                </div>
-                <div class="f1-num">${laps}</div>
-                <div class="f1-num">${esc(time || '—')}</div>
-                <div class="f1-row-actions">
-                  ${r.sprint ? '<span class="f1-tag sprint">SPR</span>' : ''}
-                  <button class="f1-row-btn" data-edit-race="${r.id}" title="Edit info">✎</button>
-                  <button class="f1-row-btn danger" data-del-race="${r.id}" title="Remove">✕</button>
-                </div>
-              </div>`;
-          }).join('')}
-        </div>
+              </div>
+              <div class="race-card-body">
+                <h3 class="race-card-name">${esc(shortGrandPrixName(r))}</h3>
+                ${r.circuit ? `<div class="race-card-circuit">${esc(r.circuit)}</div>` : ''}
+                ${r.completed && laps !== '—' ? `
+                <div class="race-card-meta-row">
+                  <div class="race-card-meta-item">
+                    <span class="race-card-meta-lbl">Laps</span>
+                    <span class="race-card-meta-val">${laps}</span>
+                  </div>
+                </div>` : ''}
+                ${winnerBlock}
+              </div>
+              <div class="race-card-actions">
+                <button class="btn btn-sm btn-ghost" data-edit-race="${r.id}" title="Edit info">✎ EDIT</button>
+                <button class="btn btn-sm btn-danger btn-icon" data-del-race="${r.id}" title="Remove">✕</button>
+              </div>
+            </div>`;
+        }).join('')}
       </div>` : `
       <div class="empty">
         <div class="empty-headline">NO ROUNDS</div>
@@ -3117,11 +3315,11 @@ function renderCalendar() {
           }
         }
 
-        if (!r) return { html: '<span class="mx-cell empty">—</span>' + sprintBadge };
+        if (!r) return { html: '<span class="mx-cell mx-empty">—</span>' + sprintBadge };
         if (r.dns) return { html: `<span class="mx-cell mx-dns">DNS</span>${sprintBadge}` };
         if (r.dsq) return { html: `<span class="mx-cell mx-dsq">DSQ</span>${sprintBadge}` };
         if (r.dnf) return { html: `<span class="mx-cell mx-dnf">RET</span>${sprintBadge}` };
-        if (!r.position) return { html: '<span class="mx-cell empty">—</span>' + sprintBadge };
+        if (!r.position) return { html: '<span class="mx-cell mx-empty">—</span>' + sprintBadge };
 
         let cls = 'mx-out';
         if (r.position === 1) cls = 'mx-gold';
@@ -3161,19 +3359,27 @@ function renderCalendar() {
                   const tc = team?.color || '#6b7280';
                   const portrait = drv.photo
                     ? `<div class="f1-portrait small" style="background-image:url('${esc(drv.photo)}');border-color:${tc}"></div>`
-                    : `<div class="f1-portrait small" style="border-color:${tc};color:${tc}">${esc(driverInitials(drv.name))}</div>`;
+                    : `<div class="f1-portrait small" style="border-color:${tc};color:${tc}"></div>`;
                   const teamMark = team?.logo
                     ? `<div class="team-logo small" style="background-image:url('${esc(team.logo)}');border-color:${tc}"></div>`
                     : `<span class="team-dot" style="--team-color:${tc}"></span>`;
+                  const rankCls = i === 0 ? 'crown' : i === 1 ? 'gold' : i === 2 ? 'bronze' : '';
+                  const rankCell = i === 0
+                    ? '<span class="f1-matrix-rank-cell crown" aria-label="Championship leader"></span>'
+                    : `<span class="f1-matrix-rank-cell ${rankCls}">${i + 1}</span>`;
+                  const { first, last } = splitName(drv.name);
                   return `
-                    <tr class="f1-matrix-row" data-driver="${drv.id}">
-                      <td class="f1-matrix-rank">${i + 1}.</td>
+                    <tr class="f1-matrix-row ${i === 0 ? 'p1' : ''}" data-driver="${drv.id}" style="--team-color:${tc}">
+                      <td class="f1-matrix-rank">${rankCell}</td>
                       <td class="f1-matrix-driver">
                         <div class="f1-matrix-driver-cell">
                           ${portrait}
                           <div>
-                            <div class="f1-matrix-driver-name">${esc(drv.name)}${row.championshipDsq ? ' <span class="f1-tag dsq">DSQ</span>' : ''}</div>
-                            <div class="f1-matrix-driver-meta">${flag(drv.country)} ${esc(drv.country || '')} · #${drv.number}</div>
+                            <div class="f1-matrix-driver-name" style="color:${tc}">
+                              <span class="first">${esc(first || '')}</span>
+                              <span>${esc(last)}</span>
+                            </div>
+                            ${row.championshipDsq ? '<div class="f1-matrix-driver-meta"><span class="f1-tag dsq">CHAMP DSQ</span></div>' : ''}
                           </div>
                         </div>
                       </td>
@@ -3238,7 +3444,7 @@ function renderCalendar() {
           ? `<span class="f1-round-pill">R${String(lastCompleted.round).padStart(2,'0')}</span>
              <span class="f1-round-meta">${raceFlagHTML(lastCompleted, 14)} ${esc(shortGrandPrixName(lastCompleted))}</span>`
           : `<span class="f1-round-pill upcoming">R${String((races.find(r => !r.completed)?.round) || 1).padStart(2,'0')}</span>
-             <span class="f1-round-meta">${upcomingDate || 'TBD'} · NEXT ROUND</span>`}
+             <span class="f1-round-meta">NEXT ROUND</span>`}
       </div>
     </div>
 
@@ -3313,14 +3519,11 @@ function openRaceModal(raceId) {
         <span class="field-help">Auto-uses the country code emoji unless you upload a custom flag image (useful for fictional countries / made-up tracks).</span>
       </div>
 
-      <div class="field-row">
-        <div class="field"><label>Date</label><input type="date" id="r-date" value="${editing?.date || ''}"></div>
-        <div class="field" style="justify-content:flex-end">
-          <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-            <input type="checkbox" id="r-sprint" ${editing?.sprint ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--red)">
-            <span>Sprint format weekend</span>
-          </label>
-        </div>
+      <div class="field">
+        <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+          <input type="checkbox" id="r-sprint" ${editing?.sprint ? 'checked' : ''} style="width:18px;height:18px;accent-color:var(--red)">
+          <span>Sprint format weekend</span>
+        </label>
       </div>`,
     footer: `<button class="btn btn-ghost" data-act="cancel">Cancel</button><button class="btn btn-primary" data-act="ok">${editing ? 'Save' : 'Add Round'}</button>`,
     onMount: (root, close) => {
@@ -3363,10 +3566,9 @@ function openRaceModal(raceId) {
         if (!name) return toast('Race name required', 'error');
         const circuit = $('#r-circ', root).value.trim();
         const country = $('#r-ctry', root).value.trim().toUpperCase().slice(0, 3);
-        const date = $('#r-date', root).value;
         const sprint = $('#r-sprint', root).checked;
-        if (editing) updateRace(editing.id, { name, circuit, country, date, sprint, flagImage });
-        else addRace({ name, circuit, country, date, sprint, flagImage });
+        if (editing) updateRace(editing.id, { name, circuit, country, sprint, flagImage });
+        else addRace({ name, circuit, country, sprint, flagImage });
         close(); renderMain(); toast(editing ? 'Round updated' : 'Round added', 'success');
       };
     }
@@ -3380,30 +3582,72 @@ function renderRace() {
   if (!race) { state.view = 'calendar'; return renderCalendar(); }
   const wrap = document.createElement('div');
 
+  const poleDrv = race.poleDriverId ? season.drivers.find(d => d.id === race.poleDriverId) : null;
+  const flDrv = race.fastestLapDriverId ? season.drivers.find(d => d.id === race.fastestLapDriverId) : null;
+  const heroFlagUrl = race.flagImage || flagSvgUrl(race.country);
+
   wrap.innerHTML = `
-    <button class="race-back-btn" id="race-back">‹ ‹ BACK TO CALENDAR</button>
-    <div class="race-header" style="margin-top:12px">
-      <div class="race-header-left">
-        <div class="race-round-big ${race.completed ? '' : 'muted'}">${String(race.round).padStart(2,'0')}</div>
-        <div class="race-title-block">
-          <div class="eyebrow">${race.completed ? '✓ COMPLETED' : '▸ UPCOMING'} · ${esc(race.country)}</div>
-          <div class="name">${esc(race.name)}</div>
-          <div class="circuit">${esc(race.circuit || '')}</div>
+    <button class="race-detail-back" id="race-back">
+      <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+      BACK TO CALENDAR
+    </button>
+
+    <div class="race-hero ${race.completed ? 'is-completed' : 'is-upcoming'}">
+      ${heroFlagUrl ? `<div class="race-hero-bg" style="background-image:url('${esc(heroFlagUrl)}')"></div>` : ''}
+      <div class="race-hero-overlay"></div>
+      <div class="race-hero-content">
+        <div class="race-hero-top">
+          <div class="race-hero-round">
+            <span class="race-hero-round-lbl">Round</span>
+            <span class="race-hero-round-num">${String(race.round).padStart(2, '0')}</span>
+          </div>
+          <div class="race-hero-flag">${raceFlagHTML(race, 40)}</div>
         </div>
-      </div>
-      <div style="display:flex;gap:8px;align-items:center">
-        ${lastEditedBadge(race)}
-        <button class="btn btn-ghost" id="race-edit">✎ EDIT INFO</button>
-        ${race.completed ? `<button class="btn btn-danger" id="race-reset">RESET RESULTS</button>` : ''}
+        <div class="race-hero-main">
+          <div class="race-hero-status">
+            <span class="race-hero-status-dot"></span>
+            ${race.completed ? 'RACE COMPLETE' : 'AWAITING LIGHTS-OUT'}
+            ${race.sprint ? '<span class="race-hero-sprint-tag">SPRINT</span>' : ''}
+          </div>
+          <h1 class="race-hero-name">${esc(race.name)}</h1>
+          ${race.circuit ? `<div class="race-hero-circuit">${esc(race.circuit)}</div>` : ''}
+          ${race.country ? `<div class="race-hero-country">${esc(race.country)}</div>` : ''}
+        </div>
+        <div class="race-hero-actions">
+          ${lastEditedBadge(race)}
+          <button class="btn btn-ghost" id="race-edit">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px;vertical-align:-2px"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+            EDIT INFO
+          </button>
+          ${race.completed ? `<button class="btn btn-danger" id="race-reset">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px;vertical-align:-2px"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
+            RESET RESULTS
+          </button>` : ''}
+        </div>
       </div>
     </div>
 
-    <div class="race-meta-strip">
-      <div class="race-meta-item"><div class="lbl">DATE</div><div class="val">${race.date ? fmtDate(new Date(race.date).getTime()) : 'TBD'}</div></div>
-      <div class="race-meta-item"><div class="lbl">FORMAT</div><div class="val">${race.sprint ? 'SPRINT WEEKEND' : 'STANDARD'}</div></div>
-      <div class="race-meta-item"><div class="lbl">ENTRIES</div><div class="val">${season.drivers.length}</div></div>
-      <div class="race-meta-item"><div class="lbl">POLE</div><div class="val">${race.poleDriverId ? esc(driverName(season, race.poleDriverId)) : '—'}</div></div>
-      <div class="race-meta-item"><div class="lbl">FASTEST LAP</div><div class="val">${race.fastestLapDriverId ? esc(driverName(season, race.fastestLapDriverId)) : '—'}</div></div>
+    <div class="race-stats-grid">
+      <div class="race-stat ${race.sprint ? 'is-sprint' : ''}">
+        <span class="race-stat-icon">${race.sprint ? '⚡' : '◐'}</span>
+        <span class="race-stat-lbl">Format</span>
+        <span class="race-stat-val">${race.sprint ? 'Sprint Weekend' : 'Standard'}</span>
+      </div>
+      <div class="race-stat">
+        <span class="race-stat-icon">▦</span>
+        <span class="race-stat-lbl">Entries</span>
+        <span class="race-stat-val">${season.drivers.length}</span>
+      </div>
+      <div class="race-stat ${poleDrv ? 'has-pole' : ''}">
+        <span class="race-stat-icon">P</span>
+        <span class="race-stat-lbl">Pole Position</span>
+        <span class="race-stat-val">${poleDrv ? esc(poleDrv.name) : '—'}</span>
+      </div>
+      <div class="race-stat ${flDrv ? 'has-fl' : ''}">
+        <span class="race-stat-icon">⚡</span>
+        <span class="race-stat-lbl">Fastest Lap</span>
+        <span class="race-stat-val">${flDrv ? esc(flDrv.name) : '—'}</span>
+      </div>
     </div>
 
     ${buildRaceTimelineHTML(race, season)}
@@ -3494,9 +3738,13 @@ function renderRaceEditor(container, race) {
       const team = season.teams.find(t => t.id === drv.teamId);
       const color = team?.color || '#666';
       const champDsq = drv.dsq || (team && team.dsq);
+      const portrait = drv.photo
+        ? `<div class="result-row-portrait" style="--driver-color:${color};background-image:url('${esc(drv.photo)}')"></div>`
+        : `<div class="result-row-portrait" style="--driver-color:${color}"></div>`;
       return `
-        <div class="result-row ${champDsq ? 'champ-dsq' : ''}" data-driver="${r.driverId}" style="grid-template-columns: 60px 1fr 70px 70px 60px 60px 60px">
+        <div class="result-row ${champDsq ? 'champ-dsq' : ''}" data-driver="${r.driverId}" style="grid-template-columns: 60px 44px 1fr 70px 70px 60px 60px 60px">
           <input class="result-pos-input" data-key="${key}-pos" type="number" min="1" max="${MAX_POS}" value="${r.position}" placeholder="—" ${champDsq ? 'disabled' : ''}>
+          ${portrait}
           <div class="result-driver">
             <span class="driver-cell-num" style="--driver-color:${color};color:${color};font-family:var(--f-display);font-weight:700;font-size:14px;width:28px">${drv.number}</span>
             <div>
@@ -3521,9 +3769,13 @@ function renderRaceEditor(container, race) {
       const team = season.teams.find(t => t.id === drv.teamId);
       const color = team?.color || '#666';
       const champDsq = drv.dsq || (team && team.dsq);
+      const portrait = drv.photo
+        ? `<div class="quali-row-portrait" style="--driver-color:${color};background-image:url('${esc(drv.photo)}')"></div>`
+        : `<div class="quali-row-portrait" style="--driver-color:${color}"></div>`;
       return `
-        <div class="quali-row ${champDsq ? 'champ-dsq' : ''}" data-driver="${r.driverId}">
+        <div class="quali-row ${champDsq ? 'champ-dsq' : ''}" data-driver="${r.driverId}" style="grid-template-columns: 60px 44px 1fr 90px">
           <input class="result-pos-input" data-key="quali-pos" type="number" min="1" max="${MAX_POS}" value="${r.position}" placeholder="—" ${champDsq ? 'disabled' : ''}>
+          ${portrait}
           <div class="result-driver">
             <span class="driver-cell-num" style="color:${color};font-family:var(--f-display);font-weight:700;font-size:14px;width:28px">${drv.number}</span>
             <div>
@@ -3564,8 +3816,8 @@ function renderRaceEditor(container, race) {
         <span class="tag" style="color:var(--sec-purple);border-color:var(--sec-purple)">QUALI</span>
       </div>
       <div class="results-editor">
-        <div class="results-editor-head" style="grid-template-columns: 60px 1fr 90px">
-          <div>POS</div><div>DRIVER</div><div>BEST TIME</div>
+        <div class="results-editor-head" style="grid-template-columns: 60px 44px 1fr 90px">
+          <div>POS</div><div></div><div>DRIVER</div><div>BEST TIME</div>
         </div>
         <div id="quali-rows">${qualiRowHTML()}</div>
         <div class="results-editor-foot">
@@ -3586,8 +3838,8 @@ function renderRaceEditor(container, race) {
         <span class="tag" style="color:var(--sec-yellow);border-color:var(--sec-yellow)">SPRINT</span>
       </div>
       <div class="results-editor">
-        <div class="results-editor-head" style="grid-template-columns: 60px 1fr 70px 70px 60px 60px 60px">
-          <div>POS</div><div>DRIVER</div><div></div><div></div><div>DNF</div><div>DSQ</div><div>DNS</div>
+        <div class="results-editor-head" style="grid-template-columns: 60px 44px 1fr 70px 70px 60px 60px 60px">
+          <div>POS</div><div></div><div>DRIVER</div><div></div><div></div><div>DNF</div><div>DSQ</div><div>DNS</div>
         </div>
         <div id="sprint-rows">${rowHTML(sprintWorking, 'sprint')}</div>
         <div class="results-editor-foot">
@@ -3607,8 +3859,8 @@ function renderRaceEditor(container, race) {
         <span class="tag red">RACE</span>
       </div>
       <div class="results-editor">
-        <div class="results-editor-head" style="grid-template-columns: 60px 1fr 70px 70px 60px 60px 60px">
-          <div>POS</div><div>DRIVER</div><div>POLE</div><div>FL</div><div>DNF</div><div>DSQ</div><div>DNS</div>
+        <div class="results-editor-head" style="grid-template-columns: 60px 44px 1fr 70px 70px 60px 60px 60px">
+          <div>POS</div><div></div><div>DRIVER</div><div>POLE</div><div>FL</div><div>DNF</div><div>DSQ</div><div>DNS</div>
         </div>
         <div id="gp-rows">${rowHTML(working, 'gp')}</div>
         <div class="results-editor-foot">
@@ -3855,7 +4107,7 @@ function renderRaceReadout(container, race) {
         const color = teamColor(season, drv.teamId);
         const portrait = drv.photo
           ? `<div class="podium-portrait" style="color:${color};background-image:url('${esc(drv.photo)}')"></div>`
-          : `<div class="podium-portrait" style="color:${color}"><span style="color:${color}">${esc(driverInitials(drv.name))}</span></div>`;
+          : `<div class="podium-portrait" style="color:${color}"></div>`;
         return `<div class="podium-step p${r.position}">
           ${portrait}
           <div class="podium-pos">${r.position}</div>
@@ -3892,16 +4144,16 @@ function renderRaceReadout(container, race) {
         const posColor = isStatus
           ? (r.dns ? 'var(--text-muted)' : 'var(--red)')
           : (r.position === 1 ? 'var(--gold)' : r.position === 2 ? 'var(--silver)' : r.position === 3 ? 'var(--bronze)' : 'var(--text)');
-        return `<div class="result-row" style="grid-template-columns: 60px 44px 1fr 80px 80px 80px">
+        return `<div class="result-row" style="grid-template-columns: 60px 44px 1fr 80px 80px 80px;--team-color:${color}">
           <div style="font-family:var(--f-display);font-weight:800;font-size:${posSize};letter-spacing:0.05em;color:${posColor}">${posDisplay}</div>
           <div>${portrait}</div>
           <div class="result-driver">
             <span class="driver-cell-num" style="color:${color};font-family:var(--f-display);font-weight:700;width:28px">${drv.number}</span>
-            <div><div class="driver-cell-name">${esc(drv.name)}</div><div class="driver-cell-team">${flag(drv.country)} ${esc(teamName(season, drv.teamId))}</div></div>
+            <div><div class="driver-cell-name">${esc(drv.name)}</div><div class="driver-cell-team">${flagImg(drv.country, 14)} ${esc(teamName(season, drv.teamId))}</div></div>
           </div>
-          <div style="font-family:var(--f-display);font-weight:800;font-size:18px">${pts || '—'}</div>
+          <div style="font-family:var(--f-display);font-weight:800;font-size:18px;color:${pts ? color : 'var(--text-dim)'}">${pts || '—'}</div>
           <div style="font-family:var(--f-mono);font-size:11px;letter-spacing:0.1em">${statusLabel}</div>
-          <div style="display:flex;gap:4px;flex-wrap:wrap">${isPole ? '<span class="tag" style="color:var(--sec-yellow);border-color:var(--sec-yellow)">POLE</span>' : ''}${isFL ? '<span class="tag" style="color:var(--sec-purple);border-color:var(--sec-purple)">FL</span>' : ''}</div>
+          <div style="display:flex;gap:4px;flex-wrap:wrap">${isPole ? '<span class="tag" style="color:var(--sec-blue);border-color:var(--sec-blue);background:rgba(96,165,250,0.08)">POLE</span>' : ''}${isFL ? '<span class="tag" style="color:var(--sec-purple);border-color:var(--sec-purple);background:rgba(167,139,250,0.08)">FL</span>' : ''}</div>
         </div>`;
       }).join('')}
     </div>
@@ -4195,7 +4447,7 @@ function renderStats() {
     const { first, last } = splitName(drv.name);
     const photo = drv.photo
       ? `<div class="stat-leader-portrait" style="background-image:url('${esc(drv.photo)}')"></div>`
-      : `<div class="stat-leader-portrait">${esc(driverInitials(drv.name))}</div>`;
+      : `<div class="stat-leader-portrait"></div>`;
     const teamMark = team
       ? (team.logo
         ? `<div class="stat-leader-team-mark" style="background-image:url('${esc(team.logo)}')"></div>`
@@ -4286,7 +4538,7 @@ function renderStats() {
               const drv = s.driver; if (!drv) return '';
               const photoStat = drv.photo
                 ? `<div class="h2h-portrait" style="--team-color:${s.teamColor};background-image:url('${esc(drv.photo)}');width:36px;height:36px"></div>`
-                : `<div class="h2h-portrait" style="--team-color:${s.teamColor};width:36px;height:36px;font-size:11px">${esc(driverInitials(drv.name))}</div>`;
+                : `<div class="h2h-portrait" style="--team-color:${s.teamColor};width:36px;height:36px;font-size:11px"></div>`;
               return `<tr data-driver="${drv.id}">
                 <td style="font-family:var(--f-display);font-weight:800;color:var(--text-dim)">${i+1}</td>
                 <td>${photoStat}</td>
@@ -4450,7 +4702,7 @@ function renderStatsCharts(season, stats) {
     while (last5.length < 5) last5.unshift({ race: null, status: '—', cls: 'empty' });
     const portrait = drv.photo
       ? `<div class="last5-portrait" style="background-image:url('${esc(drv.photo)}');border-color:${s.teamColor}"></div>`
-      : `<div class="last5-portrait" style="border-color:${s.teamColor};color:${s.teamColor}">${esc(driverInitials(drv.name))}</div>`;
+      : `<div class="last5-portrait" style="border-color:${s.teamColor};color:${s.teamColor}"></div>`;
     return `<div class="last5-card" style="--accent:${s.teamColor}">
       ${portrait}
       <div class="last5-body">
@@ -4617,7 +4869,7 @@ function openDriverSeasonDetail(driverId) {
 
   const photoHTML = drv.photo
     ? `<div class="h2h-portrait" style="--team-color:${teamColor};background-image:url('${esc(drv.photo)}')"></div>`
-    : `<div class="h2h-portrait" style="--team-color:${teamColor}">${esc(driverInitials(drv.name))}</div>`;
+    : `<div class="h2h-portrait" style="--team-color:${teamColor}"></div>`;
 
   modal({
     title: `${esc(drv.name)} <span class="accent">· ${season.year}</span>`,
@@ -4695,7 +4947,7 @@ function openHeadToHead() {
         const head = (s, side) => {
           const photo = s.driver.photo
             ? `<div class="h2h-portrait" style="--team-color:${s.teamColor};background-image:url('${esc(s.driver.photo)}')"></div>`
-            : `<div class="h2h-portrait" style="--team-color:${s.teamColor}">${esc(driverInitials(s.driver.name))}</div>`;
+            : `<div class="h2h-portrait" style="--team-color:${s.teamColor}"></div>`;
           return `<div class="h2h-driver-head ${side}">
             ${photo}
             <div>
@@ -5629,6 +5881,49 @@ function matchTrackPresetForCode(code) {
   return null;
 }
 
+// Normalise a driver name for matching: lowercase, strip diacritics & punctuation,
+// collapse whitespace. So "Sergio Pérez" ≡ "sergio perez", "LECLERC, Charles" ≡
+// "leclerc charles". Used by matchDriverPresetForName below.
+function normalizeDriverName(s) {
+  return (s || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Find a driver preset (built-in or user custom) whose name matches a parsed name.
+// Priority: exact normalised match → unambiguous last-name match → null.
+// Returns { name, country, number, photo?, era, isCustom?, source } or null.
+function matchDriverPresetForName(name) {
+  const target = normalizeDriverName(name);
+  if (!target) return null;
+  const all = getEffectiveDriverPresets();
+
+  const exact = all.find(p => normalizeDriverName(p.name) === target);
+  if (exact) {
+    const source = exact.isCustom
+      ? 'custom driver preset'
+      : (exact.era === 'Current' ? 'driver preset (current)' : `driver preset (${exact.era || 'historic'})`);
+    return { ...exact, source };
+  }
+
+  const lastName = target.split(' ').pop();
+  if (lastName && lastName.length >= 3) {
+    const candidates = all.filter(p => normalizeDriverName(p.name).split(' ').pop() === lastName);
+    if (candidates.length === 1) {
+      const m = candidates[0];
+      const source = m.isCustom
+        ? 'custom driver preset (last name)'
+        : `driver preset (last name, ${m.era || 'historic'})`;
+      return { ...m, source };
+    }
+  }
+  return null;
+}
+
 // Same-row team-name normalisation. F1.com uses a few different spellings.
 // Maps the raw text → canonical team name, short code, and a default colour.
 const F1_TEAM_NORMALIZER = {
@@ -5882,32 +6177,43 @@ function buildSeasonFromImport(parsed, opts) {
     season.teams.push(teamObj);
   }
 
-  // 2. Build drivers — assign a number based on import position. Country left blank.
+  // 2. Build drivers — match each parsed driver against the user's DRIVER PRESET
+  // library (built-in + customs). On match, pull through country, number, and
+  // photo. Unmatched drivers fall back to incremental numbers and blank fields.
   const driverIdByImportName = {};
+  const presetByDriverIdx = parsed.drivers.map(d => matchDriverPresetForName(d.name));
+  const usedNumbers = new Set();
+  presetByDriverIdx.forEach(p => { if (p?.number) usedNumbers.add(p.number); });
   let nextNum = 1;
-  for (const d of parsed.drivers) {
+  const allocNumber = () => {
+    while (usedNumbers.has(nextNum) || nextNum > 99) nextNum++;
+    usedNumbers.add(nextNum);
+    return nextNum++;
+  };
+  parsed.drivers.forEach((d, i) => {
     const teamObj = teamByKey[d.team.toLowerCase().trim()];
+    const preset = presetByDriverIdx[i];
     const driverObj = {
       id: uid(),
-      name: d.name,
-      number: nextNum++,
-      country: '',
+      name: preset?.name || d.name,
+      number: preset?.number || allocNumber(),
+      country: preset?.country || '',
       teamId: teamObj?.id || null,
-      photo: '',
+      photo: preset?.photo || '',
       dsq: false,
     };
     driverIdByImportName[d.name] = driverObj.id;
     season.drivers.push(driverObj);
-  }
+  });
 
   // 3. Build races — one per header code (or per raceCodes override).
   // Simple resolution: compare each pasted code to the country code in each
   // calendar preset's races. Direct string match — no alias translation.
   // If no calendar preset has that country code, fall back to F1 built-in map,
   // then generic.
-  const headerCodes = (opts.raceCodes && opts.raceCodes.length === parsed.headers.length)
-    ? opts.raceCodes
-    : parsed.headers;
+  // Build per-race header codes — caller may supply a full or partial array.
+  // For any index without a user-supplied code, fall back to the parsed placeholder.
+  const headerCodes = parsed.headers.map((h, i) => (opts.raceCodes && opts.raceCodes[i]) || h);
 
   // Build a lookup index from CALENDAR PRESETS (full saved season calendars).
   // Selected preset wins on conflicts.
@@ -5940,9 +6246,22 @@ function buildSeasonFromImport(parsed, opts) {
     const codeKey = (code || '').toUpperCase().trim();
     // Step 1: direct match against calendar presets' country codes
     let meta = codeIndex[codeKey];
-    // Step 2: hardcoded F1 map (legacy fallback for codes the calendar doesn't have)
+    // Step 2: match against the user's TRACK PRESET library (built-in + custom).
+    // Handles 3-letter aliases (SAU↔KSA, MON↔MCO, SIN↔SGP, etc.) and ambiguity
+    // hints (MIA vs LVG vs USA, ITA vs IMO). This is the main resolution path.
+    if (!meta) {
+      const tp = matchTrackPresetForCode(codeKey);
+      if (tp) meta = {
+        name: tp.name,
+        circuit: tp.circuit,
+        country: tp.country,
+        sprint: !!tp.sprint,
+        flagImage: tp.flagImage || '',
+      };
+    }
+    // Step 3: hardcoded F1 map (legacy fallback for codes nothing else covers)
     if (!meta) meta = F1_RACE_CODE_MAP[codeKey];
-    // Step 3: generic fallback
+    // Step 4: generic fallback
     if (!meta) meta = { name: `${code} Grand Prix`, circuit: code, country: code };
 
     return {
@@ -5953,7 +6272,6 @@ function buildSeasonFromImport(parsed, opts) {
       country: meta.country,
       flagImage: meta.flagImage || '',
       sprint: hadSprint[idx] || !!meta.sprint,
-      date: '',
       completed: false,
       results: [],
       sprintResults: [],
@@ -6073,7 +6391,7 @@ Red Bull
       <div class="field">
         <label>Race calendar codes <span style="font-weight:400;color:var(--text-muted);font-family:var(--f-body)">— space-separated, in calendar order</span></label>
         <input type="text" id="imp-races" placeholder="e.g. BHR SAU AUS AZE MIA MON ESP CAN AUT GBR HUN BEL NED ITA SIN JPN QAT USA MXC SAP LVG ABU" style="font-family:var(--f-mono);font-size:11px">
-        <span class="field-help">Each pasted code is matched against the country code of each race in your saved calendar presets. If your preset has a race with country "BHR", pasting "BHR" pulls in that race's name, circuit, and sprint flag. Unmatched codes fall back to the F1 built-in map, then to generic "R1, R2…".</span>
+        <span class="field-help">Each code is matched in this order: (1) selected calendar preset's race country codes, (2) your <b>track preset library</b> (built-in circuits + your customs, with alias handling for SAU↔KSA, MON↔MCO, SIN↔SGP, etc.), (3) F1 built-in map, (4) generic "Grand Prix" fallback. A match pulls in the track's name, circuit, sprint flag, and uploaded flag image.</span>
       </div>
       <div id="imp-preview"></div>`,
     footer: `<button class="btn btn-ghost" data-act="cancel">Cancel</button><button class="btn btn-ghost" data-act="parse">⚙ PARSE</button><button class="btn btn-primary" data-act="ok" disabled>Build Season</button>`,
@@ -6125,9 +6443,13 @@ Red Bull
         parsed = r;
         okBtn.disabled = false;
 
-        // If user supplied race codes AND count matches, use those for the preview header
+        // If user supplied race codes, overlay them onto the headers position-by-position.
+        // Partial input works: type "BHR" alone and only R1 gets that code; R2..Rn keep
+        // the placeholder. Extra codes beyond the race count are ignored.
         const userCodes = racesInp.value.trim().split(/\s+/).filter(Boolean);
-        const previewHeaders = (userCodes.length === r.headers.length) ? userCodes : r.headers;
+        const previewHeaders = userCodes.length
+          ? r.headers.map((h, i) => userCodes[i] || h)
+          : r.headers;
 
         // Resolve each header code against (1) selected preset, (2) all presets, (3) F1 map
         // — same logic as buildSeasonFromImport, mirrored here so preview matches reality.
@@ -6143,34 +6465,45 @@ Red Bull
         if (selectedPid) indexPreset((state.calendarPresets || []).find(p => p.id === selectedPid));
         (state.calendarPresets || []).forEach(p => indexPreset(p));
 
-        // For each preview code, work out where it resolved.
-        // Simple logic: direct match against calendar preset country codes,
-        // then F1 hardcoded map fallback, then generic fallback. No alias translation.
+        // For each preview code, work out where it resolved. Order mirrors
+        // buildSeasonFromImport so the preview matches the actual outcome.
         const resolutions = previewHeaders.map(code => {
           const k = (code || '').toUpperCase().trim();
           // Step 1: direct match against calendar preset country codes
           if (codeIndex[k]) return { code, name: codeIndex[k].name, source: `calendar preset: ${codeIndex[k].source}` };
-          // Step 2: F1 hardcoded map
+          // Step 2: track preset library (built-in + user customs, with aliases)
+          const tp = matchTrackPresetForCode(k);
+          if (tp) return { code, name: tp.name, source: tp.source };
+          // Step 3: F1 hardcoded map
           if (F1_RACE_CODE_MAP[k]) return { code, name: F1_RACE_CODE_MAP[k].name, source: 'F1 hardcoded map' };
-          // Step 3: generic fallback
+          // Step 4: generic fallback
           return { code, name: `${code} Grand Prix`, source: 'fallback' };
         });
         const fromCalPreset = resolutions.filter(x => x.source.startsWith('calendar preset')).length;
+        const fromTrackPreset = resolutions.filter(x => x.source.startsWith('track preset') || x.source === 'custom track preset').length;
         const fromF1Map = resolutions.filter(x => x.source === 'F1 hardcoded map').length;
         const fallback = resolutions.filter(x => x.source === 'fallback').length;
+
+        // Resolve each driver against the DRIVER PRESET library (built-in + custom).
+        const driverResolutions = r.drivers.map(d => matchDriverPresetForName(d.name));
+        const driversMatched = driverResolutions.filter(Boolean).length;
+        const driversUnmatched = r.drivers.length - driversMatched;
 
         const completedRaces = r.headers.length;
         const totalResults = r.drivers.reduce((sum, d) => sum + d.cells.filter(Boolean).length, 0);
         const totalSprintPoints = r.drivers.reduce((sum, d) => sum + d.cells.reduce((s, c) => s + (c?.sprintPoints || 0), 0), 0);
         const totalPoles = r.drivers.reduce((sum, d) => sum + d.cells.filter(c => c?.pole).length, 0);
 
-        // Resolution status line — tells the user how many codes matched where
+        // Resolution status line — tells the user how many codes / drivers matched where
         const statusParts = [];
-        if (fromCalPreset)    statusParts.push(`<span style="color:var(--green,#10b981)">● ${fromCalPreset} from calendar preset</span>`);
-        if (fromF1Map)        statusParts.push(`<span style="color:var(--sec-blue,#60a5fa)">● ${fromF1Map} from F1 map</span>`);
-        if (fallback)         statusParts.push(`<span style="color:var(--sec-yellow,#f59e0b)">● ${fallback} fell back to generic "Grand Prix" name</span>`);
-        const resolutionStatus = previewHeaders.length ? `
-          <div style="font-family:var(--f-mono);font-size:10px;color:var(--text-muted);margin-bottom:10px;padding:8px 12px;background:var(--bg-elev);border-radius:6px;border:1px solid var(--border-dim)">
+        if (fromCalPreset)    statusParts.push(`<span style="color:var(--green,#10b981)">● ${fromCalPreset} race${fromCalPreset === 1 ? '' : 's'} from calendar preset</span>`);
+        if (fromTrackPreset)  statusParts.push(`<span style="color:var(--sec-cyan,#00d9ff)">● ${fromTrackPreset} race${fromTrackPreset === 1 ? '' : 's'} from track preset library</span>`);
+        if (fromF1Map)        statusParts.push(`<span style="color:var(--sec-blue,#60a5fa)">● ${fromF1Map} race${fromF1Map === 1 ? '' : 's'} from F1 map</span>`);
+        if (fallback)         statusParts.push(`<span style="color:var(--sec-yellow,#f59e0b)">● ${fallback} race${fallback === 1 ? '' : 's'} fell back to generic name</span>`);
+        if (driversMatched)   statusParts.push(`<span style="color:var(--sec-purple,#a78bfa)">● ${driversMatched} driver${driversMatched === 1 ? '' : 's'} from preset library</span>`);
+        if (driversUnmatched) statusParts.push(`<span style="color:var(--text-muted)">● ${driversUnmatched} driver${driversUnmatched === 1 ? '' : 's'} unmatched (blank country/photo)</span>`);
+        const resolutionStatus = statusParts.length ? `
+          <div style="font-family:var(--f-mono);font-size:10px;color:var(--text-muted);margin-bottom:10px;padding:8px 12px;background:var(--bg-elev);border-radius:6px;border:1px solid var(--border-dim);line-height:1.8">
             ${statusParts.join(' · ')}
           </div>` : '';
 
@@ -6196,10 +6529,15 @@ Red Bull
                   </tr>
                 </thead>
                 <tbody>
-                  ${r.drivers.map(d => `
+                  ${r.drivers.map((d, dIdx) => {
+                    const dp = driverResolutions[dIdx];
+                    const matchBadge = dp
+                      ? `<span class="cf-img" style="display:inline-flex;align-items:center;margin-right:6px;width:auto;height:auto;border:none;box-shadow:none;background:transparent;padding:0">${flagImg(dp.country, 16)}</span><span title="Matched to ${esc(dp.source)} → #${dp.number}${dp.country ? ' · ' + esc(dp.country) : ''}" style="font-family:var(--f-mono);font-size:8px;letter-spacing:0.14em;color:var(--sec-purple);padding:2px 5px;border:1px solid currentColor;border-radius:2px;margin-left:6px;vertical-align:middle">PRESET #${dp.number}</span>`
+                      : '<span title="No preset match — country &amp; photo will be blank" style="font-family:var(--f-mono);font-size:8px;letter-spacing:0.14em;color:var(--text-dim);padding:2px 5px;border:1px dashed currentColor;border-radius:2px;margin-left:6px;vertical-align:middle">NO MATCH</span>';
+                    return `
                     <tr style="border-bottom:1px solid var(--border-dim)">
                       <td style="padding:6px 10px;color:var(--text-muted)">${d.pos}</td>
-                      <td style="padding:6px 10px;font-weight:600">${esc(d.name)}</td>
+                      <td style="padding:6px 10px;font-weight:600;white-space:nowrap">${matchBadge}${esc(d.name)}</td>
                       <td style="padding:6px 10px;color:var(--text-soft)">${esc(d.team)}</td>
                       <td style="padding:6px 10px;text-align:right;font-weight:700">${d.points}</td>
                       ${d.cells.map(c => {
@@ -6221,13 +6559,13 @@ Red Bull
                         }
                         return `<td style="padding:6px;text-align:center;color:${col};font-weight:600">${txt}</td>`;
                       }).join('')}
-                    </tr>
-                  `).join('')}
+                    </tr>`;
+                  }).join('')}
                 </tbody>
               </table>
             </div>
             <div class="field-help" style="margin-top:10px">
-              Teams will be auto-created (with default colors you can edit). Driver countries will be blank — fill in via driver edit. ${userCodes.length === r.headers.length ? 'Race codes mapped to real circuits.' : 'Optionally fill the race calendar field above to get real circuit names.'}
+              ${driversMatched ? `<span style="color:var(--sec-purple)">●</span> Matched drivers will inherit their preset's <b>real F1 number</b>, <b>country</b>, and <b>photo</b> (if a custom preset has one). ` : ''}Teams are auto-created with default colors you can edit. ${userCodes.length === r.headers.length ? 'Race codes mapped to real circuits.' : 'Optionally fill the race calendar field above to get real circuit names.'}
             </div>
           </div>`;
       };
@@ -6243,7 +6581,11 @@ Red Bull
           const name = $('#imp-name', root).value;
           const pointsSystemId = $('#imp-points', root).value;
           const userCodes = racesInp.value.trim().split(/\s+/).filter(Boolean);
-          const raceCodes = (userCodes.length === parsed.headers.length) ? userCodes : null;
+          // Partial-overlay: typed codes fill positions left-to-right, missing
+          // positions keep the parsed placeholder (R1, R2, …). Matches the preview.
+          const raceCodes = userCodes.length
+            ? parsed.headers.map((h, i) => userCodes[i] || h)
+            : null;
           const calendarPresetId = calSel.value || null;
           buildSeasonFromImport(parsed, { year, name, pointsSystemId, raceCodes, calendarPresetId });
           close();
@@ -6379,9 +6721,9 @@ function openPresetEditor(kind, existing, onSaved) {
       <div class="field"><label>Era</label><select id="pe-era">${eraOptions}</select></div>
     </div>
     <div class="field">
-      <label>Driver Photo</label>
+      <label>Driver Photos <span style="font-weight:400;color:var(--text-muted);font-family:var(--f-body);text-transform:none;letter-spacing:0">— add as many as you like (career eras, helmet variants, etc.)</span></label>
       <div id="pe-photo-mount"></div>
-      <span class="field-help">Photo is saved with the preset and copied onto every driver signed from it.</span>
+      <span class="field-help">Each driver signed from this preset can pick which photo to use. Mark one as <b>default</b> for auto-import (e.g. F1 paste imports).</span>
     </div>`;
 
   const teamFields = `
@@ -6462,7 +6804,11 @@ function openPresetEditor(kind, existing, onSaved) {
       };
 
       if (isDriver) {
-        mountUpload('pe-photo-mount', data.photo || '', (v) => { data.photo = v; });
+        data.photos = presetPhotosList(data);
+        mountPhotoGallery($('#pe-photo-mount', root), data.photos, (next) => {
+          data.photos = next;
+          data.photo = (next.find(p => p.isDefault) || next[0])?.url || '';
+        });
       } else if (isTeam) {
         mountUpload('pe-logo-mount', data.logo || '', (v) => { data.logo = v; });
         const cp = $('#pe-color', root);
@@ -6517,7 +6863,9 @@ function openPresetEditor(kind, existing, onSaved) {
         if (!name) return toast('Name required', 'error');
         if (isDriver) {
           const number = Math.max(1, Math.min(99, Number($('#pe-number', root).value) || 1));
-          const updated = { name, country, era, number, photo: data.photo || '' };
+          const photos = data.photos || [];
+          const defaultPhoto = (photos.find(p => p.isDefault) || photos[0])?.url || '';
+          const updated = { name, country, era, number, photos, photo: defaultPhoto };
           if (isEdit) savePresetEdit('driver', originalKey, updated);
           else addCustomPreset('driver', updated);
         } else if (isTeam) {
@@ -6604,25 +6952,28 @@ function openDriverPresetSearch() {
           const already = present.has(p.name.toLowerCase().trim());
           const portrait = p.photo
             ? `<div class="preset-portrait" style="background-image:url('${esc(p.photo)}')"></div>`
-            : `<div class="preset-portrait preset-portrait-fallback">${esc(driverInitials(p.name))}</div>`;
+            : `<div class="preset-portrait preset-portrait-fallback preset-portrait-driver"></div>`;
           const badges = [];
           if (p.isCustom) badges.push('<span class="preset-badge custom">MINE</span>');
           else if (state.presetOverrides?.drivers?.[p.presetKey]) badges.push('<span class="preset-badge edited">EDITED</span>');
           return `<div class="preset-row ${already ? 'added' : ''}" data-idx="${i}">
             ${portrait}
             <div class="preset-num">${p.number}</div>
-            <div>
+            <div class="preset-info">
               <div class="preset-name">${esc(p.name)} ${badges.join(' ')}</div>
               <div class="preset-meta">${esc(p.era)}</div>
             </div>
-            <div class="preset-flag">${flag(p.country)} ${esc(p.country || '')}</div>
-            <button class="preset-edit-btn" data-edit="${i}" title="Edit preset">✎</button>
-            <button class="preset-add-btn">${already ? '✓ ADDED' : '+ SIGN'}</button>
+            <div class="preset-flag">${flagImg(p.country, 18)} <span>${esc(p.country || '')}</span></div>
+            <button class="preset-edit-btn" data-edit="${i}" title="Edit preset" aria-label="Edit">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+            </button>
+            <button class="preset-add-btn ${already ? 'is-added' : ''}">
+              <span class="preset-add-btn-label">${already ? '✓ ADDED' : '+ SIGN'}</span>
+            </button>
           </div>`;
         }).join('');
         $$('.preset-row', list).forEach(row => {
           row.onclick = (ev) => {
-            // Edit click handled separately
             if (ev.target.closest('[data-edit]')) return;
             if (row.classList.contains('added')) return;
             const p = items[Number(row.dataset.idx)];
@@ -6633,11 +6984,15 @@ function openDriverPresetSearch() {
             season.teams.forEach(t => teamCounts[t.id] = 0);
             season.drivers.forEach(d => { if (d.teamId) teamCounts[d.teamId] = (teamCounts[d.teamId] || 0) + 1; });
             const freeTeam = season.teams.find(t => teamCounts[t.id] < 2) || season.teams[0];
-            // Photo from preset is copied onto the new driver
-            addDriver({ name: p.name, number: num, country: p.country, teamId: freeTeam.id, photo: p.photo || '' });
-            toast(`${p.name} signed`, 'success');
-            renderList();
-            renderMain();
+            const sign = (photoUrl) => {
+              addDriver({ name: p.name, number: num, country: p.country, teamId: freeTeam.id, photo: photoUrl || '' });
+              toast(`${p.name} signed`, 'success');
+              renderList();
+              renderMain();
+            };
+            const photos = presetPhotosList(p);
+            if (photos.length > 1) pickPresetPhoto(p, sign);
+            else sign(photos[0]?.url || '');
           };
         });
         $$('[data-edit]', list).forEach(b => b.onclick = (ev) => {
@@ -6706,16 +7061,20 @@ function openTeamPresetSearch() {
           const badges = [];
           if (p.isCustom) badges.push('<span class="preset-badge custom">MINE</span>');
           else if (state.presetOverrides?.teams?.[p.presetKey]) badges.push('<span class="preset-badge edited">EDITED</span>');
-          return `<div class="preset-row ${already ? 'added' : ''}" data-idx="${i}">
+          return `<div class="preset-row ${already ? 'added' : ''}" data-idx="${i}" style="--row-accent:${p.color}">
             ${swatch}
-            <div class="preset-num" style="color:${p.color};font-size:13px">${esc(p.short)}</div>
-            <div>
+            <div class="preset-num" style="color:${p.color}">${esc(p.short)}</div>
+            <div class="preset-info">
               <div class="preset-name">${esc(p.name)} ${badges.join(' ')}</div>
               <div class="preset-meta">${esc(p.era)}</div>
             </div>
-            <div class="preset-flag">${flag(p.country)} ${esc(p.country || '')}</div>
-            <button class="preset-edit-btn" data-edit="${i}" title="Edit preset">✎</button>
-            <button class="preset-add-btn">${already ? '✓ ADDED' : '+ ADD'}</button>
+            <div class="preset-flag">${flagImg(p.country, 18)} <span>${esc(p.country || '')}</span></div>
+            <button class="preset-edit-btn" data-edit="${i}" title="Edit preset" aria-label="Edit">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+            </button>
+            <button class="preset-add-btn ${already ? 'is-added' : ''}">
+              <span class="preset-add-btn-label">${already ? '✓ ADDED' : '+ ADD'}</span>
+            </button>
           </div>`;
         }).join('');
         $$('.preset-row', list).forEach(row => {
@@ -6794,24 +7153,28 @@ function openTrackPresetSearch() {
         }
         list.innerHTML = items.map((p, i) => {
           const already = present.has(p.name.toLowerCase().trim() + '|' + (p.country || '').toUpperCase());
-          const flagBlock = p.flagImage
-            ? `<div class="preset-portrait" style="background-image:url('${esc(p.flagImage)}');border-color:var(--border-hi);background-size:cover"></div>`
-            : `<div class="preset-portrait preset-portrait-fallback" style="font-size:20px;line-height:1">${flag(p.country)}</div>`;
+          const flagUrl = p.flagImage || flagSvgUrl(p.country);
+          const flagBlock = flagUrl
+            ? `<div class="preset-portrait preset-portrait-flag" style="background-image:url('${esc(flagUrl)}')"></div>`
+            : `<div class="preset-portrait preset-portrait-flag preset-portrait-fallback">${esc((p.country || '?').slice(0,3))}</div>`;
           const badges = [];
           if (p.isCustom) badges.push('<span class="preset-badge custom">MINE</span>');
           else if (state.presetOverrides?.tracks?.[p.presetKey]) badges.push('<span class="preset-badge edited">EDITED</span>');
           if (p.sprint) badges.push('<span class="preset-badge sprint">SPR</span>');
           const lengthStr = p.length ? `${Number(p.length).toFixed(3)} km` : '';
-          return `<div class="preset-row ${already ? 'added' : ''}" data-idx="${i}">
+          return `<div class="preset-row preset-row-track ${already ? 'added' : ''}" data-idx="${i}">
             ${flagBlock}
-            <div class="preset-num" style="font-size:10px;font-family:var(--f-mono);color:var(--text-dim)">${esc(p.country || '')}</div>
-            <div>
+            <div class="preset-num preset-num-country">${esc(p.country || '')}</div>
+            <div class="preset-info">
               <div class="preset-name">${esc(p.name)} ${badges.join(' ')}</div>
               <div class="preset-meta">${esc(p.circuit || '')}${lengthStr ? ' · ' + lengthStr : ''} · ${esc(p.era)}</div>
             </div>
-            <div class="preset-flag"></div>
-            <button class="preset-edit-btn" data-edit="${i}" title="Edit preset">✎</button>
-            <button class="preset-add-btn">${already ? '✓ ADDED' : '+ ADD'}</button>
+            <button class="preset-edit-btn" data-edit="${i}" title="Edit preset" aria-label="Edit">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+            </button>
+            <button class="preset-add-btn ${already ? 'is-added' : ''}">
+              <span class="preset-add-btn-label">${already ? '✓ ADDED' : '+ ADD'}</span>
+            </button>
           </div>`;
         }).join('');
         $$('.preset-row', list).forEach(row => {
@@ -8176,3 +8539,214 @@ function renderAll() {
 
 // First-run friendly: if no saves at all and we're in 'home' view, leave hero visible.
 // If saves exist but user closed without active selection, that's fine.
+
+/* =====================================================
+   P1 ENHANCEMENT LAYER v4.0 — Cinematic micro-interactions
+   Purely additive. Runs after the app boots and re-attaches
+   on every #app / #modal-root mutation.
+   ===================================================== */
+(function P1Enhance() {
+  'use strict';
+  if (window.__p1Enhanced) return;
+  window.__p1Enhanced = true;
+
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  const aura = document.createElement('div');
+  aura.className = 'p1-aura';
+  aura.setAttribute('aria-hidden', 'true');
+  document.body.appendChild(aura);
+
+  if (!reduced) {
+    const sparks = document.createElement('div');
+    sparks.className = 'p1-sparks';
+    sparks.setAttribute('aria-hidden', 'true');
+    for (let i = 0; i < 14; i++) {
+      const s = document.createElement('span');
+      s.className = 'p1-spark';
+      s.style.left = (Math.random() * 100) + 'vw';
+      s.style.animationDelay = (Math.random() * 12) + 's';
+      s.style.animationDuration = (10 + Math.random() * 12) + 's';
+      sparks.appendChild(s);
+    }
+    document.body.appendChild(sparks);
+  }
+
+  const SPOT_SEL = '.universe-card, .season-card, .driver-card, .team-card, .save-card, ' +
+                   '.stat-leader-card, .record-tile, .dash-stat-card.leader, .signin-card, ' +
+                   '.charts-section, .dash-block, .dash-hero';
+  function onSpotMove(e) {
+    const el = e.currentTarget;
+    const r = el.getBoundingClientRect();
+    const x = ((e.clientX - r.left) / r.width) * 100;
+    const y = ((e.clientY - r.top) / r.height) * 100;
+    el.style.setProperty('--mx', x + '%');
+    el.style.setProperty('--my', y + '%');
+  }
+  function onSpotLeave(e) {
+    const el = e.currentTarget;
+    el.style.setProperty('--mx', '50%');
+    el.style.setProperty('--my', '-100%');
+    el.style.removeProperty('--tx');
+    el.style.removeProperty('--ty');
+  }
+  function attachSpotlight(root) {
+    root.querySelectorAll(SPOT_SEL).forEach(el => {
+      if (el.dataset.p1Spot) return;
+      el.dataset.p1Spot = '1';
+      el.addEventListener('pointermove', onSpotMove, { passive: true });
+      el.addEventListener('pointerleave', onSpotLeave, { passive: true });
+    });
+  }
+
+  function onTiltMove(e) {
+    const el = e.currentTarget;
+    const r = el.getBoundingClientRect();
+    const dx = ((e.clientX - r.left) / r.width)  - 0.5;
+    const dy = ((e.clientY - r.top)  / r.height) - 0.5;
+    el.style.setProperty('--tx', (dy * -5).toFixed(2) + 'deg');
+    el.style.setProperty('--ty', (dx *  5).toFixed(2) + 'deg');
+  }
+  function attachTilt(root) {
+    if (reduced) return;
+    root.querySelectorAll('.driver-card').forEach(el => {
+      if (el.dataset.p1Tilt) return;
+      el.dataset.p1Tilt = '1';
+      el.addEventListener('pointermove', onTiltMove, { passive: true });
+    });
+  }
+
+  const TICK_SEL = '.dash-stat-num, .save-stat-num, .record-tile-value, .stat-leader-bignum-num, ' +
+                   '.driver-card .driver-stat-num';
+  let tickersAllowed = true;
+  function tickNumbers(root) {
+    if (reduced || !tickersAllowed) return;
+    root.querySelectorAll(TICK_SEL).forEach(el => {
+      if (el.dataset.p1Ticked) return;
+      const raw = (el.textContent || '').trim();
+      const match = raw.match(/^(-?\d+(?:[.,]\d+)?)(.*)$/);
+      if (!match) return;
+      const target = parseFloat(match[1].replace(',', ''));
+      const suffix = match[2] || '';
+      if (!isFinite(target) || Math.abs(target) < 1) return;
+      const r = el.getBoundingClientRect();
+      if (r.bottom < 0 || r.top > (window.innerHeight || 0)) return;
+      el.dataset.p1Ticked = '1';
+      const isFloat = /[.,]/.test(match[1]);
+      const dur = Math.min(700, 260 + Math.min(Math.abs(target), 400) * 1.1);
+      const start = performance.now();
+      el.textContent = (isFloat ? '0.0' : '0') + suffix;
+      el.classList.add('p1-tick-active');
+      function step(now) {
+        const p = Math.min(1, (now - start) / dur);
+        const eased = 1 - Math.pow(1 - p, 3);
+        const v = target * eased;
+        el.textContent = (isFloat ? v.toFixed(1) : Math.round(v)) + suffix;
+        if (p < 1) requestAnimationFrame(step);
+        else {
+          el.textContent = raw;
+          setTimeout(() => el.classList.remove('p1-tick-active'), 350);
+        }
+      }
+      requestAnimationFrame(step);
+    });
+  }
+
+  const REVEAL_SEL = '.f1-matrix-row, .standings-row, .f1-table-row, .driver-card, .team-card, ' +
+                     '.record-tile, .universe-card, .save-card, .stat-leader-card, ' +
+                     '.record-detail-row, .rc-row, .race-meta-cell, .gp-row';
+  const revealObs = ('IntersectionObserver' in window)
+    ? new IntersectionObserver(entries => {
+        entries.forEach(e => {
+          if (e.isIntersecting) {
+            e.target.classList.add('p1-revealed');
+            revealObs.unobserve(e.target);
+          }
+        });
+      }, { threshold: 0.06, rootMargin: '0px 0px -30px 0px' })
+    : null;
+  function attachReveal(root) {
+    if (!revealObs || reduced) return;
+    const vh = window.innerHeight || 0;
+    root.querySelectorAll(REVEAL_SEL).forEach(el => {
+      if (el.dataset.p1Reveal) return;
+      el.dataset.p1Reveal = '1';
+      const r = el.getBoundingClientRect();
+      if (r.top < vh && r.bottom > 0) {
+        el.classList.add('p1-reveal', 'p1-revealed');
+        return;
+      }
+      el.classList.add('p1-reveal');
+      revealObs.observe(el);
+    });
+  }
+
+  document.addEventListener('pointerdown', (e) => {
+    const btn = e.target.closest('.btn, .tab, .race-session-tab');
+    if (!btn) return;
+    if (getComputedStyle(btn).position === 'static') btn.style.position = 'relative';
+    const r = btn.getBoundingClientRect();
+    const dot = document.createElement('span');
+    dot.className = 'p1-ripple';
+    dot.style.left = (e.clientX - r.left) + 'px';
+    dot.style.top  = (e.clientY - r.top)  + 'px';
+    btn.appendChild(dot);
+    setTimeout(() => dot.remove(), 700);
+  }, { passive: true });
+
+  let fadeTimer = null;
+  function flashFade() {
+    const app = document.getElementById('app');
+    if (!app) return;
+    app.classList.add('p1-just-rendered');
+    clearTimeout(fadeTimer);
+    fadeTimer = setTimeout(() => app.classList.remove('p1-just-rendered'), 480);
+  }
+
+  function refresh(root) {
+    const r = root || document;
+    attachSpotlight(r);
+    attachTilt(r);
+    attachReveal(r);
+    tickNumbers(r);
+  }
+
+  function bootstrap() {
+    refresh();
+    setTimeout(() => { tickersAllowed = false; }, 1200);
+
+    const app = document.getElementById('app');
+    if (app) {
+      let pendingFade = false;
+      new MutationObserver(() => {
+        if (pendingFade) return;
+        pendingFade = true;
+        requestAnimationFrame(() => {
+          pendingFade = false;
+          flashFade();
+        });
+      }).observe(app, { childList: true, subtree: false });
+
+      let pendingRefresh = false;
+      new MutationObserver(() => {
+        if (pendingRefresh) return;
+        pendingRefresh = true;
+        requestAnimationFrame(() => {
+          pendingRefresh = false;
+          refresh(app);
+        });
+      }).observe(app, { childList: true, subtree: true });
+    }
+    const modalRoot = document.getElementById('modal-root');
+    if (modalRoot) {
+      new MutationObserver(() => requestAnimationFrame(() => refresh(modalRoot)))
+        .observe(modalRoot, { childList: true, subtree: true });
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', bootstrap);
+  } else {
+    bootstrap();
+  }
+})();
