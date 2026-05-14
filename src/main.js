@@ -3410,30 +3410,65 @@ function renderCalendar() {
   } else { // teams
     const stand = calcTeamStandings(season);
     inner = stand.length ? `
-      <div class="f1-table-shell">
-        <div class="f1-table f1-team-table">
-          <div class="f1-table-head">
-            <div class="num">POS</div>
-            <div>TEAM</div>
-            <div>NATIONALITY</div>
-            <div class="num">PTS</div>
-            <div></div>
-          </div>
-          ${stand.map((row, i) => {
-            const team = season.teams.find(t => t.id === row.teamId); if (!team) return '';
-            return `
-              <div class="f1-table-row" data-team="${team.id}">
-                <div class="f1-num pos">${i+1}</div>
-                <div class="f1-gp">
-                  <span class="f1-team-mark large" style="background:${team.color}"></span>
-                  <span class="f1-gp-name">${esc(team.name)}${row.championshipDsq ? ' <span class="f1-tag dsq">DSQ</span>' : ''}</span>
-                </div>
-                <div class="f1-date">${flag(team.country)} ${esc(team.country || '')}</div>
-                <div class="f1-num pts">${row.points}</div>
-                <div></div>
-              </div>`;
-          }).join('')}
-        </div>
+      <div class="team-standings-shell">
+        <table class="team-standings-table">
+          <thead>
+            <tr>
+              <th class="ts-col-pos">#</th>
+              <th class="ts-col-team">Constructor</th>
+              <th class="ts-col-ctry">Nationality</th>
+              <th class="ts-col-drvs">Line-up</th>
+              <th class="ts-col-pts">Pts</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${stand.map((row, i) => {
+              const team = season.teams.find(t => t.id === row.teamId); if (!team) return '';
+              const drivers = season.drivers.filter(d => d.teamId === team.id).sort((a, b) => a.number - b.number);
+              const tc = team.color || '#6b7280';
+              const logoBlock = team.logo
+                ? `<div class="ts-team-logo" style="background-image:url('${esc(team.logo)}');border-color:${tc}"></div>`
+                : `<div class="ts-team-logo ts-team-logo-fallback" style="border-color:${tc};color:${tc}">${esc((team.short || team.name || '?').slice(0,3).toUpperCase())}</div>`;
+              const rankCls = i === 0 ? 'crown' : i === 1 ? 'silver' : i === 2 ? 'bronze' : '';
+              const rankCell = i === 0
+                ? '<span class="ts-rank-badge crown" aria-label="Constructors leader"></span>'
+                : `<span class="ts-rank-badge ${rankCls}">${i + 1}</span>`;
+              const driversBlock = drivers.length ? `
+                <div class="ts-driver-stack">
+                  ${drivers.map(d => {
+                    const photoStyle = d.photo ? `background-image:url('${esc(d.photo)}')` : '';
+                    return `<div class="ts-driver-chip" title="${esc(d.name)} · #${d.number || '–'}" style="--team-color:${tc}">
+                      <div class="ts-driver-photo" style="${photoStyle}"></div>
+                      <div class="ts-driver-meta">
+                        <span class="ts-driver-num" style="color:${tc}">${d.number || '–'}</span>
+                        <span class="ts-driver-last">${esc(splitName(d.name).last)}</span>
+                      </div>
+                    </div>`;
+                  }).join('')}
+                </div>` : '<span class="ts-drvs-empty">No drivers signed</span>';
+              return `
+                <tr class="team-standings-row ${row.championshipDsq ? 'is-dsq' : ''}" data-team="${team.id}" style="--team-color:${tc}">
+                  <td class="ts-pos">${rankCell}</td>
+                  <td class="ts-team">
+                    <div class="ts-team-cell">
+                      ${logoBlock}
+                      <div class="ts-team-info">
+                        <div class="ts-team-name">${esc(team.name)}${row.championshipDsq ? '<span class="ts-team-dsq-tag">DSQ</span>' : ''}</div>
+                        ${team.short ? `<div class="ts-team-short" style="color:${tc}">${esc(team.short)}</div>` : ''}
+                      </div>
+                    </div>
+                  </td>
+                  <td class="ts-ctry">
+                    ${team.country
+                      ? `<span class="ts-ctry-cell">${flagImg(team.country, 22)}<span class="ts-ctry-code">${esc(team.country)}</span></span>`
+                      : '<span class="ts-ctry-empty">—</span>'}
+                  </td>
+                  <td class="ts-drvs">${driversBlock}</td>
+                  <td class="ts-pts">${row.points}</td>
+                </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
       </div>` : `<div class="empty"><div class="empty-headline">NO TEAMS</div><div class="empty-sub">Add constructors via the team preset library or "+ NEW CONSTRUCTOR".</div></div>`;
   }
 
@@ -3619,6 +3654,17 @@ function renderRace() {
             <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px;vertical-align:-2px"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
             EDIT INFO
           </button>
+          ${race.completed ? (
+            _raceEditingResults === race.id
+              ? `<button class="btn btn-ghost" id="race-cancel-edit">
+                  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px;vertical-align:-2px"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+                  CANCEL EDIT
+                </button>`
+              : `<button class="btn btn-ghost" id="race-edit-results" style="border-color:var(--sec-cyan);color:var(--sec-cyan)">
+                  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px;vertical-align:-2px"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                  EDIT RESULTS
+                </button>`
+          ) : ''}
           ${race.completed ? `<button class="btn btn-danger" id="race-reset">
             <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px;vertical-align:-2px"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
             RESET RESULTS
@@ -3656,21 +3702,36 @@ function renderRace() {
   `;
 
   setTimeout(() => {
-    $('#race-back', wrap).onclick = () => { state.view = 'calendar'; state.raceId = null; renderAll(); };
+    $('#race-back', wrap).onclick = () => {
+      _raceEditingResults = null;
+      state.view = 'calendar'; state.raceId = null; renderAll();
+    };
     $('#race-edit', wrap).onclick = () => openRaceModal(race.id);
+    $('#race-edit-results', wrap)?.addEventListener('click', () => {
+      _raceEditingResults = race.id;
+      _raceEditorTab = 'race';
+      renderMain();
+      toast('Editing results — adjust positions and save', 'success');
+    });
+    $('#race-cancel-edit', wrap)?.addEventListener('click', () => {
+      _raceEditingResults = null;
+      renderMain();
+    });
     $('#race-reset', wrap)?.addEventListener('click', () => {
       confirmModal({
         title: 'Reset results?',
-        message: 'Wipe all positions and stats for this race?',
+        message: 'Wipe all positions and stats for this race? Use <b>EDIT RESULTS</b> instead if you just want to tweak a position.',
         danger: true,
         onConfirm: () => {
+          _raceEditingResults = null;
           updateRace(race.id, { results: [], sprintResults: [], fastestLapDriverId: null, poleDriverId: null, completed: false });
           toast('Results reset', 'warn'); renderMain();
         }
       });
     });
 
-    if (race.completed) renderRaceReadout($('#race-content', wrap), race);
+    const forceEdit = race.completed && _raceEditingResults === race.id;
+    if (race.completed && !forceEdit) renderRaceReadout($('#race-content', wrap), race);
     else renderRaceEditor($('#race-content', wrap), race);
   }, 0);
   return wrap;
@@ -3678,6 +3739,7 @@ function renderRace() {
 
 // Race editor session tab state ('quali' | 'sprint' | 'race')
 let _raceEditorTab = 'race';
+let _raceEditingResults = null;
 
 function renderRaceEditor(container, race) {
   const season = activeSeason();
@@ -4038,13 +4100,15 @@ function renderRaceEditor(container, race) {
       position: (r.dnf || r.dsq || r.dns) ? null : (r.position || null),
       dnf: !!r.dnf, dsq: !!r.dsq, dns: !!r.dns,
     }));
+    const wasEditing = _raceEditingResults === race.id;
     updateRace(race.id, {
       results: cleaned,
       completed: true,
       fastestLapDriverId: fl,
       poleDriverId: pole,
     });
-    toast('Race results saved & marked complete', 'success');
+    _raceEditingResults = null;
+    toast(wasEditing ? 'Race results updated' : 'Race results saved & marked complete', 'success');
     renderMain();
   };
 
@@ -4084,9 +4148,54 @@ function renderRaceEditor(container, race) {
   });
 }
 
+let _raceReadoutTab = 'race';
+
 function renderRaceReadout(container, race) {
   const season = activeSeason();
   const ps = getPointsSystem(season.pointsSystemId || DEFAULT_POINTS_SYSTEM_ID);
+
+  const hasQuali  = (race.qualifyingResults || []).some(q => q && (q.position || q.time)) || !!race.poleDriverId;
+  const hasSprint = !!race.sprint && (race.sprintResults || []).some(s => s && (s.position || s.dnf || s.dsq || s.dns));
+
+  let tab = _raceReadoutTab;
+  if (tab === 'sprint' && !hasSprint) tab = 'race';
+  if (tab === 'quali'  && !hasQuali)  tab = 'race';
+
+  const tabsHTML = `
+    <div class="race-session-tabs" id="readout-tabs">
+      <button class="race-session-tab ${tab === 'race' ? 'active' : ''}" data-rotab="race">
+        <span class="race-session-tab-icon">🏆</span>
+        <span class="race-session-tab-label">Race</span>
+        <span class="race-session-tab-status done">✓ FINAL</span>
+      </button>
+      ${hasSprint ? `<button class="race-session-tab ${tab === 'sprint' ? 'active' : ''}" data-rotab="sprint">
+        <span class="race-session-tab-icon">⚡</span>
+        <span class="race-session-tab-label">Sprint</span>
+        <span class="race-session-tab-status done">✓ DONE</span>
+      </button>` : ''}
+      ${hasQuali ? `<button class="race-session-tab ${tab === 'quali' ? 'active' : ''}" data-rotab="quali">
+        <span class="race-session-tab-icon">⏱</span>
+        <span class="race-session-tab-label">Qualifying</span>
+        <span class="race-session-tab-status done">✓ DONE</span>
+      </button>` : ''}
+    </div>`;
+
+  let panel = '';
+  if (tab === 'race')       panel = buildRaceReadoutPanel(race, season, ps);
+  else if (tab === 'sprint') panel = buildSprintReadoutPanel(race, season, ps);
+  else                       panel = buildQualiReadoutPanel(race, season);
+
+  container.innerHTML = tabsHTML + panel;
+
+  $$('#readout-tabs .race-session-tab', container).forEach(btn => {
+    btn.onclick = () => {
+      _raceReadoutTab = btn.dataset.rotab;
+      renderRaceReadout(container, race);
+    };
+  });
+}
+
+function buildRaceReadoutPanel(race, season, ps) {
   const sorted = (race.results || []).slice().sort((a,b) => {
     if (a.dns && !b.dns) return 1;
     if (b.dns && !a.dns) return -1;
@@ -4097,7 +4206,7 @@ function renderRaceReadout(container, race) {
     return (a.position || 999) - (b.position || 999);
   });
   const podium = sorted.filter(r => !r.dnf && !r.dsq && !r.dns).slice(0, 3);
-  container.innerHTML = `
+  return `
     <div class="podium" style="max-width:620px;margin-bottom:32px">
       ${[1,0,2].map(idx => {
         const r = podium[idx];
@@ -4133,7 +4242,7 @@ function renderRaceReadout(container, race) {
         const isFL = race.fastestLapDriverId === drv.id;
         const portrait = drv.photo
           ? `<div class="standings-portrait" style="--team-color:${color};background-image:url('${esc(drv.photo)}')"></div>`
-          : `<div class="standings-portrait" style="--team-color:${color}">${esc(driverInitials(drv.name))}</div>`;
+          : `<div class="standings-portrait" style="--team-color:${color}"></div>`;
         let statusLabel = 'CLASSIFIED';
         if (r.dns) statusLabel = '<span style="color:var(--text-muted)">DNS</span>';
         else if (r.dsq) statusLabel = '<span style="color:var(--red)">DSQ</span>';
@@ -4157,6 +4266,133 @@ function renderRaceReadout(container, race) {
         </div>`;
       }).join('')}
     </div>
+  `;
+}
+
+function buildSprintReadoutPanel(race, season, ps) {
+  const sorted = (race.sprintResults || []).slice().sort((a,b) => {
+    if (a.dns && !b.dns) return 1;
+    if (b.dns && !a.dns) return -1;
+    if (a.dsq && !b.dsq) return 1;
+    if (b.dsq && !a.dsq) return -1;
+    if (a.dnf && !b.dnf) return 1;
+    if (b.dnf && !a.dnf) return -1;
+    return (a.position || 999) - (b.position || 999);
+  });
+  const podium = sorted.filter(r => !r.dnf && !r.dsq && !r.dns && r.position).slice(0, 3);
+  const sprintPoints = ps.sprintPoints || [];
+  return `
+    <div class="readout-header-row">
+      <span class="readout-section-tag sprint">SPRINT RACE</span>
+      <span class="readout-section-sub">Top ${sprintPoints.length} score sprint points</span>
+    </div>
+    ${podium.length ? `
+      <div class="podium" style="max-width:620px;margin-bottom:32px">
+        ${[1,0,2].map(idx => {
+          const r = podium[idx];
+          if (!r) return '<div></div>';
+          const drv = season.drivers.find(d => d.id === r.driverId);
+          if (!drv) return '<div></div>';
+          const color = teamColor(season, drv.teamId);
+          const portrait = drv.photo
+            ? `<div class="podium-portrait" style="color:${color};background-image:url('${esc(drv.photo)}')"></div>`
+            : `<div class="podium-portrait" style="color:${color}"></div>`;
+          return `<div class="podium-step p${r.position}">
+            ${portrait}
+            <div class="podium-pos">${r.position}</div>
+            <div class="podium-name">${esc(drv.name)}</div>
+            <div class="podium-team">${esc(teamName(season, drv.teamId))}</div>
+          </div>`;
+        }).join('')}
+      </div>` : ''}
+
+    <div class="results-editor">
+      <div class="results-editor-head" style="grid-template-columns: 60px 44px 1fr 80px 80px">
+        <div>POS</div><div></div><div>DRIVER</div><div>PTS</div><div>STATUS</div>
+      </div>
+      ${sorted.map(r => {
+        const drv = season.drivers.find(d => d.id === r.driverId); if (!drv) return '';
+        const color = teamColor(season, drv.teamId);
+        let pts = 0;
+        if (!r.dnf && !r.dsq && !r.dns && r.position && r.position <= sprintPoints.length) pts = sprintPoints[r.position - 1];
+        const portrait = drv.photo
+          ? `<div class="standings-portrait" style="--team-color:${color};background-image:url('${esc(drv.photo)}')"></div>`
+          : `<div class="standings-portrait" style="--team-color:${color}"></div>`;
+        let statusLabel = 'CLASSIFIED';
+        if (r.dns) statusLabel = '<span style="color:var(--text-muted)">DNS</span>';
+        else if (r.dsq) statusLabel = '<span style="color:var(--red)">DSQ</span>';
+        else if (r.dnf) statusLabel = '<span style="color:var(--red)">DNF</span>';
+        const isStatus = r.dns || r.dsq || r.dnf;
+        const posDisplay = r.dns ? 'DNS' : r.dsq ? 'DSQ' : r.dnf ? 'DNF' : (r.position || '–');
+        const posSize = isStatus ? '13px' : '22px';
+        const posColor = isStatus
+          ? (r.dns ? 'var(--text-muted)' : 'var(--red)')
+          : (r.position === 1 ? 'var(--gold)' : r.position === 2 ? 'var(--silver)' : r.position === 3 ? 'var(--bronze)' : 'var(--text)');
+        return `<div class="result-row" style="grid-template-columns: 60px 44px 1fr 80px 80px;--team-color:${color}">
+          <div style="font-family:var(--f-display);font-weight:800;font-size:${posSize};letter-spacing:0.05em;color:${posColor}">${posDisplay}</div>
+          <div>${portrait}</div>
+          <div class="result-driver">
+            <span class="driver-cell-num" style="color:${color};font-family:var(--f-display);font-weight:700;width:28px">${drv.number}</span>
+            <div><div class="driver-cell-name">${esc(drv.name)}</div><div class="driver-cell-team">${flagImg(drv.country, 14)} ${esc(teamName(season, drv.teamId))}</div></div>
+          </div>
+          <div style="font-family:var(--f-display);font-weight:800;font-size:18px;color:${pts ? color : 'var(--text-dim)'}">${pts || '—'}</div>
+          <div style="font-family:var(--f-mono);font-size:11px;letter-spacing:0.1em">${statusLabel}</div>
+        </div>`;
+      }).join('')}
+    </div>
+  `;
+}
+
+function buildQualiReadoutPanel(race, season) {
+  const qualis = (race.qualifyingResults || []).slice().filter(q => q && (q.position || q.time));
+  qualis.sort((a, b) => (a.position || 999) - (b.position || 999));
+  const poleId = race.poleDriverId || qualis.find(q => q.position === 1)?.driverId;
+  const poleDrv = poleId ? season.drivers.find(d => d.id === poleId) : null;
+  const poleColor = poleDrv ? teamColor(season, poleDrv.teamId) : 'var(--sec-blue)';
+  return `
+    ${poleDrv ? `
+      <div class="quali-pole-banner" style="--team-color:${poleColor}">
+        ${poleDrv.photo
+          ? `<div class="quali-pole-photo" style="background-image:url('${esc(poleDrv.photo)}')"></div>`
+          : `<div class="quali-pole-photo"></div>`}
+        <div class="quali-pole-info">
+          <div class="quali-pole-lbl">Pole Position</div>
+          <div class="quali-pole-name">${esc(poleDrv.name)}</div>
+          <div class="quali-pole-team">${esc(teamName(season, poleDrv.teamId))} · #${poleDrv.number}</div>
+        </div>
+        ${qualis.find(q => q.driverId === poleDrv.id)?.time ? `
+          <div class="quali-pole-time">
+            <span class="quali-pole-time-lbl">Best Lap</span>
+            <span class="quali-pole-time-val">${esc(qualis.find(q => q.driverId === poleDrv.id).time)}</span>
+          </div>` : ''}
+      </div>` : ''}
+
+    ${qualis.length ? `
+      <div class="results-editor">
+        <div class="results-editor-head" style="grid-template-columns: 60px 44px 1fr 1fr">
+          <div>POS</div><div></div><div>DRIVER</div><div>BEST LAP</div>
+        </div>
+        ${qualis.map(q => {
+          const drv = season.drivers.find(d => d.id === q.driverId); if (!drv) return '';
+          const color = teamColor(season, drv.teamId);
+          const portrait = drv.photo
+            ? `<div class="standings-portrait" style="--team-color:${color};background-image:url('${esc(drv.photo)}')"></div>`
+            : `<div class="standings-portrait" style="--team-color:${color}"></div>`;
+          const posColor = q.position === 1 ? 'var(--gold)'
+                         : q.position === 2 ? 'var(--silver)'
+                         : q.position === 3 ? 'var(--bronze)'
+                         : 'var(--text)';
+          return `<div class="result-row" style="grid-template-columns: 60px 44px 1fr 1fr;--team-color:${color}">
+            <div style="font-family:var(--f-display);font-weight:800;font-size:22px;letter-spacing:0.05em;color:${posColor}">${q.position || '–'}</div>
+            <div>${portrait}</div>
+            <div class="result-driver">
+              <span class="driver-cell-num" style="color:${color};font-family:var(--f-display);font-weight:700;width:28px">${drv.number}</span>
+              <div><div class="driver-cell-name">${esc(drv.name)}</div><div class="driver-cell-team">${flagImg(drv.country, 14)} ${esc(teamName(season, drv.teamId))}</div></div>
+            </div>
+            <div style="font-family:var(--f-mono);font-weight:600;font-size:13px;color:${q.time ? 'var(--text)' : 'var(--text-dim)'}">${esc(q.time || '—')}</div>
+          </div>`;
+        }).join('')}
+      </div>` : `<div class="empty"><div class="empty-headline">QUALIFYING NOT RECORDED</div><div class="empty-sub">Only pole position was set. Use EDIT RESULTS to fill in lap times.</div></div>`}
   `;
 }
 
@@ -4201,7 +4437,7 @@ function renderStandings() {
               const color = teamColor(season, drv.teamId);
               const photo = drv.photo
                 ? `<div class="standings-portrait" style="--team-color:${color};background-image:url('${esc(drv.photo)}')"></div>`
-                : `<div class="standings-portrait" style="--team-color:${color}">${esc(driverInitials(drv.name))}</div>`;
+                : `<div class="standings-portrait" style="--team-color:${color}"></div>`;
               const team = season.teams.find(t => t.id === drv.teamId);
               const teamMark = team?.logo
                 ? `<div class="team-logo small" style="background-image:url('${esc(team.logo)}');border-color:${color}"></div>`
@@ -4417,27 +4653,18 @@ function renderStats() {
   const renderLeaderCard = ({ cat, leader, rank }) => {
     if (!leader) {
       return `
-        <div class="stat-leader-card stat-leader-empty" style="--accent:#6b7280">
+        <div class="stat-leader-card stat-leader-card-empty" style="--accent-color:#3a3f4a">
           <div class="stat-leader-bar"></div>
           <div class="stat-leader-head">
             <span class="stat-leader-icon">${cat.icon}</span>
             <span class="stat-leader-title">${esc(cat.label)}</span>
           </div>
-          <div class="stat-leader-body">
-            <div class="stat-leader-portrait">?</div>
-            <div>
-              <div class="stat-leader-name"><span class="last">No data</span></div>
-              <div class="stat-leader-team">—</div>
-              <div class="stat-leader-country">—</div>
+          <div class="stat-leader-empty-state">
+            <div class="stat-leader-empty-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
             </div>
-          </div>
-          <div class="stat-leader-bignum">
-            <span class="stat-leader-bignum-num">—</span>
-            <span class="stat-leader-bignum-unit">${esc(cat.unit)}</span>
-          </div>
-          <div class="stat-leader-foot">
-            <span>POS: <b>—</b></span>
-            <span>RACES: <b>—</b></span>
+            <div class="stat-leader-empty-msg">Awaiting data</div>
+            <div class="stat-leader-empty-sub">No driver qualifies for this category yet — record some race results to populate it.</div>
           </div>
         </div>`;
     }
@@ -4455,7 +4682,7 @@ function renderStats() {
       : '';
     const val = cat.read(leader);
     return `
-      <div class="stat-leader-card" data-cat="${cat.id}" style="--accent:${accent}">
+      <div class="stat-leader-card" data-cat="${cat.id}" style="--accent-color:${accent}">
         <div class="stat-leader-bar"></div>
         <div class="stat-leader-head">
           <span class="stat-leader-icon">${cat.icon}</span>
@@ -4469,7 +4696,7 @@ function renderStats() {
           <div>
             <div class="stat-leader-name">${esc(first || '')}<span class="last">${esc(last)}</span></div>
             <div class="stat-leader-team">${esc(team?.name || 'No team')}</div>
-            <div class="stat-leader-country">${flag(drv.country)} ${esc(drv.country || '')}</div>
+            ${drv.country ? `<div class="stat-leader-country">${flagImg(drv.country, 18)}<span>${esc(drv.country)}</span></div>` : ''}
           </div>
         </div>
         <div class="stat-leader-bignum">
@@ -5078,42 +5305,67 @@ function renderRecords() {
         const pool = cat.scope === 'drivers' ? recs.drivers : recs.teams;
         const sorted = pool.slice().sort((a,b) => (b[cat.key] || 0) - (a[cat.key] || 0)).filter(x => (x[cat.key] || 0) > 0);
         const leader = sorted[0];
-        const accent = leader
-          ? (cat.scope === 'drivers' ? (leader.latestTeamColor || '#e10600') : (leader.latestColor || '#e10600'))
-          : '#3a3a4a';
+        const top5 = sorted.slice(0, 5);
+        const others = top5.slice(1);
         let portraitHTML = '';
         if (leader) {
           if (cat.scope === 'drivers') {
-            const initials = leader.name.split(/\s+/).map(s => s[0] || '').join('').slice(0, 2).toUpperCase();
             portraitHTML = leader.photo
-              ? `<div class="record-portrait" style="background-image:url('${esc(leader.photo)}');border-color:${accent}"></div>`
-              : `<div class="record-portrait" style="border-color:${accent};color:${accent}">${esc(initials)}</div>`;
+              ? `<div class="record-portrait" style="background-image:url('${esc(leader.photo)}')"></div>`
+              : `<div class="record-portrait"></div>`;
           } else {
-            const short = leader.name.slice(0, 3).toUpperCase();
             portraitHTML = leader.logo
-              ? `<div class="record-portrait" style="background-image:url('${esc(leader.logo)}');border-color:${accent}"></div>`
-              : `<div class="record-portrait" style="border-color:${accent};color:${accent}">${esc(short)}</div>`;
+              ? `<div class="record-portrait record-portrait-team" style="background-image:url('${esc(leader.logo)}')"></div>`
+              : `<div class="record-portrait record-portrait-team">${esc((leader.name || '?').slice(0, 3).toUpperCase())}</div>`;
           }
-        } else {
-          portraitHTML = `<div class="record-portrait empty">?</div>`;
         }
+        const miniPortrait = (h) => {
+          if (cat.scope === 'drivers') {
+            return h.photo
+              ? `<div class="record-mini-portrait" style="background-image:url('${esc(h.photo)}')"></div>`
+              : `<div class="record-mini-portrait"></div>`;
+          }
+          return h.logo
+            ? `<div class="record-mini-portrait record-mini-portrait-team" style="background-image:url('${esc(h.logo)}')"></div>`
+            : `<div class="record-mini-portrait record-mini-portrait-team">${esc((h.name || '?').slice(0, 2).toUpperCase())}</div>`;
+        };
+        const rankClass = (i) => i === 1 ? 'silver' : i === 2 ? 'bronze' : '';
         return `
-          <div class="record-tile" data-cat="${cat.id}" style="--accent:${accent}">
-            <div class="record-tile-bar"></div>
-            <div class="record-tile-label">${esc(cat.label)} · ${esc(cat.unit)}</div>
-            <div class="record-tile-leader-row">
-              ${portraitHTML}
-              ${leader
-                ? `<div class="record-tile-leader-text">
-                    <div class="record-tile-value">${leader[cat.key]}</div>
-                    <div class="record-tile-leader">${esc(leader.name)}</div>
-                  </div>`
-                : `<div class="record-tile-leader-text record-tile-empty">
-                    <div class="record-tile-empty-mark">—</div>
-                    <div class="record-tile-empty-label">No data yet</div>
-                  </div>`}
+          <div class="record-tile ${leader ? '' : 'record-tile-empty-state'}" data-cat="${cat.id}">
+            <div class="record-tile-head">
+              <span class="record-tile-icon" aria-hidden="true">${cat.scope === 'drivers' ? '👤' : '🏎'}</span>
+              <span class="record-tile-label">${esc(cat.label)}</span>
             </div>
-            <div class="record-tile-cta">VIEW FULL LIST →</div>
+            ${leader ? `
+              <div class="record-tile-body">
+                ${portraitHTML}
+                <div class="record-tile-leader-text">
+                  <div class="record-tile-value">
+                    <span class="record-tile-value-num">${leader[cat.key]}</span>
+                    <span class="record-tile-value-unit">${esc(cat.unit)}</span>
+                  </div>
+                  <div class="record-tile-leader">${esc(leader.name)}</div>
+                </div>
+              </div>
+              ${others.length ? `
+                <div class="record-tile-top5">
+                  ${others.map((h, idx) => `
+                    <div class="record-tile-top5-row ${rankClass(idx + 1)}">
+                      <span class="record-tile-top5-rank">${idx + 2}</span>
+                      ${miniPortrait(h)}
+                      <span class="record-tile-top5-name">${esc(h.name)}</span>
+                      <span class="record-tile-top5-val">${h[cat.key]}</span>
+                    </div>
+                  `).join('')}
+                </div>` : ''}
+              <div class="record-tile-cta">VIEW FULL LEADERBOARD →</div>` : `
+              <div class="record-tile-empty-block">
+                <div class="record-tile-empty-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"/><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"/><path d="M4 22h16"/><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"/><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"/><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"/></svg>
+                </div>
+                <div class="record-tile-empty-msg">No record set</div>
+                <div class="record-tile-empty-sub">Complete some races to claim this record.</div>
+              </div>`}
           </div>`;
       }).join('')}
     </div>
