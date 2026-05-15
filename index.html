@@ -5958,6 +5958,239 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
 }
 
 /* =============================================================
+   RACE EDITOR — Quick-entry mode (position slot grid)
+   Type a 3-letter driver code (or race number, or last name) into each
+   position slot. Resolves uniquely → assigns driver → auto-advances focus.
+   ============================================================= */
+
+/* Mode toggle pill (DETAILED / QUICK ENTRY) */
+.entry-mode-toggle {
+  display: inline-flex;
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 3px;
+  gap: 2px;
+}
+.entry-mode-btn {
+  font-family: var(--f-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  padding: 6px 14px;
+  background: transparent;
+  border: none;
+  border-radius: var(--r-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.2s var(--ease);
+}
+.entry-mode-btn:hover { color: var(--text); }
+.entry-mode-btn.active {
+  background: linear-gradient(180deg, rgba(225,6,47,0.2), rgba(225,6,47,0.08));
+  color: var(--red-light);
+  box-shadow: 0 0 0 1px rgba(225,6,47,0.3) inset, 0 2px 8px rgba(225,6,47,0.15);
+}
+
+/* The slot grid */
+.quick-entry {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  padding: 16px 18px;
+}
+@media (max-width: 720px) {
+  .quick-entry { grid-template-columns: 1fr; }
+}
+
+/* A single slot — empty (input) or filled (chip) */
+.qe-row {
+  --team-color: var(--border-hi);
+  display: grid;
+  grid-template-columns: 52px 1fr;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  background: var(--bg-1);
+  border: 1px solid var(--border-dim);
+  border-radius: var(--r);
+  border-left: 3px solid var(--team-color);
+  transition: background 0.18s var(--ease), border-color 0.18s var(--ease),
+              transform 0.18s var(--ease);
+  position: relative;
+}
+.qe-row.filled {
+  background: linear-gradient(90deg,
+    color-mix(in srgb, var(--team-color) 8%, var(--bg-1)),
+    var(--bg-1) 60%);
+  border-color: color-mix(in srgb, var(--team-color) 35%, var(--border-dim));
+}
+.qe-row.p1.filled { box-shadow: 0 0 0 1px rgba(255,215,107,0.2), 0 0 18px rgba(255,215,107,0.1); }
+.qe-row.p2.filled { box-shadow: 0 0 0 1px rgba(203,209,215,0.18); }
+.qe-row.p3.filled { box-shadow: 0 0 0 1px rgba(210,138,85,0.2); }
+
+.qe-pos {
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: 18px;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  padding-right: 6px;
+  border-right: 1px solid var(--border-dim);
+}
+.qe-row.p1 .qe-pos { color: var(--gold); }
+.qe-row.p2 .qe-pos { color: var(--silver); }
+.qe-row.p3 .qe-pos { color: var(--bronze); }
+.qe-row.filled .qe-pos { color: var(--team-color); }
+.qe-row.filled.p1 .qe-pos { color: var(--gold); }
+.qe-row.filled.p2 .qe-pos { color: var(--silver); }
+.qe-row.filled.p3 .qe-pos { color: var(--bronze); }
+
+/* Empty-slot input */
+.qe-input {
+  width: 100%;
+  padding: 8px 10px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  color: var(--text);
+  font-family: var(--f-mono);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  transition: all 0.18s var(--ease);
+}
+.qe-input:focus {
+  outline: none;
+  background: var(--bg-2);
+  border-color: var(--red);
+  box-shadow: 0 0 0 3px rgba(225,6,47,0.16);
+}
+.qe-input::placeholder {
+  color: var(--text-dim);
+  letter-spacing: 0.06em;
+  text-transform: none;
+  font-weight: 400;
+}
+
+.qe-hint {
+  display: block;
+  font-family: var(--f-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: transparent;
+  text-transform: uppercase;
+  padding: 4px 10px 0;
+  height: 14px;
+  transition: color 0.15s var(--ease);
+}
+.qe-hint.hint-ok { color: var(--sec-green); }
+.qe-hint.hint-amb { color: var(--sec-yellow); }
+.qe-hint.hint-err { color: var(--red-light); }
+
+/* Filled-slot chip */
+.qe-chip {
+  display: grid;
+  grid-template-columns: 32px auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 2px;
+  animation: qe-pop 0.32s var(--ease-spring) both;
+}
+@keyframes qe-pop {
+  0% { opacity: 0; transform: translateX(-6px) scale(0.98); }
+  100% { opacity: 1; transform: translateX(0) scale(1); }
+}
+.qe-chip-photo {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 2px solid var(--team-color);
+  background: var(--bg-3) center/cover no-repeat;
+  flex-shrink: 0;
+  position: relative;
+  box-shadow: 0 0 0 1px rgba(255,255,255,0.04) inset;
+}
+.qe-chip-photo:not([style*="background-image"])::before {
+  content: '';
+  position: absolute;
+  inset: 18%;
+  background-color: var(--team-color);
+  opacity: 0.55;
+  -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 12.5c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.93 0-8.5 1.47-8.5 4.4V22h17v-3.1c0-2.93-5.57-4.4-8.5-4.4z'/></svg>") center/contain no-repeat;
+          mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M12 12.5c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.93 0-8.5 1.47-8.5 4.4V22h17v-3.1c0-2.93-5.57-4.4-8.5-4.4z'/></svg>") center/contain no-repeat;
+}
+.qe-chip-num {
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+.qe-chip-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  line-height: 1.1;
+}
+.qe-chip-name {
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.qe-chip-team {
+  font-family: var(--f-mono);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+.qe-clear {
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.18s var(--ease);
+}
+.qe-clear:hover {
+  border-color: var(--red);
+  color: var(--red-light);
+  background: var(--red-soft);
+  transform: rotate(90deg);
+}
+
+.quick-entry-help {
+  padding: 10px 18px;
+  background: var(--bg-1);
+  border-top: 1px solid var(--border-dim);
+  font-family: var(--f-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+.quick-entry-help b { color: var(--text-soft); font-weight: 700; }
+
+/* Hide the results-editor-head when quick-entry mode is active */
+.results-editor-head.hidden { display: none; }
+
+/* =============================================================
    RACE DETAIL PAGE — Full restyle
    Hero card with flag backdrop, polished stat cards, refined timeline,
    broadcast-style results table.
@@ -10851,18 +11084,26 @@ function openDriverModal(driverId) {
   const season = activeSeason();
   const editing = driverId ? season.drivers.find(d => d.id === driverId) : null;
   let photoValue = editing?.photo || '';
-  // If the driver's name matches a preset with multiple photos, surface a
-  // shortcut button so they can swap photos without re-uploading.
+  // If the driver's name matches a preset, surface shortcuts to pick a preset
+  // photo or sync country+number from the latest preset. Works even when only
+  // one photo exists (so the user can re-apply if the preset's photo changed
+  // after the driver was signed).
   const matchedPreset = editing ? matchDriverPresetForName(editing.name) : null;
   const presetPhotos = matchedPreset ? presetPhotosList(matchedPreset) : [];
+  const hasPresetMatch = !!matchedPreset;
   const hasMultiPreset = presetPhotos.length > 1;
   modal({
     title: editing ? `Edit Driver` : `<span class="accent">Sign</span> a Driver`,
     body: `
       <div class="field">
-        <label>Photo${hasMultiPreset ? ` <span style="font-weight:400;color:var(--text-muted);font-family:var(--f-body);text-transform:none;letter-spacing:0">— ${presetPhotos.length} saved in preset</span>` : ''}</label>
+        <label>Photo${hasPresetMatch ? ` <span style="font-weight:400;color:var(--text-muted);font-family:var(--f-body);text-transform:none;letter-spacing:0">— matched to <b>${esc(matchedPreset.name)}</b> preset (${presetPhotos.length} ${presetPhotos.length === 1 ? 'photo' : 'photos'})</span>` : ''}</label>
         <div id="d-photo-mount"></div>
-        ${hasMultiPreset ? `<button type="button" class="btn btn-ghost btn-sm" id="d-browse-preset-photos" style="margin-top:10px;width:100%">📸 BROWSE PRESET PHOTOS (${presetPhotos.length})</button>` : ''}
+        ${hasPresetMatch ? `
+          <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap">
+            ${presetPhotos.length ? `<button type="button" class="btn btn-ghost btn-sm" id="d-browse-preset-photos" style="flex:1;min-width:140px">📸 ${hasMultiPreset ? `PICK FROM ${presetPhotos.length} PRESET PHOTOS` : 'USE PRESET PHOTO'}</button>` : ''}
+            <button type="button" class="btn btn-ghost btn-sm" id="d-sync-preset" style="flex:1;min-width:140px;border-color:var(--sec-cyan);color:var(--sec-cyan)">⟳ SYNC FROM PRESET</button>
+          </div>
+        ` : ''}
       </div>
       <div class="field">
         <label>Full Name</label>
@@ -11661,6 +11902,103 @@ let _raceEditorTab = 'race';
 // Set to a race id when the user wants to edit a completed race's results
 // without resetting them. Cleared on save or when leaving the page.
 let _raceEditingResults = null;
+// Quick-entry mode per session: type an abbreviation/code into each position
+// slot and the editor auto-resolves + auto-advances focus. Per-session so
+// users can use detailed mode on quali but quick on race, etc.
+const _quickEntry = { gp: false, sprint: false };
+
+// Resolve a typed token (e.g. "VER", "HAM", "1", "44", "lec") to a driver.
+// Match priority: race number → last-name prefix → full-name substring.
+// `excludeIds` skips drivers already placed elsewhere on the grid so the
+// resolver doesn't keep matching the same driver into multiple slots.
+// Returns { match } for a single hit, { ambiguous: [...] } for multiple, or
+// { match: null } for none.
+function resolveDriverShort(text, drivers, excludeIds = []) {
+  if (!text) return { match: null };
+  const t = String(text).trim().toUpperCase();
+  if (!t) return { match: null };
+  const pool = drivers.filter(d => !excludeIds.includes(d.id));
+
+  // 1. Race-number match — "1" → driver #1
+  if (/^\d+$/.test(t)) {
+    const num = parseInt(t, 10);
+    const numMatch = pool.find(d => d.number === num);
+    if (numMatch) return { match: numMatch };
+  }
+
+  // 2. Last-name prefix (F1 convention: VER = Verstappen, HAM = Hamilton)
+  if (/^[A-Z]+$/.test(t)) {
+    const prefixHits = pool.filter(d => {
+      const last = (d.name || '').split(/\s+/).pop().toUpperCase();
+      return last.startsWith(t);
+    });
+    if (prefixHits.length === 1) return { match: prefixHits[0] };
+    if (prefixHits.length > 1) {
+      // Tie-breaker: exact full last name match wins
+      const exactLast = prefixHits.filter(d => {
+        const last = (d.name || '').split(/\s+/).pop().toUpperCase();
+        return last === t;
+      });
+      if (exactLast.length === 1) return { match: exactLast[0] };
+      return { ambiguous: prefixHits };
+    }
+  }
+
+  // 3. Full-name substring (any word in any position)
+  const subHits = pool.filter(d => (d.name || '').toUpperCase().includes(t));
+  if (subHits.length === 1) return { match: subHits[0] };
+  if (subHits.length > 1) return { ambiguous: subHits };
+
+  return { match: null };
+}
+
+// Render the quick-entry slot grid for a session. Builds a P1..Pn list with
+// either a chip (driver placed) or an input field (empty slot). Backed by the
+// caller's `workingArr` — driver position assignments live there.
+function buildQuickEntryHTML(workingArr, kind, drivers, season) {
+  const MAX = Math.min(26, drivers.length);
+  const posDriver = new Map();
+  workingArr.forEach(w => {
+    if (w.position && !w.dnf && !w.dsq && !w.dns) {
+      posDriver.set(Number(w.position), w.driverId);
+    }
+  });
+  let rows = '';
+  for (let pos = 1; pos <= MAX; pos++) {
+    const driverId = posDriver.get(pos);
+    const drv = driverId ? drivers.find(d => d.id === driverId) : null;
+    const team = drv ? season.teams.find(t => t.id === drv.teamId) : null;
+    const color = team?.color || '#6b7280';
+    const photo = drv && drv.photo
+      ? `<div class="qe-chip-photo" style="background-image:url('${esc(drv.photo)}');border-color:${color}"></div>`
+      : `<div class="qe-chip-photo" style="border-color:${color}"></div>`;
+    const tierClass = pos === 1 ? 'p1' : pos === 2 ? 'p2' : pos === 3 ? 'p3' : '';
+    rows += `
+      <div class="qe-row ${drv ? 'filled' : ''} ${tierClass}" data-pos="${pos}" style="--team-color:${color}">
+        <span class="qe-pos">P${pos}</span>
+        ${drv ? `
+          <div class="qe-chip">
+            ${photo}
+            <span class="qe-chip-num" style="color:${color}">#${drv.number || '–'}</span>
+            <div class="qe-chip-text">
+              <div class="qe-chip-name">${esc(drv.name)}</div>
+              <div class="qe-chip-team">${esc(team?.name || 'No team')}</div>
+            </div>
+            <button class="qe-clear" data-pos="${pos}" title="Clear slot" aria-label="Clear">
+              <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
+            </button>
+          </div>
+        ` : `
+          <input class="qe-input" type="text" data-pos="${pos}" data-kind="${kind}" placeholder="Type code or # (e.g. VER, 44)" autocomplete="off" autocapitalize="characters" spellcheck="false">
+          <span class="qe-hint"></span>
+        `}
+      </div>`;
+  }
+  return `<div class="quick-entry" data-kind="${kind}">${rows}</div>
+    <div class="quick-entry-help">
+      <span><b>3-letter code</b> (VER, HAM) · <b>last name</b> (lec…) · <b>race number</b> (1, 44) — auto-advances on unique match</span>
+    </div>`;
+}
 
 function renderRaceEditor(container, race) {
   const season = activeSeason();
@@ -11818,15 +12156,23 @@ function renderRaceEditor(container, race) {
     <div class="race-session-panel ${_raceEditorTab === 'sprint' ? '' : 'hidden'}" id="panel-sprint">
       <div class="dash-block-head">
         <div class="dash-block-title">Sprint Race · Saturday</div>
-        <span class="tag" style="color:var(--sec-yellow);border-color:var(--sec-yellow)">SPRINT</span>
+        <div style="display:flex;align-items:center;gap:8px">
+          <div class="entry-mode-toggle" data-target="sprint">
+            <button class="entry-mode-btn ${_quickEntry.sprint ? '' : 'active'}" data-mode="detailed">DETAILED</button>
+            <button class="entry-mode-btn ${_quickEntry.sprint ? 'active' : ''}" data-mode="quick">⚡ QUICK ENTRY</button>
+          </div>
+          <span class="tag" style="color:var(--sec-yellow);border-color:var(--sec-yellow)">SPRINT</span>
+        </div>
       </div>
       <div class="results-editor">
-        <div class="results-editor-head" style="grid-template-columns: 60px 44px 1fr 70px 70px 60px 60px 60px">
+        <div class="results-editor-head ${_quickEntry.sprint ? 'hidden' : ''}" style="grid-template-columns: 60px 44px 1fr 70px 70px 60px 60px 60px">
           <div>POS</div><div></div><div>DRIVER</div><div></div><div></div><div>DNF</div><div>DSQ</div><div>DNS</div>
         </div>
-        <div id="sprint-rows">${rowHTML(sprintWorking, 'sprint')}</div>
+        <div id="sprint-rows">${_quickEntry.sprint ? buildQuickEntryHTML(sprintWorking, 'sprint', season.drivers, season) : rowHTML(sprintWorking, 'sprint')}</div>
         <div class="results-editor-foot">
-          <span class="results-help">Sprint saves independently of the main race.</span>
+          <span class="results-help">${_quickEntry.sprint
+            ? 'Quick mode: type 3-letter codes (VER, HAM) or race numbers. DNF / DSQ / DNS set in detailed mode.'
+            : 'Sprint saves independently of the main race.'}</span>
           <div style="display:flex;gap:8px">
             <button class="btn btn-ghost" id="sprint-import">↧ IMPORT FROM PASTE</button>
             <button class="btn btn-primary" id="save-sprint">✓ SAVE SPRINT</button>
@@ -11839,15 +12185,23 @@ function renderRaceEditor(container, race) {
     <div class="race-session-panel ${_raceEditorTab === 'race' ? '' : 'hidden'}" id="panel-race">
       <div class="dash-block-head">
         <div class="dash-block-title">Grand Prix · Sunday</div>
-        <span class="tag red">RACE</span>
+        <div style="display:flex;align-items:center;gap:8px">
+          <div class="entry-mode-toggle" data-target="gp">
+            <button class="entry-mode-btn ${_quickEntry.gp ? '' : 'active'}" data-mode="detailed">DETAILED</button>
+            <button class="entry-mode-btn ${_quickEntry.gp ? 'active' : ''}" data-mode="quick">⚡ QUICK ENTRY</button>
+          </div>
+          <span class="tag red">RACE</span>
+        </div>
       </div>
       <div class="results-editor">
-        <div class="results-editor-head" style="grid-template-columns: 60px 44px 1fr 70px 70px 60px 60px 60px">
+        <div class="results-editor-head ${_quickEntry.gp ? 'hidden' : ''}" style="grid-template-columns: 60px 44px 1fr 70px 70px 60px 60px 60px">
           <div>POS</div><div></div><div>DRIVER</div><div>POLE</div><div>FL</div><div>DNF</div><div>DSQ</div><div>DNS</div>
         </div>
-        <div id="gp-rows">${rowHTML(working, 'gp')}</div>
+        <div id="gp-rows">${_quickEntry.gp ? buildQuickEntryHTML(working, 'gp', season.drivers, season) : rowHTML(working, 'gp')}</div>
         <div class="results-editor-foot">
-          <span class="results-help">Positions 1–${MAX_POS}. DNF = retired, DSQ = disqualified, DNS = did not start. POLE & FL must be unique.</span>
+          <span class="results-help">${_quickEntry.gp
+            ? 'Quick mode: type 3-letter codes (VER, HAM) or race numbers (1, 44). Pole / FL / DNF set in detailed mode.'
+            : `Positions 1–${MAX_POS}. DNF = retired, DSQ = disqualified, DNS = did not start. POLE & FL must be unique.`}</span>
           <div style="display:flex;gap:8px">
             <button class="btn btn-ghost" id="race-import">↧ IMPORT FROM PASTE</button>
             <button class="btn btn-ghost" id="auto-fill">AUTO-FILL FROM DRIVER ORDER</button>
@@ -11930,7 +12284,168 @@ function renderRaceEditor(container, race) {
         if (btn) btn.classList.toggle('on', target[s]);
       });
     });
+
+    // --- Quick-entry mode bindings ---
+    bindQuickEntry('gp', working);
+    if (sprintWorking) bindQuickEntry('sprint', sprintWorking);
+
+    // Mode toggle buttons
+    $$('.entry-mode-toggle', container).forEach(toggle => {
+      const target = toggle.dataset.target; // 'gp' | 'sprint'
+      $$('.entry-mode-btn', toggle).forEach(btn => {
+        btn.onclick = () => {
+          _quickEntry[target] = btn.dataset.mode === 'quick';
+          refreshPanel(target);
+        };
+      });
+    });
   }
+
+  // Re-render a single session panel's rows body + toggle button states
+  // without rebuilding the whole editor. Called when the user flips modes
+  // or finalises a quick-entry slot.
+  function refreshPanel(kind) {
+    const rowsContainer = kind === 'gp' ? $('#gp-rows', container)
+                        : kind === 'sprint' ? $('#sprint-rows', container)
+                        : null;
+    if (!rowsContainer) return;
+    const arr = kind === 'gp' ? working : sprintWorking;
+    if (_quickEntry[kind]) {
+      rowsContainer.innerHTML = buildQuickEntryHTML(arr, kind, season.drivers, season);
+    } else {
+      rowsContainer.innerHTML = rowHTML(arr, kind);
+    }
+    // Toggle the column header + help text visibility for this panel
+    const panel = $(`#panel-${kind === 'gp' ? 'race' : 'sprint'}`, container);
+    if (panel) {
+      const head = panel.querySelector('.results-editor-head');
+      if (head) head.classList.toggle('hidden', !!_quickEntry[kind]);
+      const help = panel.querySelector('.results-help');
+      if (help) {
+        if (_quickEntry[kind]) {
+          help.textContent = kind === 'gp'
+            ? 'Quick mode: type 3-letter codes (VER, HAM) or race numbers (1, 44). Pole / FL / DNF set in detailed mode.'
+            : 'Quick mode: type 3-letter codes (VER, HAM) or race numbers. DNF / DSQ / DNS set in detailed mode.';
+        } else {
+          help.textContent = kind === 'gp'
+            ? `Positions 1–${MAX_POS}. DNF = retired, DSQ = disqualified, DNS = did not start. POLE & FL must be unique.`
+            : 'Sprint saves independently of the main race.';
+        }
+      }
+      // Update toggle button active states
+      const toggle = panel.querySelector('.entry-mode-toggle');
+      if (toggle) {
+        $$('.entry-mode-btn', toggle).forEach(b => b.classList.toggle('active',
+          (b.dataset.mode === 'quick') === !!_quickEntry[kind]));
+      }
+    }
+    bind();
+  }
+
+  // Wire up quick-entry inputs for one session kind. Inputs auto-resolve when
+  // a uniquely matching code is typed, and focus advances to the next empty
+  // slot. Backspace on an empty input clears the previous slot.
+  function bindQuickEntry(kind, workingArr) {
+    const inputs = $$(`.quick-entry[data-kind="${kind}"] .qe-input`, container);
+    const allDrivers = season.drivers;
+
+    const focusNextEmpty = (afterPos) => {
+      const all = $$(`.quick-entry[data-kind="${kind}"] .qe-input`, container);
+      for (const inp of all) {
+        if (Number(inp.dataset.pos) > afterPos) { inp.focus(); inp.select(); return; }
+      }
+    };
+
+    const assignDriver = (pos, driverId) => {
+      // Clear any other driver already at this position
+      workingArr.forEach(w => {
+        if (Number(w.position) === pos) { w.position = ''; }
+      });
+      // Find this driver's working entry and set position
+      const target = workingArr.find(w => w.driverId === driverId);
+      if (!target) return;
+      target.position = pos;
+      target.dnf = false; target.dsq = false; target.dns = false;
+    };
+
+    inputs.forEach(input => {
+      input.oninput = () => {
+        const text = input.value;
+        const hint = input.nextElementSibling;
+        const excludeIds = workingArr.filter(w => w.position).map(w => w.driverId);
+        const r = resolveDriverShort(text, allDrivers, excludeIds);
+        if (!hint) return;
+        if (r.match) {
+          hint.textContent = `→ ${r.match.name}`;
+          hint.className = 'qe-hint hint-ok';
+          // Auto-advance when exactly 3 alpha chars resolve uniquely (the
+          // F1 broadcast convention — "VER" → Verstappen instantly)
+          if (/^[A-Za-z]{3}$/.test(text.trim())) {
+            const pos = Number(input.dataset.pos);
+            assignDriver(pos, r.match.id);
+            refreshPanel(kind);
+            setTimeout(() => focusNextEmpty(pos), 0);
+          }
+        } else if (r.ambiguous) {
+          hint.textContent = `${r.ambiguous.length} matches — keep typing`;
+          hint.className = 'qe-hint hint-amb';
+        } else if (text.trim()) {
+          hint.textContent = 'No match';
+          hint.className = 'qe-hint hint-err';
+        } else {
+          hint.textContent = '';
+          hint.className = 'qe-hint';
+        }
+      };
+
+      input.onkeydown = (e) => {
+        if (e.key === 'Enter' || e.key === 'Tab') {
+          const text = input.value;
+          if (!text.trim()) return;
+          e.preventDefault();
+          const excludeIds = workingArr.filter(w => w.position).map(w => w.driverId);
+          const r = resolveDriverShort(text, allDrivers, excludeIds);
+          if (r.match) {
+            const pos = Number(input.dataset.pos);
+            assignDriver(pos, r.match.id);
+            refreshPanel(kind);
+            setTimeout(() => focusNextEmpty(pos), 0);
+          } else if (r.ambiguous) {
+            toast(`Ambiguous — ${r.ambiguous.length} matches: ${r.ambiguous.slice(0, 3).map(d => d.name).join(', ')}${r.ambiguous.length > 3 ? '…' : ''}`, 'warn');
+          } else {
+            toast('No matching driver — try last name or race number', 'error');
+          }
+        } else if (e.key === 'Backspace' && !input.value) {
+          // Jump back to previous slot and clear it
+          const pos = Number(input.dataset.pos);
+          const prev = workingArr.find(w => Number(w.position) === pos - 1);
+          if (prev) {
+            prev.position = '';
+            refreshPanel(kind);
+            setTimeout(() => {
+              const prevInp = $(`.quick-entry[data-kind="${kind}"] .qe-input[data-pos="${pos - 1}"]`, container);
+              if (prevInp) { prevInp.focus(); prevInp.select(); }
+            }, 0);
+          }
+        }
+      };
+    });
+
+    // Clear-slot buttons (✕)
+    $$(`.quick-entry[data-kind="${kind}"] .qe-clear`, container).forEach(btn => {
+      btn.onclick = () => {
+        const pos = Number(btn.dataset.pos);
+        const target = workingArr.find(w => Number(w.position) === pos);
+        if (target) { target.position = ''; target.dnf = false; target.dsq = false; target.dns = false; }
+        refreshPanel(kind);
+        setTimeout(() => {
+          const inp = $(`.quick-entry[data-kind="${kind}"] .qe-input[data-pos="${pos}"]`, container);
+          if (inp) inp.focus();
+        }, 0);
+      };
+    });
+  }
+
   bind();
 
   // Session tabs (Qualifying / Sprint / Race) — switch which panel is visible
@@ -16935,13 +17450,14 @@ function renderAll() {
     });
   }
 
-  /* --- 3. Number tickers — only on FIRST bootstrap to avoid re-render flicker.
-     Without this gate the ticker would fire every time #app re-renders (tab swap,
-     data refresh, etc.) and users would see numbers visibly counting up again
-     and again, which reads as flicker. --- */
+  /* --- 3. Number tickers — DISABLED.
+     Previously animated stat numbers from 0 → target value on initial mount.
+     Caused visible flicker when the page re-rendered rapidly (e.g. after
+     importing a season, where renderMain() fires multiple times in quick
+     succession). Numbers now just display their value statically. --- */
   const TICK_SEL = '.dash-stat-num, .save-stat-num, .record-tile-value, .stat-leader-bignum-num, ' +
                    '.driver-card .driver-stat-num';
-  let tickersAllowed = true;
+  let tickersAllowed = false;
   function tickNumbers(root) {
     if (reduced || !tickersAllowed) return;
     root.querySelectorAll(TICK_SEL).forEach(el => {
@@ -17055,10 +17571,10 @@ function renderAll() {
         runs refresh() (no fade). Picks up newly-mounted cards/rows so they
         get their spotlight glow, tilt, etc. */
   function bootstrap() {
-    // Initial pass — after this, disable number tickers so subsequent renders
-    // don't visibly count numbers up again (a major source of flicker).
+    // Initial pass — tickers are disabled by default (the previous version
+    // had a 1.2s window where they could re-fire on rapid re-renders, which
+    // looked like the numbers were flickering back and forth).
     refresh();
-    setTimeout(() => { tickersAllowed = false; }, 1200);
 
     const app = document.getElementById('app');
     if (app) {
