@@ -3746,6 +3746,87 @@ function renderRace() {
 // Race editor session tab state ('quali' | 'sprint' | 'race')
 let _raceEditorTab = 'race';
 let _raceEditingResults = null;
+const _quickEntry = { gp: false, sprint: false };
+
+function resolveDriverShort(text, drivers, excludeIds = []) {
+  if (!text) return { match: null };
+  const t = String(text).trim().toUpperCase();
+  if (!t) return { match: null };
+  const pool = drivers.filter(d => !excludeIds.includes(d.id));
+
+  if (/^\d+$/.test(t)) {
+    const num = parseInt(t, 10);
+    const numMatch = pool.find(d => d.number === num);
+    if (numMatch) return { match: numMatch };
+  }
+
+  if (/^[A-Z]+$/.test(t)) {
+    const prefixHits = pool.filter(d => {
+      const last = (d.name || '').split(/\s+/).pop().toUpperCase();
+      return last.startsWith(t);
+    });
+    if (prefixHits.length === 1) return { match: prefixHits[0] };
+    if (prefixHits.length > 1) {
+      const exactLast = prefixHits.filter(d => {
+        const last = (d.name || '').split(/\s+/).pop().toUpperCase();
+        return last === t;
+      });
+      if (exactLast.length === 1) return { match: exactLast[0] };
+      return { ambiguous: prefixHits };
+    }
+  }
+
+  const subHits = pool.filter(d => (d.name || '').toUpperCase().includes(t));
+  if (subHits.length === 1) return { match: subHits[0] };
+  if (subHits.length > 1) return { ambiguous: subHits };
+
+  return { match: null };
+}
+
+function buildQuickEntryHTML(workingArr, kind, drivers, season) {
+  const MAX = Math.min(26, drivers.length);
+  const posDriver = new Map();
+  workingArr.forEach(w => {
+    if (w.position && !w.dnf && !w.dsq && !w.dns) {
+      posDriver.set(Number(w.position), w.driverId);
+    }
+  });
+  let rows = '';
+  for (let pos = 1; pos <= MAX; pos++) {
+    const driverId = posDriver.get(pos);
+    const drv = driverId ? drivers.find(d => d.id === driverId) : null;
+    const team = drv ? season.teams.find(t => t.id === drv.teamId) : null;
+    const color = team?.color || '#6b7280';
+    const photo = drv && drv.photo
+      ? `<div class="qe-chip-photo" style="background-image:url('${esc(drv.photo)}');border-color:${color}"></div>`
+      : `<div class="qe-chip-photo" style="border-color:${color}"></div>`;
+    const tierClass = pos === 1 ? 'p1' : pos === 2 ? 'p2' : pos === 3 ? 'p3' : '';
+    rows += `
+      <div class="qe-row ${drv ? 'filled' : ''} ${tierClass}" data-pos="${pos}" style="--team-color:${color}">
+        <span class="qe-pos">P${pos}</span>
+        ${drv ? `
+          <div class="qe-chip">
+            ${photo}
+            <span class="qe-chip-num" style="color:${color}">#${drv.number || '–'}</span>
+            <div class="qe-chip-text">
+              <div class="qe-chip-name">${esc(drv.name)}</div>
+              <div class="qe-chip-team">${esc(team?.name || 'No team')}</div>
+            </div>
+            <button class="qe-clear" data-pos="${pos}" title="Clear slot" aria-label="Clear">
+              <svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
+            </button>
+          </div>
+        ` : `
+          <input class="qe-input" type="text" data-pos="${pos}" data-kind="${kind}" placeholder="Type code or # (e.g. VER, 44)" autocomplete="off" autocapitalize="characters" spellcheck="false">
+          <span class="qe-hint"></span>
+        `}
+      </div>`;
+  }
+  return `<div class="quick-entry" data-kind="${kind}">${rows}</div>
+    <div class="quick-entry-help">
+      <span><b>3-letter code</b> (VER, HAM) · <b>last name</b> (lec…) · <b>race number</b> (1, 44) — auto-advances on unique match</span>
+    </div>`;
+}
 
 function renderRaceEditor(container, race) {
   const season = activeSeason();
@@ -3903,15 +3984,23 @@ function renderRaceEditor(container, race) {
     <div class="race-session-panel ${_raceEditorTab === 'sprint' ? '' : 'hidden'}" id="panel-sprint">
       <div class="dash-block-head">
         <div class="dash-block-title">Sprint Race · Saturday</div>
-        <span class="tag" style="color:var(--sec-yellow);border-color:var(--sec-yellow)">SPRINT</span>
+        <div style="display:flex;align-items:center;gap:8px">
+          <div class="entry-mode-toggle" data-target="sprint">
+            <button class="entry-mode-btn ${_quickEntry.sprint ? '' : 'active'}" data-mode="detailed">DETAILED</button>
+            <button class="entry-mode-btn ${_quickEntry.sprint ? 'active' : ''}" data-mode="quick">⚡ QUICK ENTRY</button>
+          </div>
+          <span class="tag" style="color:var(--sec-yellow);border-color:var(--sec-yellow)">SPRINT</span>
+        </div>
       </div>
       <div class="results-editor">
-        <div class="results-editor-head" style="grid-template-columns: 60px 44px 1fr 70px 70px 60px 60px 60px">
+        <div class="results-editor-head ${_quickEntry.sprint ? 'hidden' : ''}" style="grid-template-columns: 60px 44px 1fr 70px 70px 60px 60px 60px">
           <div>POS</div><div></div><div>DRIVER</div><div></div><div></div><div>DNF</div><div>DSQ</div><div>DNS</div>
         </div>
-        <div id="sprint-rows">${rowHTML(sprintWorking, 'sprint')}</div>
+        <div id="sprint-rows">${_quickEntry.sprint ? buildQuickEntryHTML(sprintWorking, 'sprint', season.drivers, season) : rowHTML(sprintWorking, 'sprint')}</div>
         <div class="results-editor-foot">
-          <span class="results-help">Sprint saves independently of the main race.</span>
+          <span class="results-help">${_quickEntry.sprint
+            ? 'Quick mode: type 3-letter codes (VER, HAM) or race numbers. DNF / DSQ / DNS set in detailed mode.'
+            : 'Sprint saves independently of the main race.'}</span>
           <div style="display:flex;gap:8px">
             <button class="btn btn-ghost" id="sprint-import">↧ IMPORT FROM PASTE</button>
             <button class="btn btn-primary" id="save-sprint">✓ SAVE SPRINT</button>
@@ -3924,15 +4013,23 @@ function renderRaceEditor(container, race) {
     <div class="race-session-panel ${_raceEditorTab === 'race' ? '' : 'hidden'}" id="panel-race">
       <div class="dash-block-head">
         <div class="dash-block-title">Grand Prix · Sunday</div>
-        <span class="tag red">RACE</span>
+        <div style="display:flex;align-items:center;gap:8px">
+          <div class="entry-mode-toggle" data-target="gp">
+            <button class="entry-mode-btn ${_quickEntry.gp ? '' : 'active'}" data-mode="detailed">DETAILED</button>
+            <button class="entry-mode-btn ${_quickEntry.gp ? 'active' : ''}" data-mode="quick">⚡ QUICK ENTRY</button>
+          </div>
+          <span class="tag red">RACE</span>
+        </div>
       </div>
       <div class="results-editor">
-        <div class="results-editor-head" style="grid-template-columns: 60px 44px 1fr 70px 70px 60px 60px 60px">
+        <div class="results-editor-head ${_quickEntry.gp ? 'hidden' : ''}" style="grid-template-columns: 60px 44px 1fr 70px 70px 60px 60px 60px">
           <div>POS</div><div></div><div>DRIVER</div><div>POLE</div><div>FL</div><div>DNF</div><div>DSQ</div><div>DNS</div>
         </div>
-        <div id="gp-rows">${rowHTML(working, 'gp')}</div>
+        <div id="gp-rows">${_quickEntry.gp ? buildQuickEntryHTML(working, 'gp', season.drivers, season) : rowHTML(working, 'gp')}</div>
         <div class="results-editor-foot">
-          <span class="results-help">Positions 1–${MAX_POS}. DNF = retired, DSQ = disqualified, DNS = did not start. POLE & FL must be unique.</span>
+          <span class="results-help">${_quickEntry.gp
+            ? 'Quick mode: type 3-letter codes (VER, HAM) or race numbers (1, 44). Pole / FL / DNF set in detailed mode.'
+            : `Positions 1–${MAX_POS}. DNF = retired, DSQ = disqualified, DNS = did not start. POLE & FL must be unique.`}</span>
           <div style="display:flex;gap:8px">
             <button class="btn btn-ghost" id="race-import">↧ IMPORT FROM PASTE</button>
             <button class="btn btn-ghost" id="auto-fill">AUTO-FILL FROM DRIVER ORDER</button>
@@ -4015,7 +4112,152 @@ function renderRaceEditor(container, race) {
         if (btn) btn.classList.toggle('on', target[s]);
       });
     });
+
+    bindQuickEntry('gp', working);
+    if (sprintWorking) bindQuickEntry('sprint', sprintWorking);
+
+    $$('.entry-mode-toggle', container).forEach(toggle => {
+      const target = toggle.dataset.target;
+      $$('.entry-mode-btn', toggle).forEach(btn => {
+        btn.onclick = () => {
+          _quickEntry[target] = btn.dataset.mode === 'quick';
+          refreshPanel(target);
+        };
+      });
+    });
   }
+
+  function refreshPanel(kind) {
+    const rowsContainer = kind === 'gp' ? $('#gp-rows', container)
+                        : kind === 'sprint' ? $('#sprint-rows', container)
+                        : null;
+    if (!rowsContainer) return;
+    const arr = kind === 'gp' ? working : sprintWorking;
+    if (_quickEntry[kind]) {
+      rowsContainer.innerHTML = buildQuickEntryHTML(arr, kind, season.drivers, season);
+    } else {
+      rowsContainer.innerHTML = rowHTML(arr, kind);
+    }
+    const panel = $(`#panel-${kind === 'gp' ? 'race' : 'sprint'}`, container);
+    if (panel) {
+      const head = panel.querySelector('.results-editor-head');
+      if (head) head.classList.toggle('hidden', !!_quickEntry[kind]);
+      const help = panel.querySelector('.results-help');
+      if (help) {
+        if (_quickEntry[kind]) {
+          help.textContent = kind === 'gp'
+            ? 'Quick mode: type 3-letter codes (VER, HAM) or race numbers (1, 44). Pole / FL / DNF set in detailed mode.'
+            : 'Quick mode: type 3-letter codes (VER, HAM) or race numbers. DNF / DSQ / DNS set in detailed mode.';
+        } else {
+          help.textContent = kind === 'gp'
+            ? `Positions 1–${MAX_POS}. DNF = retired, DSQ = disqualified, DNS = did not start. POLE & FL must be unique.`
+            : 'Sprint saves independently of the main race.';
+        }
+      }
+      const toggle = panel.querySelector('.entry-mode-toggle');
+      if (toggle) {
+        $$('.entry-mode-btn', toggle).forEach(b => b.classList.toggle('active',
+          (b.dataset.mode === 'quick') === !!_quickEntry[kind]));
+      }
+    }
+    bind();
+  }
+
+  function bindQuickEntry(kind, workingArr) {
+    const inputs = $$(`.quick-entry[data-kind="${kind}"] .qe-input`, container);
+    const allDrivers = season.drivers;
+
+    const focusNextEmpty = (afterPos) => {
+      const all = $$(`.quick-entry[data-kind="${kind}"] .qe-input`, container);
+      for (const inp of all) {
+        if (Number(inp.dataset.pos) > afterPos) { inp.focus(); inp.select(); return; }
+      }
+    };
+
+    const assignDriver = (pos, driverId) => {
+      workingArr.forEach(w => {
+        if (Number(w.position) === pos) { w.position = ''; }
+      });
+      const target = workingArr.find(w => w.driverId === driverId);
+      if (!target) return;
+      target.position = pos;
+      target.dnf = false; target.dsq = false; target.dns = false;
+    };
+
+    inputs.forEach(input => {
+      input.oninput = () => {
+        const text = input.value;
+        const hint = input.nextElementSibling;
+        const excludeIds = workingArr.filter(w => w.position).map(w => w.driverId);
+        const r = resolveDriverShort(text, allDrivers, excludeIds);
+        if (!hint) return;
+        if (r.match) {
+          hint.textContent = `→ ${r.match.name}`;
+          hint.className = 'qe-hint hint-ok';
+          if (/^[A-Za-z]{3}$/.test(text.trim())) {
+            const pos = Number(input.dataset.pos);
+            assignDriver(pos, r.match.id);
+            refreshPanel(kind);
+            setTimeout(() => focusNextEmpty(pos), 0);
+          }
+        } else if (r.ambiguous) {
+          hint.textContent = `${r.ambiguous.length} matches — keep typing`;
+          hint.className = 'qe-hint hint-amb';
+        } else if (text.trim()) {
+          hint.textContent = 'No match';
+          hint.className = 'qe-hint hint-err';
+        } else {
+          hint.textContent = '';
+          hint.className = 'qe-hint';
+        }
+      };
+
+      input.onkeydown = (e) => {
+        if (e.key === 'Enter' || e.key === 'Tab') {
+          const text = input.value;
+          if (!text.trim()) return;
+          e.preventDefault();
+          const excludeIds = workingArr.filter(w => w.position).map(w => w.driverId);
+          const r = resolveDriverShort(text, allDrivers, excludeIds);
+          if (r.match) {
+            const pos = Number(input.dataset.pos);
+            assignDriver(pos, r.match.id);
+            refreshPanel(kind);
+            setTimeout(() => focusNextEmpty(pos), 0);
+          } else if (r.ambiguous) {
+            toast(`Ambiguous — ${r.ambiguous.length} matches: ${r.ambiguous.slice(0, 3).map(d => d.name).join(', ')}${r.ambiguous.length > 3 ? '…' : ''}`, 'warn');
+          } else {
+            toast('No matching driver — try last name or race number', 'error');
+          }
+        } else if (e.key === 'Backspace' && !input.value) {
+          const pos = Number(input.dataset.pos);
+          const prev = workingArr.find(w => Number(w.position) === pos - 1);
+          if (prev) {
+            prev.position = '';
+            refreshPanel(kind);
+            setTimeout(() => {
+              const prevInp = $(`.quick-entry[data-kind="${kind}"] .qe-input[data-pos="${pos - 1}"]`, container);
+              if (prevInp) { prevInp.focus(); prevInp.select(); }
+            }, 0);
+          }
+        }
+      };
+    });
+
+    $$(`.quick-entry[data-kind="${kind}"] .qe-clear`, container).forEach(btn => {
+      btn.onclick = () => {
+        const pos = Number(btn.dataset.pos);
+        const target = workingArr.find(w => Number(w.position) === pos);
+        if (target) { target.position = ''; target.dnf = false; target.dsq = false; target.dns = false; }
+        refreshPanel(kind);
+        setTimeout(() => {
+          const inp = $(`.quick-entry[data-kind="${kind}"] .qe-input[data-pos="${pos}"]`, container);
+          if (inp) inp.focus();
+        }, 0);
+      };
+    });
+  }
+
   bind();
 
   // Session tabs (Qualifying / Sprint / Race) — switch which panel is visible
@@ -8968,9 +9210,11 @@ function renderAll() {
     });
   }
 
+  // Number tickers disabled — caused flicker when pages re-rendered quickly
+  // (e.g. after importing a season). Numbers display statically.
   const TICK_SEL = '.dash-stat-num, .save-stat-num, .record-tile-value, .stat-leader-bignum-num, ' +
                    '.driver-card .driver-stat-num';
-  let tickersAllowed = true;
+  let tickersAllowed = false;
   function tickNumbers(root) {
     if (reduced || !tickersAllowed) return;
     root.querySelectorAll(TICK_SEL).forEach(el => {
@@ -9065,7 +9309,6 @@ function renderAll() {
 
   function bootstrap() {
     refresh();
-    setTimeout(() => { tickersAllowed = false; }, 1200);
 
     const app = document.getElementById('app');
     if (app) {
