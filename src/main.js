@@ -2273,11 +2273,14 @@ function calcAllTimeRecords() {
     Object.values(save.seasons).forEach(season => {
       const dStandings = calcDriverStandings(season);
       const tStandings = calcTeamStandings(season);
-      // aggregate per driver
+      // aggregate per driver — key by normalised name so accent/punctuation
+      // variants combine ("Sergio Pérez" ≡ "Sergio Perez"). A driver who
+      // raced for Mercedes one season and Ferrari the next rolls up to one
+      // career record automatically.
       dStandings.forEach(d => {
         const drv = season.drivers.find(x => x.id === d.driverId);
         if (!drv) return;
-        const key = drv.name.toLowerCase().trim();
+        const key = normalizeDriverName(drv.name) || drv.name.toLowerCase().trim();
         const agg = ensureD(key, drv.name);
         agg.wins += d.wins;
         agg.podiums += d.podiums;
@@ -2318,7 +2321,10 @@ function calcAllTimeRecords() {
           const winner = dStandings.find(d => !d.championshipDsq);
           if (winner) {
             const champD = season.drivers.find(x => x.id === winner.driverId);
-            if (champD) ensureD(champD.name.toLowerCase().trim(), champD.name).championships++;
+            if (champD) {
+              const champKey = normalizeDriverName(champD.name) || champD.name.toLowerCase().trim();
+              ensureD(champKey, champD.name).championships++;
+            }
           }
         }
         if (tStandings.length) {
@@ -6176,6 +6182,65 @@ function matchDriverPresetForName(name) {
   return null;
 }
 
+function normalizeTeamName(s) {
+  const base = (s || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return base
+    .replace(/\b(racing|f1|team|scuderia|motorsport|gp)\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function matchTeamPresetForName(name) {
+  const target = normalizeTeamName(name);
+  if (!target) return null;
+  const all = getEffectiveTeamPresets();
+
+  const exact = all.find(p => normalizeTeamName(p.name) === target);
+  if (exact) {
+    const source = exact.isCustom
+      ? 'custom team preset'
+      : (exact.era === 'Current' ? 'team preset (current)' : `team preset (${exact.era || 'historic'})`);
+    return { ...exact, source };
+  }
+
+  const targetShort = (name || '').toUpperCase().replace(/[^A-Z]/g, '');
+  if (targetShort.length >= 2 && targetShort.length <= 5) {
+    const byShort = all.find(p => (p.short || '').toUpperCase() === targetShort);
+    if (byShort) {
+      const source = byShort.isCustom
+        ? 'custom team preset (short code)'
+        : `team preset (short code, ${byShort.era || 'historic'})`;
+      return { ...byShort, source };
+    }
+  }
+
+  const targetTokens = target.split(/\s+/).filter(t => t.length >= 3);
+  if (!targetTokens.length) return null;
+  const candidates = all.filter(p => {
+    const pn = normalizeTeamName(p.name);
+    if (!pn) return false;
+    const pTokens = pn.split(/\s+/).filter(t => t.length >= 3);
+    if (!pTokens.length) return false;
+    const a = pTokens.every(t => target.includes(t));
+    const b = targetTokens.every(t => pn.includes(t));
+    return a || b;
+  });
+  if (candidates.length === 1) {
+    const m = candidates[0];
+    const source = m.isCustom
+      ? 'custom team preset (keyword)'
+      : `team preset (keyword, ${m.era || 'historic'})`;
+    return { ...m, source };
+  }
+  return null;
+}
+
 // Same-row team-name normalisation. F1.com uses a few different spellings.
 // Maps the raw text → canonical team name, short code, and a default colour.
 const F1_TEAM_NORMALIZER = {
@@ -6412,12 +6477,32 @@ function buildSeasonFromImport(parsed, opts) {
     races: [],
   };
 
-  // 1. Build teams — one per unique team name in driver rows, deduplicated through normalizer
-  const teamByKey = {}; // normalized lowercase team string -> team object
+  // 1. Build teams — two-step preset match (paste text → F1 canonical → preset)
+  const teamByKey = {};
   for (const d of parsed.drivers) {
     const key = d.team.toLowerCase().trim();
     if (teamByKey[key]) continue;
+
+    let preset = matchTeamPresetForName(d.team);
     const canonical = F1_TEAM_NORMALIZER[key];
+    if (!preset && canonical?.name) {
+      preset = matchTeamPresetForName(canonical.name);
+    }
+
+    if (preset) {
+      const teamObj = {
+        id: uid(),
+        name: preset.name,
+        short: preset.short || canonical?.short || d.team.slice(0,3).toUpperCase(),
+        color: preset.color || canonical?.color || '#666666',
+        country: preset.country || '',
+        logo: preset.logo || '',
+      };
+      teamByKey[key] = teamObj;
+      season.teams.push(teamObj);
+      continue;
+    }
+
     const teamObj = {
       id: uid(),
       name: canonical?.name || d.team,
@@ -6741,12 +6826,25 @@ Red Bull
         const driversMatched = driverResolutions.filter(Boolean).length;
         const driversUnmatched = r.drivers.length - driversMatched;
 
+        // Resolve unique teams against the TEAM PRESET library — same two-step
+        // resolution buildSeasonFromImport uses.
+        const uniqueTeamNames = [...new Set(r.drivers.map(d => d.team).filter(Boolean))];
+        const teamResolutions = uniqueTeamNames.map(t => {
+          let p = matchTeamPresetForName(t);
+          if (!p) {
+            const c = F1_TEAM_NORMALIZER[t.toLowerCase().trim()];
+            if (c?.name) p = matchTeamPresetForName(c.name);
+          }
+          return p;
+        });
+        const teamsMatched = teamResolutions.filter(Boolean).length;
+        const teamsUnmatched = uniqueTeamNames.length - teamsMatched;
+
         const completedRaces = r.headers.length;
         const totalResults = r.drivers.reduce((sum, d) => sum + d.cells.filter(Boolean).length, 0);
         const totalSprintPoints = r.drivers.reduce((sum, d) => sum + d.cells.reduce((s, c) => s + (c?.sprintPoints || 0), 0), 0);
         const totalPoles = r.drivers.reduce((sum, d) => sum + d.cells.filter(c => c?.pole).length, 0);
 
-        // Resolution status line — tells the user how many codes / drivers matched where
         const statusParts = [];
         if (fromCalPreset)    statusParts.push(`<span style="color:var(--green,#10b981)">● ${fromCalPreset} race${fromCalPreset === 1 ? '' : 's'} from calendar preset</span>`);
         if (fromTrackPreset)  statusParts.push(`<span style="color:var(--sec-cyan,#00d9ff)">● ${fromTrackPreset} race${fromTrackPreset === 1 ? '' : 's'} from track preset library</span>`);
@@ -6754,6 +6852,8 @@ Red Bull
         if (fallback)         statusParts.push(`<span style="color:var(--sec-yellow,#f59e0b)">● ${fallback} race${fallback === 1 ? '' : 's'} fell back to generic name</span>`);
         if (driversMatched)   statusParts.push(`<span style="color:var(--sec-purple,#a78bfa)">● ${driversMatched} driver${driversMatched === 1 ? '' : 's'} from preset library</span>`);
         if (driversUnmatched) statusParts.push(`<span style="color:var(--text-muted)">● ${driversUnmatched} driver${driversUnmatched === 1 ? '' : 's'} unmatched (blank country/photo)</span>`);
+        if (teamsMatched)     statusParts.push(`<span style="color:var(--sec-green,#10dc88)">● ${teamsMatched} team${teamsMatched === 1 ? '' : 's'} from preset library</span>`);
+        if (teamsUnmatched)   statusParts.push(`<span style="color:var(--text-muted)">● ${teamsUnmatched} team${teamsUnmatched === 1 ? '' : 's'} unmatched (generic color)</span>`);
         const resolutionStatus = statusParts.length ? `
           <div style="font-family:var(--f-mono);font-size:10px;color:var(--text-muted);margin-bottom:10px;padding:8px 12px;background:var(--bg-elev);border-radius:6px;border:1px solid var(--border-dim);line-height:1.8">
             ${statusParts.join(' · ')}
