@@ -1422,6 +1422,7 @@ if (!state.calendarPresets) state.calendarPresets = [];
 // FEATURE #8: Season templates — full snapshots of a season (calendar + teams + drivers, no results)
 if (!state.seasonTemplates) state.seasonTemplates = [];
 let standingsTab = 'drivers';
+let recordsTab = 'book'; // 'book' (career records) | 'tracks' (per-circuit records)
 let seasonWins = []; // populated by calcAllTimeRecords; reset before each call
 
 function loadState() {
@@ -2351,6 +2352,105 @@ function topN(arr, key, n = 5) {
   return arr.slice().sort((a,b) => (b[key] || 0) - (a[key] || 0)).filter(x => (x[key] || 0) > 0).slice(0, n);
 }
 
+/* TRACK records — aggregates per circuit across every save and every season.
+   A "track" is keyed by its country code (BHR, MIA, USA, LVG … each circuit
+   gets its own code on import) so multiple GPs in one nation stay separate.
+   Falls back to the normalised race name when no country code is present. */
+function calcTrackRecords() {
+  const tracks = new Map();
+
+  const ensureTrack = (key, race) => {
+    if (!tracks.has(key)) tracks.set(key, {
+      key,
+      name: shortGrandPrixName(race),
+      fullName: race.name || key,
+      country: race.country || '',
+      circuit: race.circuit || '',
+      flagImage: race.flagImage || '',
+      count: 0,
+      drivers: new Map(),
+    });
+    const t = tracks.get(key);
+    if (!t.flagImage && race.flagImage) t.flagImage = race.flagImage;
+    if (!t.circuit && race.circuit) t.circuit = race.circuit;
+    if (!t.country && race.country) t.country = race.country;
+    return t;
+  };
+  const ensureDrv = (track, dkey, name) => {
+    if (!track.drivers.has(dkey)) track.drivers.set(dkey, {
+      key: dkey, name,
+      wins: 0, poles: 0, fastestLaps: 0, podiums: 0, starts: 0,
+      photo: '', color: '#3a3a4a', country: '',
+    });
+    return track.drivers.get(dkey);
+  };
+
+  Object.values(state.saves).forEach(save => {
+    Object.values(save.seasons).forEach(season => {
+      season.races.forEach(race => {
+        if (!race.completed) return;
+        const tkey = (race.country || '').toUpperCase().trim()
+          || (shortGrandPrixName(race) || '').toLowerCase().trim();
+        if (!tkey) return;
+        const track = ensureTrack(tkey, race);
+        track.count++;
+        // wins / podiums / starts from race results
+        (race.results || []).forEach(res => {
+          const drv = season.drivers.find(d => d.id === res.driverId);
+          if (!drv) return;
+          const dkey = normalizeDriverName(drv.name) || drv.name.toLowerCase().trim();
+          const agg = ensureDrv(track, dkey, drv.name);
+          if (drv.photo) agg.photo = drv.photo;
+          if (drv.country) agg.country = drv.country;
+          const team = season.teams.find(t => t.id === drv.teamId);
+          if (team?.color) agg.color = team.color;
+          if (res.dns) return;
+          agg.starts++;
+          if (res.dsq || res.dnf) return;
+          if (res.position === 1) agg.wins++;
+          if (res.position && res.position <= 3) agg.podiums++;
+        });
+        // pole
+        if (race.poleDriverId) {
+          const drv = season.drivers.find(d => d.id === race.poleDriverId);
+          if (drv) {
+            const dkey = normalizeDriverName(drv.name) || drv.name.toLowerCase().trim();
+            const agg = ensureDrv(track, dkey, drv.name);
+            agg.poles++;
+            if (drv.photo) agg.photo = drv.photo;
+          }
+        }
+        // fastest lap
+        if (race.fastestLapDriverId) {
+          const drv = season.drivers.find(d => d.id === race.fastestLapDriverId);
+          if (drv) {
+            const dkey = normalizeDriverName(drv.name) || drv.name.toLowerCase().trim();
+            const agg = ensureDrv(track, dkey, drv.name);
+            agg.fastestLaps++;
+            if (drv.photo) agg.photo = drv.photo;
+          }
+        }
+      });
+    });
+  });
+
+  return Array.from(tracks.values())
+    .map(t => ({ ...t, drivers: Array.from(t.drivers.values()) }))
+    .sort((a,b) => b.count - a.count || a.name.localeCompare(b.name));
+}
+
+// Return the top scorer of `key` from a list of aggregated drivers as
+// { ...driver, val } — or null when nobody has a positive total.
+function leaderOf(drivers, key) {
+  let best = null;
+  for (const d of drivers) {
+    const v = d[key] || 0;
+    if (v <= 0) continue;
+    if (!best || v > best.val) best = { ...d, val: v };
+  }
+  return best;
+}
+
 /* ---------- render: top bar ---------- */
 function renderTopbar() {
   const selectors = $('#topbar-selectors');
@@ -2946,14 +3046,20 @@ function openDriverModal(driverId) {
   let photoValue = editing?.photo || '';
   const matchedPreset = editing ? matchDriverPresetForName(editing.name) : null;
   const presetPhotos = matchedPreset ? presetPhotosList(matchedPreset) : [];
+  const hasPresetMatch = !!matchedPreset;
   const hasMultiPreset = presetPhotos.length > 1;
   modal({
     title: editing ? `Edit Driver` : `<span class="accent">Sign</span> a Driver`,
     body: `
       <div class="field">
-        <label>Photo${hasMultiPreset ? ` <span style="font-weight:400;color:var(--text-muted);font-family:var(--f-body);text-transform:none;letter-spacing:0">— ${presetPhotos.length} saved in preset</span>` : ''}</label>
+        <label>Photo${hasPresetMatch ? ` <span style="font-weight:400;color:var(--text-muted);font-family:var(--f-body);text-transform:none;letter-spacing:0">— matched to <b>${esc(matchedPreset.name)}</b> preset (${presetPhotos.length} ${presetPhotos.length === 1 ? 'photo' : 'photos'})</span>` : ''}</label>
         <div id="d-photo-mount"></div>
-        ${hasMultiPreset ? `<button type="button" class="btn btn-ghost btn-sm" id="d-browse-preset-photos" style="margin-top:10px;width:100%">📸 BROWSE PRESET PHOTOS (${presetPhotos.length})</button>` : ''}
+        ${hasPresetMatch ? `
+          <div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap">
+            ${presetPhotos.length ? `<button type="button" class="btn btn-ghost btn-sm" id="d-browse-preset-photos" style="flex:1;min-width:140px">📸 ${hasMultiPreset ? `PICK FROM ${presetPhotos.length} PRESET PHOTOS` : 'USE PRESET PHOTO'}</button>` : ''}
+            <button type="button" class="btn btn-ghost btn-sm" id="d-sync-preset" style="flex:1;min-width:140px;border-color:var(--sec-cyan);color:var(--sec-cyan)">⟳ SYNC FROM PRESET</button>
+          </div>
+        ` : ''}
       </div>
       <div class="field">
         <label>Full Name</label>
@@ -2988,10 +3094,42 @@ function openDriverModal(driverId) {
       const browseBtn = $('#d-browse-preset-photos', root);
       if (browseBtn) {
         browseBtn.onclick = () => {
-          pickPresetPhoto(matchedPreset, (url) => {
-            photoValue = url || '';
+          const latest = matchDriverPresetForName(editing?.name || $('#d-name', root)?.value || '');
+          const latestPhotos = latest ? presetPhotosList(latest) : presetPhotos;
+          if (latestPhotos.length <= 1) {
+            photoValue = latestPhotos[0]?.url || '';
             photoWidget.setValue(photoValue);
-          });
+            toast('Applied preset photo', 'success');
+          } else {
+            pickPresetPhoto(latest || matchedPreset, (url) => {
+              photoValue = url || '';
+              photoWidget.setValue(photoValue);
+            });
+          }
+        };
+      }
+      const syncBtn = $('#d-sync-preset', root);
+      if (syncBtn) {
+        syncBtn.onclick = () => {
+          const latest = matchDriverPresetForName(editing?.name || $('#d-name', root)?.value || '');
+          if (!latest) return toast('No preset match', 'warn');
+          const fields = [];
+          if (latest.country) {
+            $('#d-ctry', root).value = latest.country;
+            $('#d-ctry-flag', root).textContent = flag(latest.country);
+            fields.push('country');
+          }
+          if (latest.number) {
+            $('#d-num', root).value = latest.number;
+            fields.push('number');
+          }
+          const defaultPhoto = defaultPresetPhoto(latest);
+          if (defaultPhoto) {
+            photoValue = defaultPhoto;
+            photoWidget.setValue(photoValue);
+            fields.push('photo');
+          }
+          toast(`Synced ${fields.join(', ') || 'nothing — preset is empty'} from preset`, 'success');
         };
       }
       // Live country flag preview
@@ -3746,7 +3884,7 @@ function renderRace() {
 // Race editor session tab state ('quali' | 'sprint' | 'race')
 let _raceEditorTab = 'race';
 let _raceEditingResults = null;
-const _quickEntry = { gp: false, sprint: false };
+const _quickEntry = { gp: true, sprint: true, quali: true };
 
 function resolveDriverShort(text, drivers, excludeIds = []) {
   if (!text) return { match: null };
@@ -3962,15 +4100,23 @@ function renderRaceEditor(container, race) {
     <div class="race-session-panel ${_raceEditorTab === 'quali' ? '' : 'hidden'}" id="panel-quali">
       <div class="dash-block-head">
         <div class="dash-block-title">Qualifying · Saturday</div>
-        <span class="tag" style="color:var(--sec-purple);border-color:var(--sec-purple)">QUALI</span>
+        <div style="display:flex;align-items:center;gap:8px">
+          <div class="entry-mode-toggle" data-target="quali">
+            <button class="entry-mode-btn ${_quickEntry.quali ? '' : 'active'}" data-mode="detailed">DETAILED</button>
+            <button class="entry-mode-btn ${_quickEntry.quali ? 'active' : ''}" data-mode="quick">⚡ QUICK ENTRY</button>
+          </div>
+          <span class="tag" style="color:var(--sec-purple);border-color:var(--sec-purple)">QUALI</span>
+        </div>
       </div>
       <div class="results-editor">
-        <div class="results-editor-head" style="grid-template-columns: 60px 44px 1fr 90px">
+        <div class="results-editor-head ${_quickEntry.quali ? 'hidden' : ''}" style="grid-template-columns: 60px 44px 1fr 90px">
           <div>POS</div><div></div><div>DRIVER</div><div>BEST TIME</div>
         </div>
-        <div id="quali-rows">${qualiRowHTML()}</div>
+        <div id="quali-rows">${_quickEntry.quali ? buildQuickEntryHTML(qualiWorking, 'quali', season.drivers, season) : qualiRowHTML()}</div>
         <div class="results-editor-foot">
-          <span class="results-help">Up to ${MAX_POS} slots. Saves independently.</span>
+          <span class="results-help">${_quickEntry.quali
+            ? 'Quick mode: type 3-letter codes (VER, HAM) or race numbers (1, 44) to set grid order. Lap times entered in detailed mode.'
+            : `Up to ${MAX_POS} slots. Saves independently.`}</span>
           <div style="display:flex;gap:8px">
             <button class="btn btn-ghost" id="quali-import">↧ IMPORT FROM PASTE</button>
             <button class="btn btn-ghost" id="quali-pole-from-p1">↘ APPLY P1 AS RACE POLE</button>
@@ -4115,6 +4261,7 @@ function renderRaceEditor(container, race) {
 
     bindQuickEntry('gp', working);
     if (sprintWorking) bindQuickEntry('sprint', sprintWorking);
+    bindQuickEntry('quali', qualiWorking);
 
     $$('.entry-mode-toggle', container).forEach(toggle => {
       const target = toggle.dataset.target;
@@ -4130,15 +4277,17 @@ function renderRaceEditor(container, race) {
   function refreshPanel(kind) {
     const rowsContainer = kind === 'gp' ? $('#gp-rows', container)
                         : kind === 'sprint' ? $('#sprint-rows', container)
+                        : kind === 'quali' ? $('#quali-rows', container)
                         : null;
     if (!rowsContainer) return;
-    const arr = kind === 'gp' ? working : sprintWorking;
+    const arr = kind === 'gp' ? working : kind === 'sprint' ? sprintWorking : qualiWorking;
     if (_quickEntry[kind]) {
       rowsContainer.innerHTML = buildQuickEntryHTML(arr, kind, season.drivers, season);
     } else {
-      rowsContainer.innerHTML = rowHTML(arr, kind);
+      rowsContainer.innerHTML = kind === 'quali' ? qualiRowHTML() : rowHTML(arr, kind);
     }
-    const panel = $(`#panel-${kind === 'gp' ? 'race' : 'sprint'}`, container);
+    const panelId = kind === 'gp' ? 'race' : kind;
+    const panel = $(`#panel-${panelId}`, container);
     if (panel) {
       const head = panel.querySelector('.results-editor-head');
       if (head) head.classList.toggle('hidden', !!_quickEntry[kind]);
@@ -4147,11 +4296,15 @@ function renderRaceEditor(container, race) {
         if (_quickEntry[kind]) {
           help.textContent = kind === 'gp'
             ? 'Quick mode: type 3-letter codes (VER, HAM) or race numbers (1, 44). Pole / FL / DNF set in detailed mode.'
-            : 'Quick mode: type 3-letter codes (VER, HAM) or race numbers. DNF / DSQ / DNS set in detailed mode.';
+            : kind === 'sprint'
+              ? 'Quick mode: type 3-letter codes (VER, HAM) or race numbers. DNF / DSQ / DNS set in detailed mode.'
+              : 'Quick mode: type 3-letter codes (VER, HAM) or race numbers (1, 44) to set grid order. Lap times entered in detailed mode.';
         } else {
           help.textContent = kind === 'gp'
             ? `Positions 1–${MAX_POS}. DNF = retired, DSQ = disqualified, DNS = did not start. POLE & FL must be unique.`
-            : 'Sprint saves independently of the main race.';
+            : kind === 'sprint'
+              ? 'Sprint saves independently of the main race.'
+              : `Up to ${MAX_POS} slots. Saves independently.`;
         }
       }
       const toggle = panel.querySelector('.entry-mode-toggle');
@@ -5536,7 +5689,16 @@ const RECORD_CATEGORIES = [
 
 function renderRecords() {
   const recs = calcAllTimeRecords();
+  const trackRecs = calcTrackRecords();
   const wrap = document.createElement('div');
+
+  const bodyHTML = (tab) => tab === 'tracks'
+    ? renderTrackRecordsHTML(trackRecs)
+    : recordBookGridHTML(recs);
+
+  const titleHTML = (tab) => tab === 'tracks'
+    ? `TRACK <span style="font-weight:300;color:var(--text-dim)">RECORDS</span>`
+    : `RECORD <span style="font-weight:300;color:var(--text-dim)">BOOK</span>`;
 
   wrap.innerHTML = `
     <div class="f1-results-head">
@@ -5546,9 +5708,38 @@ function renderRecords() {
       </div>
     </div>
 
-    <h1 class="f1-page-title">RECORD <span style="font-weight:300;color:var(--text-dim)">BOOK</span></h1>
+    <h1 class="f1-page-title" id="records-title">${titleHTML(recordsTab)}</h1>
 
-    <div class="records-grid">
+    <div class="f1-filter-strip">
+      <button class="f1-filter ${recordsTab === 'book' ? 'active' : ''}" data-rtab="book">Career Records</button>
+      <button class="f1-filter ${recordsTab === 'tracks' ? 'active' : ''}" data-rtab="tracks">Track Records</button>
+    </div>
+
+    <div id="records-body">${bodyHTML(recordsTab)}</div>
+  `;
+
+  const wireBody = () => {
+    const bodyEl = $('#records-body', wrap);
+    $$('[data-cat]', bodyEl).forEach(tile => tile.onclick = () => openRecordDetail(tile.dataset.cat, recs));
+    $$('[data-track]', bodyEl).forEach(tile => tile.onclick = () => openTrackRecordDetail(tile.dataset.track, trackRecs));
+  };
+
+  setTimeout(() => {
+    wireBody();
+    $$('[data-rtab]', wrap).forEach(b => b.onclick = () => {
+      recordsTab = b.dataset.rtab;
+      $$('[data-rtab]', wrap).forEach(x => x.classList.toggle('active', x === b));
+      $('#records-title', wrap).innerHTML = titleHTML(recordsTab);
+      $('#records-body', wrap).innerHTML = bodyHTML(recordsTab);
+      wireBody();
+    });
+  }, 0);
+  return wrap;
+}
+
+// The career "Record Book" grid (drivers + teams across all seasons).
+function recordBookGridHTML(recs) {
+  return `<div class="records-grid">
       ${RECORD_CATEGORIES.map(cat => {
         const pool = cat.scope === 'drivers' ? recs.drivers : recs.teams;
         const sorted = pool.slice().sort((a,b) => (b[cat.key] || 0) - (a[cat.key] || 0)).filter(x => (x[cat.key] || 0) > 0);
@@ -5616,13 +5807,116 @@ function renderRecords() {
               </div>`}
           </div>`;
       }).join('')}
-    </div>
-  `;
+    </div>`;
+}
 
-  setTimeout(() => {
-    $$('[data-cat]', wrap).forEach(tile => tile.onclick = () => openRecordDetail(tile.dataset.cat, recs));
-  }, 0);
-  return wrap;
+// The per-circuit "Track Records" grid — one tile per circuit, each showing
+// the all-time wins / poles / fastest-lap leader at that track.
+function renderTrackRecordsHTML(trackRecs) {
+  if (!trackRecs.length) {
+    return `<div class="empty"><div class="empty-headline">NO TRACK DATA</div><div class="empty-sub">Complete some races to build track records.</div></div>`;
+  }
+  const miniPortrait = (d) => d.photo
+    ? `<span class="track-rec-portrait" style="background-image:url('${esc(d.photo)}')"></span>`
+    : `<span class="track-rec-portrait"></span>`;
+  const statRow = (label, lead) => `
+    <div class="track-rec-stat">
+      <span class="track-rec-stat-label">${label}</span>
+      ${lead ? `
+        <span class="track-rec-stat-leader">
+          ${miniPortrait(lead)}
+          <span class="track-rec-stat-name">${esc(lead.name)}</span>
+        </span>
+        <span class="track-rec-stat-val">${lead.val}</span>`
+      : `<span class="track-rec-stat-name track-rec-stat-empty">—</span><span class="track-rec-stat-val zero">0</span>`}
+    </div>`;
+  return `<div class="records-grid track-records-grid">
+      ${trackRecs.map(t => {
+        const winLead  = leaderOf(t.drivers, 'wins');
+        const poleLead = leaderOf(t.drivers, 'poles');
+        const flLead   = leaderOf(t.drivers, 'fastestLaps');
+        const flagHTML = raceFlagHTML({ country: t.country, flagImage: t.flagImage }, 24);
+        return `
+          <div class="track-rec-tile" data-track="${esc(t.key)}">
+            <div class="track-rec-head">
+              <span class="track-rec-flag">${flagHTML}</span>
+              <div class="track-rec-titlewrap">
+                <div class="track-rec-name">${esc(t.name)}</div>
+                <div class="track-rec-sub">${t.count} EDITION${t.count === 1 ? '' : 'S'}</div>
+              </div>
+            </div>
+            <div class="track-rec-stats">
+              ${statRow('WINS', winLead)}
+              ${statRow('POLES', poleLead)}
+              ${statRow('FASTEST LAP', flLead)}
+            </div>
+            <div class="record-tile-cta">VIEW TRACK HISTORY →</div>
+          </div>`;
+      }).join('')}
+    </div>`;
+}
+
+// Full per-track breakdown — ranked leaderboards for wins/poles/FL/podiums.
+function openTrackRecordDetail(trackKey, trackRecs) {
+  const t = trackRecs.find(x => x.key === trackKey); if (!t) return;
+  const sections = [
+    { key: 'wins',        label: 'Most Wins' },
+    { key: 'poles',       label: 'Most Poles' },
+    { key: 'fastestLaps', label: 'Fastest Laps' },
+    { key: 'podiums',     label: 'Most Podiums' },
+  ];
+  const listFor = (key) => {
+    const sorted = t.drivers.slice().filter(d => (d[key] || 0) > 0).sort((a,b) => (b[key] || 0) - (a[key] || 0));
+    if (!sorted.length) return `<div class="empty"><div class="empty-headline">NO DATA</div><div class="empty-sub">No driver has registered this at ${esc(t.name)} yet.</div></div>`;
+    return `<div class="record-detail-list">
+      ${sorted.map((r, i) => {
+        const rankClass = i === 0 ? 'gold' : i === 1 ? 'silver' : i === 2 ? 'bronze' : '';
+        const accent = r.color || '#3a3a4a';
+        const initials = r.name.split(/\s+/).map(s => s[0] || '').join('').slice(0, 2).toUpperCase();
+        const portraitHTML = r.photo
+          ? `<div class="record-detail-portrait" style="background-image:url('${esc(r.photo)}');border-color:${accent}"></div>`
+          : `<div class="record-detail-portrait" style="border-color:${accent};color:${accent}">${esc(initials)}</div>`;
+        const meta = [
+          r.starts ? `${r.starts} start${r.starts === 1 ? '' : 's'}` : null,
+          r.country ? `${flag(r.country)} ${r.country}` : null,
+        ].filter(Boolean).join(' · ');
+        return `<div class="record-detail-row">
+          <div class="record-detail-rank ${rankClass}">${i + 1}</div>
+          ${portraitHTML}
+          <div>
+            <div class="record-detail-name">${esc(r.name)}</div>
+            <div class="record-detail-meta">${esc(meta || '—')}</div>
+          </div>
+          <div class="record-detail-value">${r[key]}</div>
+        </div>`;
+      }).join('')}
+    </div>`;
+  };
+
+  modal({
+    title: `${esc(t.name)} <span class="accent">· TRACK HISTORY</span>`,
+    size: 'wide',
+    body: `
+      <div class="track-detail-meta">
+        ${raceFlagHTML({ country: t.country, flagImage: t.flagImage }, 22)}
+        <span>${esc(t.fullName || t.name)}</span>
+        ${t.circuit ? `<span class="track-detail-chip">${esc(t.circuit)}</span>` : ''}
+        <span class="track-detail-chip">${t.count} EDITION${t.count === 1 ? '' : 'S'}</span>
+      </div>
+      <div class="f1-filter-strip" id="track-detail-tabs">
+        ${sections.map((s, i) => `<button class="f1-filter ${i === 0 ? 'active' : ''}" data-tsec="${s.key}">${s.label}</button>`).join('')}
+      </div>
+      <div id="track-detail-body">${listFor('wins')}</div>
+    `,
+    footer: `<span style="font-family:var(--f-mono);font-size:10px;color:var(--text-muted);letter-spacing:0.1em;margin-right:auto">${t.drivers.length} DRIVERS</span><button class="btn btn-ghost" data-act="cancel">Close</button>`,
+    onMount: (root, close) => {
+      $('[data-act="cancel"]', root).onclick = close;
+      $$('[data-tsec]', root).forEach(b => b.onclick = () => {
+        $$('[data-tsec]', root).forEach(x => x.classList.toggle('active', x === b));
+        $('#track-detail-body', root).innerHTML = listFor(b.dataset.tsec);
+      });
+    }
+  });
 }
 
 function openRecordDetail(catId, recs) {
@@ -6183,9 +6477,17 @@ function openNewSeasonModal() {
       </div>
 
       <div class="divider" style="margin:16px 0"></div>
-      <button class="btn btn-ghost" id="ns-import-real" style="width:100%;display:flex;flex-direction:column;gap:2px;padding:14px;align-items:flex-start;text-align:left">
+      <button class="btn btn-ghost" id="ns-import-real" style="width:100%;display:flex;flex-direction:column;gap:2px;padding:14px;align-items:flex-start;text-align:left;margin-bottom:8px">
         <div style="font-weight:700;font-family:var(--f-display);font-size:14px;letter-spacing:0.02em">⇡ IMPORT REAL SEASON FROM F1.COM PASTE</div>
         <div style="font-family:var(--f-mono);font-size:10px;color:var(--text-muted);letter-spacing:0.04em;text-transform:none">Skip the form — paste the full standings table and we'll build the season for you</div>
+      </button>
+      <button class="btn btn-ghost" id="ns-import-shot" style="width:100%;display:flex;flex-direction:column;gap:2px;padding:14px;align-items:flex-start;text-align:left;margin-bottom:8px">
+        <div style="font-weight:700;font-family:var(--f-display);font-size:14px;letter-spacing:0.02em">📷 IMPORT FROM SCREENSHOT (MATRIX MODE)</div>
+        <div style="font-family:var(--f-mono);font-size:10px;color:var(--text-muted);letter-spacing:0.04em;text-transform:none">Upload a season-matrix screenshot and fill in a cell grid alongside it — supports pole (P), fastest lap, and sprint subscript points</div>
+      </button>
+      <button class="btn btn-ghost" id="ns-import-csv" style="width:100%;display:flex;flex-direction:column;gap:2px;padding:14px;align-items:flex-start;text-align:left;border-color:var(--sec-cyan)">
+        <div style="font-weight:700;font-family:var(--f-display);font-size:14px;letter-spacing:0.02em;color:var(--sec-cyan)">📊 IMPORT FROM CSV FILE</div>
+        <div style="font-family:var(--f-mono);font-size:10px;color:var(--text-muted);letter-spacing:0.04em;text-transform:none">Upload a .csv with columns: Position, Driver, Team, Points, then race columns. Cells support pole (P), sprint (/N), and fastest lap (F).</div>
       </button>`,
     footer: `<button class="btn btn-ghost" data-act="cancel">Cancel</button><button class="btn btn-primary" data-act="ok">Create Season</button>`,
     onMount: (root, close) => {
@@ -6202,6 +6504,8 @@ function openNewSeasonModal() {
       $('[data-act="ok"]', root).onclick = submit;
       $('[data-act="cancel"]', root).onclick = close;
       $('#ns-import-real', root).onclick = () => { close(); openImportRealSeasonModal(); };
+      $('#ns-import-shot', root).onclick = () => { close(); openImportScreenshotModal(); };
+      $('#ns-import-csv', root).onclick = () => { close(); openImportCSVModal(); };
       setTimeout(() => $('#ns-name', root).focus(), 50);
     }
   });
@@ -6868,6 +7172,7 @@ function buildSeasonFromImport(parsed, opts) {
     const race = raceObjs[ri];
     let anyResults = false;
     let poleDrvId = null;
+    let flDrvId = null;
     for (const d of parsed.drivers) {
       const cell = d.cells[ri];
       if (!cell) continue;
@@ -6882,6 +7187,7 @@ function buildSeasonFromImport(parsed, opts) {
         dns: !!cell.dns,
       });
       if (cell.pole && !poleDrvId) poleDrvId = drvId;
+      if (cell.fastestLap && !flDrvId) flDrvId = drvId;
       // Sprint result if this driver scored sprint points
       if (cell.sprintPoints > 0) {
         const sprintPos = SPRINT_POINT_TO_POS[cell.sprintPoints] || null;
@@ -6895,6 +7201,7 @@ function buildSeasonFromImport(parsed, opts) {
     if (anyResults) {
       race.completed = true;
       race.poleDriverId = poleDrvId;
+      race.fastestLapDriverId = flDrvId;
     }
   }
 
@@ -7187,6 +7494,761 @@ Red Bull
           toast(`Imported ${parsed.drivers.length} driver${parsed.drivers.length === 1 ? '' : 's'} across ${parsed.headers.length} race${parsed.headers.length === 1 ? '' : 's'}`, 'success');
         } catch (e) {
           toast('Import failed: ' + e.message, 'error');
+        }
+      };
+    }
+  });
+}
+
+/* =====================================================
+   TESSERACT.JS — lazy-loaded OCR engine
+   ====================================================== */
+let _tesseractLoading = null;
+function loadTesseract() {
+  if (window.Tesseract) return Promise.resolve(window.Tesseract);
+  if (_tesseractLoading) return _tesseractLoading;
+  _tesseractLoading = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://unpkg.com/tesseract.js@5/dist/tesseract.min.js';
+    s.async = true;
+    s.onload = () => resolve(window.Tesseract);
+    s.onerror = () => { _tesseractLoading = null; reject(new Error('Failed to load Tesseract.js — check your internet connection')); };
+    document.head.appendChild(s);
+  });
+  return _tesseractLoading;
+}
+
+function cropImageDataURL(dataUrl, { leftFraction = 0, rightFraction = 1 } = {}) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const w = img.naturalWidth;
+        const h = img.naturalHeight;
+        const sx = Math.round(w * leftFraction);
+        const sw = Math.max(1, Math.round(w * (rightFraction - leftFraction)));
+        const canvas = document.createElement('canvas');
+        canvas.width = sw;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, sx, 0, sw, h, 0, 0, sw, h);
+        resolve({ dataUrl: canvas.toDataURL('image/png'), width: sw, height: h });
+      } catch (e) { reject(e); }
+    };
+    img.onerror = () => reject(new Error('Could not load image for cropping'));
+    img.src = dataUrl;
+  });
+}
+
+// OCR a season matrix screenshot for driver+team names only. Race-result
+// cells are too small in a typical matrix view for Tesseract to read
+// reliably — user fills those manually.
+async function ocrScreenshotMatrix(imageDataUrl, expectedRaceCount, onProgress) {
+  const Tess = await loadTesseract();
+  onProgress({ status: 'cropping name strip', progress: 0.02 });
+
+  const cropped = await cropImageDataURL(imageDataUrl, { leftFraction: 0, rightFraction: 0.38 });
+
+  onProgress({ status: 'loading worker', progress: 0.06 });
+  const worker = await Tess.createWorker('eng', 1, {
+    logger: m => {
+      if (m.status === 'recognizing text') onProgress({ status: 'reading driver names', progress: 0.1 + m.progress * 0.85 });
+      else if (m.status) onProgress({ status: m.status, progress: 0.06 });
+    }
+  });
+  await worker.setParameters({ tessedit_pageseg_mode: '11' });
+  const result = await worker.recognize(cropped.dataUrl);
+  await worker.terminate();
+  onProgress({ status: 'parsing', progress: 0.96 });
+
+  const words = (result.data.words || []).filter(w =>
+    w && w.text && w.bbox &&
+    w.confidence > 40 &&
+    /[A-Za-z]/.test(w.text) &&
+    w.text.replace(/[^A-Za-z]/g, '').length >= 2
+  );
+  if (!words.length) return { drivers: [] };
+
+  const sortedByY = words.slice().sort((a, b) => (a.bbox.y0 + a.bbox.y1) / 2 - (b.bbox.y0 + b.bbox.y1) / 2);
+  const bands = [];
+  const tol = 14;
+  for (const w of sortedByY) {
+    const yc = (w.bbox.y0 + w.bbox.y1) / 2;
+    let band = bands.find(b => Math.abs(b.yc - yc) < tol);
+    if (!band) { band = { yc, words: [] }; bands.push(band); }
+    band.words.push(w);
+    band.yc = (band.yc * (band.words.length - 1) + yc) / band.words.length;
+  }
+  bands.forEach(b => b.words.sort((a, b) => a.bbox.x0 - b.bbox.x0));
+
+  const HEADER_KEYWORDS = ['POS', 'DRIVER', 'TEAM', 'PTS', 'POINTS'];
+  let headerBandIdx = bands.findIndex(b =>
+    HEADER_KEYWORDS.some(k => b.words.some(w => w.text.toUpperCase().includes(k)))
+  );
+  const dataBands = bands.slice(headerBandIdx >= 0 ? headerBandIdx + 1 : 0);
+
+  const drivers = [];
+  for (const band of dataBands) {
+    if (band.words.length < 1) continue;
+
+    let maxGap = 0, maxGapIdx = -1;
+    for (let i = 1; i < band.words.length; i++) {
+      const gap = band.words[i].bbox.x0 - band.words[i - 1].bbox.x1;
+      if (gap > maxGap) { maxGap = gap; maxGapIdx = i; }
+    }
+    let nameWords = band.words;
+    let teamWords = [];
+    if (maxGap > 22 && maxGapIdx > 0) {
+      nameWords = band.words.slice(0, maxGapIdx);
+      teamWords = band.words.slice(maxGapIdx);
+    }
+
+    const name = nameWords.map(w => w.text.trim()).join(' ').replace(/\s+/g, ' ').trim();
+    const team = teamWords.map(w => w.text.trim()).join(' ').replace(/\s+/g, ' ').trim();
+    if (!name || name.length < 3) continue;
+
+    drivers.push({ name, team, points: 0, cells: [] });
+  }
+
+  onProgress({ status: 'done', progress: 1 });
+  return { drivers };
+}
+
+/* =====================================================
+   SCREENSHOT / MATRIX IMPORTER
+   ====================================================== */
+function openImportScreenshotModal() {
+  if (!state.activeSaveId) return toast('Open a save first', 'warn');
+
+  let imageDataUrl = '';
+  let raceCodes = [];
+  let drivers = [
+    { name: '', team: '', cells: [] },
+    { name: '', team: '', cells: [] },
+  ];
+
+  const ensureCellsLength = () => {
+    drivers.forEach(d => {
+      while (d.cells.length < raceCodes.length) d.cells.push('');
+      d.cells.length = raceCodes.length;
+    });
+  };
+
+  modal({
+    title: `<span class="accent">Import</span> from Screenshot`,
+    size: 'wide',
+    body: `
+      <div class="field-help" style="margin-bottom:14px">
+        Upload a screenshot of any season matrix for visual reference, then fill in the grid below. Each cell uses the same shorthand as the F1 text paste — type <code>1</code>, <code>1P</code>, <code>26</code> (P2 + 6 sprint pts), <code>1P8</code> (P1 + pole + 8 sprint), <code>DNF</code>, <code>DSQ</code>, <code>DNS</code>.
+      </div>
+
+      <div class="field-row">
+        <div class="field"><label>Year</label><input type="number" id="imp2-year" value="${new Date().getFullYear()}"></div>
+        <div class="field"><label>Season Name</label><input type="text" id="imp2-name" placeholder="e.g. 2024 F1 World Championship"></div>
+      </div>
+      <div class="field">
+        <label>Points System</label>
+        <select id="imp2-points">
+          ${POINTS_SYSTEMS.map(p => `<option value="${p.id}" ${p.id === DEFAULT_POINTS_SYSTEM_ID ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+        </select>
+      </div>
+
+      <div class="field">
+        <label>Screenshot reference <span style="font-weight:400;color:var(--text-muted);font-family:var(--f-body)">(optional, displayed as a visual guide)</span></label>
+        <div id="imp2-shot-mount"></div>
+      </div>
+
+      <div class="field">
+        <label>Race calendar codes <span style="font-weight:400;color:var(--text-muted);font-family:var(--f-body)">— space-separated, in calendar order</span></label>
+        <div style="display:flex;gap:8px;align-items:stretch">
+          <select id="imp2-cal-preset" style="flex:1">
+            <option value="">— No preset (type codes manually) —</option>
+            ${(state.calendarPresets || []).map(p => `<option value="${esc(p.id)}">${esc(p.name)} · ${p.races.length} round${p.races.length === 1 ? '' : 's'}</option>`).join('')}
+          </select>
+          <button type="button" class="btn btn-ghost" id="imp2-fill-codes" style="white-space:nowrap" ${!(state.calendarPresets || []).length ? 'disabled' : ''}>↳ FILL FROM PRESET</button>
+        </div>
+        <input type="text" id="imp2-races" placeholder="e.g. BHR SAU AUS AZE MIA MON ESP CAN AUT GBR HUN BEL NED ITA SIN JPN QAT USA MXC SAP LVG ABU" style="font-family:var(--f-mono);font-size:11px;margin-top:8px">
+      </div>
+
+      <div class="field">
+        <label>Driver grid <span style="font-weight:400;color:var(--text-muted);font-family:var(--f-body)">— one row per driver</span></label>
+        <div class="imp2-matrix-wrap" id="imp2-matrix"></div>
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <button type="button" class="btn btn-ghost btn-sm" id="imp2-add-row">+ ADD DRIVER ROW</button>
+          <button type="button" class="btn btn-ghost btn-sm" id="imp2-add-rows-20" style="margin-left:auto">+ FILL TO 20 ROWS</button>
+        </div>
+      </div>
+
+      <div id="imp2-preview-status"></div>`,
+    footer: `<button class="btn btn-ghost" data-act="cancel">Cancel</button><button class="btn btn-primary" data-act="ok">Build Season</button>`,
+    onMount: (root, close) => {
+      const shotMount = $('#imp2-shot-mount', root);
+      const renderShot = () => {
+        shotMount.innerHTML = imageDataUrl ? `
+          <div class="imp2-shot-frame">
+            <img src="${esc(imageDataUrl)}" class="imp2-shot-img" alt="Season matrix reference">
+            <div class="imp2-shot-actions">
+              <button type="button" class="btn btn-primary btn-sm" id="imp2-ocr">🤖 AUTO-FILL FROM SCREENSHOT</button>
+              <label class="btn btn-ghost btn-sm" style="cursor:pointer">
+                <input type="file" accept="image/*" style="display:none">↻ REPLACE
+              </label>
+              <button type="button" class="btn btn-ghost btn-sm" id="imp2-clear-shot" style="color:var(--red);margin-left:auto">✕ REMOVE</button>
+            </div>
+            <div class="imp2-ocr-status" id="imp2-ocr-status" hidden></div>
+          </div>
+        ` : `
+          <label class="imp2-shot-drop">
+            <input type="file" accept="image/*" style="display:none">
+            <div class="imp2-shot-drop-icon">📷</div>
+            <div class="imp2-shot-drop-title">Upload screenshot</div>
+            <div class="imp2-shot-drop-sub">Click to choose a file (PNG / JPG). After uploading you can click <b>🤖 AUTO-FILL</b> to extract driver + team names via OCR. <b>Race-result cells are too small for OCR — you fill those manually</b> in the grid below.</div>
+          </label>
+        `;
+        const fileInp = shotMount.querySelector('input[type="file"]');
+        if (fileInp) {
+          fileInp.onchange = async (e) => {
+            const f = e.target.files[0]; if (!f) return;
+            try {
+              imageDataUrl = await fileToDataURL(f, 1800);
+              renderShot();
+            } catch (err) { toast(err.message || 'Could not load image', 'error'); }
+          };
+        }
+        const clearBtn = $('#imp2-clear-shot', root);
+        if (clearBtn) clearBtn.onclick = () => { imageDataUrl = ''; renderShot(); };
+
+        const ocrBtn = $('#imp2-ocr', root);
+        const ocrStatus = $('#imp2-ocr-status', root);
+        if (ocrBtn) {
+          ocrBtn.onclick = async () => {
+            if (!imageDataUrl) return toast('Upload a screenshot first', 'warn');
+            ocrBtn.disabled = true;
+            ocrStatus.hidden = false;
+            ocrStatus.innerHTML = `<div class="imp2-ocr-bar"><div class="imp2-ocr-bar-fill" style="width:5%"></div></div><div class="imp2-ocr-msg">Loading OCR engine…</div>`;
+            const barFill = ocrStatus.querySelector('.imp2-ocr-bar-fill');
+            const msgEl = ocrStatus.querySelector('.imp2-ocr-msg');
+            try {
+              const expectedRaces = raceCodes.length || 0;
+              const result = await ocrScreenshotMatrix(imageDataUrl, expectedRaces, (p) => {
+                if (barFill) barFill.style.width = `${Math.round(p.progress * 100)}%`;
+                if (msgEl) msgEl.textContent = `${p.status}…`;
+              });
+              if (!result.drivers.length) {
+                ocrStatus.innerHTML = `<div class="imp2-ocr-msg" style="color:var(--red-light)">⚠ No driver rows detected. Try a higher-resolution screenshot or fill the grid manually.</div>`;
+                ocrBtn.disabled = false;
+                return;
+              }
+              const maxCells = result.drivers.reduce((m, d) => Math.max(m, d.cells.length), 0);
+              if (!raceCodes.length && maxCells > 0) {
+                raceCodes = Array.from({ length: maxCells }, (_, i) => `R${i + 1}`);
+                racesInp.value = raceCodes.join(' ');
+              }
+              drivers = result.drivers.map(d => ({
+                name: d.name,
+                team: d.team,
+                cells: d.cells.slice(0, raceCodes.length).concat(
+                  Array(Math.max(0, raceCodes.length - d.cells.length)).fill('')
+                ),
+              }));
+              ensureCellsLength();
+              renderMatrix();
+              updatePreviewStatus();
+              ocrStatus.innerHTML = `<div class="imp2-ocr-msg" style="color:var(--sec-green)">✓ Extracted ${result.drivers.length} driver name${result.drivers.length === 1 ? '' : 's'} + team${result.drivers.length === 1 ? '' : 's'}. <b>Now fill the race cells manually</b> using the grid below — codes like <code>1</code>, <code>1P</code>, <code>26</code>, <code>DNF</code>.</div>`;
+              ocrBtn.disabled = false;
+            } catch (err) {
+              ocrStatus.innerHTML = `<div class="imp2-ocr-msg" style="color:var(--red-light)">⚠ ${esc(err.message || 'OCR failed')}</div>`;
+              ocrBtn.disabled = false;
+            }
+          };
+        }
+      };
+      renderShot();
+
+      const racesInp = $('#imp2-races', root);
+      const calSel = $('#imp2-cal-preset', root);
+      const updateRaceCodes = () => {
+        raceCodes = racesInp.value.trim().split(/\s+/).filter(Boolean).map(s => s.toUpperCase());
+        ensureCellsLength();
+        renderMatrix();
+      };
+      racesInp.oninput = updateRaceCodes;
+      $('#imp2-fill-codes', root).onclick = () => {
+        const pid = calSel.value;
+        if (!pid) { toast('Pick a calendar preset first', 'warn'); return; }
+        const preset = (state.calendarPresets || []).find(p => p.id === pid);
+        if (!preset) return;
+        const codes = preset.races.slice().sort((a, b) => (a.round || 0) - (b.round || 0))
+          .map(r => (r.country || '').toUpperCase().trim()).filter(Boolean);
+        racesInp.value = codes.join(' ');
+        updateRaceCodes();
+        toast(`Filled ${codes.length} codes from "${preset.name}"`, 'success');
+      };
+
+      const matrixWrap = $('#imp2-matrix', root);
+      const renderMatrix = () => {
+        if (!raceCodes.length) {
+          matrixWrap.innerHTML = `<div class="imp2-matrix-empty">Type some race codes above to start building the grid (e.g. <code>BHR SAU AUS</code>).</div>`;
+          return;
+        }
+        matrixWrap.innerHTML = `
+          <div class="imp2-matrix-scroll">
+            <table class="imp2-matrix-table">
+              <thead>
+                <tr>
+                  <th class="imp2-pos">#</th>
+                  <th class="imp2-name">Driver</th>
+                  <th class="imp2-team">Team</th>
+                  ${raceCodes.map((c, i) => `<th class="imp2-race" title="Race ${i+1}">${esc(c)}</th>`).join('')}
+                  <th class="imp2-del"></th>
+                </tr>
+              </thead>
+              <tbody>
+                ${drivers.map((d, ri) => `
+                  <tr data-row="${ri}">
+                    <td class="imp2-pos">${ri + 1}</td>
+                    <td class="imp2-name"><input type="text" data-field="name" data-row="${ri}" value="${esc(d.name)}" placeholder="Driver name"></td>
+                    <td class="imp2-team"><input type="text" data-field="team" data-row="${ri}" value="${esc(d.team)}" placeholder="Team"></td>
+                    ${raceCodes.map((_, ci) => `<td class="imp2-cell"><input type="text" data-field="cell" data-row="${ri}" data-col="${ci}" value="${esc(d.cells[ci] || '')}" placeholder="—" maxlength="5"></td>`).join('')}
+                    <td class="imp2-del">
+                      <button type="button" class="btn btn-sm btn-danger btn-icon" data-act="del-row" data-row="${ri}" title="Remove driver">✕</button>
+                    </td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>`;
+
+        $$('input[data-field]', matrixWrap).forEach(inp => {
+          inp.oninput = () => {
+            const ri = Number(inp.dataset.row);
+            const f = inp.dataset.field;
+            if (!drivers[ri]) return;
+            if (f === 'cell') {
+              const ci = Number(inp.dataset.col);
+              drivers[ri].cells[ci] = inp.value.trim().toUpperCase();
+              const parsed = parseImportResultCell(inp.value);
+              inp.classList.toggle('imp2-bad', !!inp.value.trim() && !parsed);
+              inp.classList.toggle('imp2-pole', !!parsed?.pole);
+            } else {
+              drivers[ri][f] = inp.value;
+            }
+            updatePreviewStatus();
+          };
+          inp.onkeydown = (e) => {
+            if (e.key === 'Enter' && inp.dataset.field === 'cell') {
+              e.preventDefault();
+              const ri = Number(inp.dataset.row);
+              const ci = Number(inp.dataset.col);
+              const next = matrixWrap.querySelector(`input[data-field="cell"][data-row="${ri+1}"][data-col="${ci}"]`);
+              if (next) { next.focus(); next.select(); }
+            }
+          };
+        });
+        $$('[data-act="del-row"]', matrixWrap).forEach(b => {
+          b.onclick = () => {
+            const ri = Number(b.dataset.row);
+            drivers.splice(ri, 1);
+            renderMatrix();
+            updatePreviewStatus();
+          };
+        });
+      };
+      renderMatrix();
+
+      const statusEl = $('#imp2-preview-status', root);
+      const updatePreviewStatus = () => {
+        const filledDrivers = drivers.filter(d => d.name.trim()).length;
+        const filledCells = drivers.reduce((s, d) => s + d.cells.filter(c => c && parseImportResultCell(c)).length, 0);
+        const totalCells = drivers.length * raceCodes.length;
+        const driverMatches = drivers.filter(d => d.name.trim() && matchDriverPresetForName(d.name)).length;
+        const teamMatches = [...new Set(drivers.map(d => d.team.trim()).filter(Boolean))]
+          .filter(t => matchTeamPresetForName(t)).length;
+        const parts = [];
+        parts.push(`<span style="color:var(--text-soft)">● ${filledDrivers} drivers</span>`);
+        parts.push(`<span style="color:var(--text-soft)">● ${filledCells}/${totalCells} cells filled</span>`);
+        if (driverMatches) parts.push(`<span style="color:var(--sec-purple)">● ${driverMatches} drivers from preset library</span>`);
+        if (teamMatches) parts.push(`<span style="color:var(--sec-green)">● ${teamMatches} teams from preset library</span>`);
+        statusEl.innerHTML = `<div style="font-family:var(--f-mono);font-size:10px;color:var(--text-muted);margin-top:14px;padding:10px 12px;background:var(--bg-elev);border-radius:6px;border:1px solid var(--border-dim);line-height:1.8">${parts.join(' · ')}</div>`;
+      };
+      updatePreviewStatus();
+
+      $('#imp2-add-row', root).onclick = () => {
+        drivers.push({ name: '', team: '', cells: new Array(raceCodes.length).fill('') });
+        renderMatrix();
+        updatePreviewStatus();
+      };
+      $('#imp2-add-rows-20', root).onclick = () => {
+        while (drivers.length < 20) {
+          drivers.push({ name: '', team: '', cells: new Array(raceCodes.length).fill('') });
+        }
+        renderMatrix();
+        updatePreviewStatus();
+      };
+
+      $('[data-act="cancel"]', root).onclick = close;
+      $('[data-act="ok"]', root).onclick = () => {
+        if (!raceCodes.length) return toast('Add some race codes first', 'error');
+        const filled = drivers.filter(d => d.name.trim());
+        if (!filled.length) return toast('Add at least one driver', 'error');
+
+        const ps = getPointsSystem($('#imp2-points', root).value);
+        const parsedDrivers = filled.map((d, idx) => {
+          const cells = d.cells.map(c => parseImportResultCell(c));
+          let pts = 0;
+          cells.forEach((c) => {
+            if (!c) return;
+            if (c.dnf || c.dsq || c.dns || !c.position) return;
+            if (c.position <= (ps.points?.length || 0)) pts += ps.points[c.position - 1];
+            if (c.sprintPoints) pts += c.sprintPoints;
+          });
+          return {
+            pos: idx + 1,
+            name: d.name.trim(),
+            team: d.team.trim() || 'Unassigned',
+            points: pts,
+            cells,
+          };
+        });
+        parsedDrivers.sort((a, b) => b.points - a.points);
+        parsedDrivers.forEach((d, i) => { d.pos = i + 1; });
+
+        const parsed = { headers: raceCodes.slice(), drivers: parsedDrivers, errors: [], formatType: 'matrix' };
+        const opts = {
+          year: $('#imp2-year', root).value,
+          name: $('#imp2-name', root).value,
+          pointsSystemId: $('#imp2-points', root).value,
+          raceCodes: raceCodes.slice(),
+          calendarPresetId: calSel.value || null,
+        };
+        try {
+          buildSeasonFromImport(parsed, opts);
+          close();
+          renderAll();
+          toast(`Built season · ${parsedDrivers.length} drivers · ${raceCodes.length} races`, 'success');
+        } catch (e) {
+          toast('Build failed: ' + e.message, 'error');
+        }
+      };
+    }
+  });
+}
+
+/* =====================================================
+   CSV IMPORT — full-season matrix from a .csv file
+   ====================================================== */
+
+// Split a single CSV line into fields. Handles "quoted, fields" with
+// embedded escaped quotes ("" inside a quoted field).
+function parseCSVLine(line) {
+  const out = [];
+  let cur = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (inQuotes) {
+      if (c === '"' && line[i + 1] === '"') { cur += '"'; i++; }
+      else if (c === '"') { inQuotes = false; }
+      else { cur += c; }
+    } else {
+      if (c === ',') { out.push(cur); cur = ''; }
+      else if (c === '"' && cur === '') { inQuotes = true; }
+      else { cur += c; }
+    }
+  }
+  out.push(cur);
+  return out.map(s => s.trim());
+}
+
+// Parse a single CSV result cell using the documented format.
+// Returns { position, dnf, dsq, dns, pole, sprintPoints, fastestLap } or null
+// for an empty cell. Reused by both the CSV importer and any other place
+// that wants to accept that exact shorthand.
+function parseCsvResultCell(raw) {
+  if (raw == null) return null;
+  let s = String(raw).trim().toUpperCase();
+  if (!s || s === '-' || s === '—' || s === '–') return null;
+  // Strip Unicode subscripts to regular digits (some spreadsheets export them)
+  s = s.replace(/[₀₁₂₃₄₅₆₇₈₉]/g, c => '₀₁₂₃₄₅₆₇₈₉'.indexOf(c).toString());
+
+  let position = null, dnf = false, dsq = false, dns = false;
+  let rest = s;
+
+  // 1. Result token: status keyword OR 1-2 digit position
+  const statusMatch = rest.match(/^(DNF|DSQ|DNS|RET|EX|NC)/);
+  if (statusMatch) {
+    const code = statusMatch[1];
+    if (code === 'DNF' || code === 'RET' || code === 'NC') dnf = true;
+    else if (code === 'DSQ' || code === 'EX') dsq = true;
+    else if (code === 'DNS') dns = true;
+    rest = rest.slice(code.length);
+  } else {
+    const posMatch = rest.match(/^(\d{1,2})/);
+    if (!posMatch) return null;
+    position = parseInt(posMatch[1], 10);
+    if (position < 1 || position > 30) return null;
+    rest = rest.slice(posMatch[1].length);
+  }
+
+  // 2. Optional P (pole)
+  let pole = false;
+  if (rest.startsWith('P')) {
+    pole = true;
+    rest = rest.slice(1);
+  }
+
+  // 3. Optional /N (sprint points)
+  let sprintPoints = 0;
+  const sprintMatch = rest.match(/^\/(\d+)/);
+  if (sprintMatch) {
+    sprintPoints = parseInt(sprintMatch[1], 10) || 0;
+    rest = rest.slice(sprintMatch[0].length);
+  }
+
+  // 4. Optional trailing F (fastest lap) — edge case: DNF already ended on F,
+  //    so a DNF + FL would be "DNFF" (we already consumed DNF, rest === 'F')
+  let fastestLap = false;
+  if (rest === 'F') {
+    fastestLap = true;
+    rest = '';
+  }
+
+  // Tolerate any leftover characters silently — the cell still parses
+
+  return { position, dnf, dsq, dns, pole, sprintPoints, fastestLap };
+}
+
+// Parse the entire CSV text body into a normalised structure the existing
+// buildSeasonFromImport pipeline can consume.
+function parseSeasonCSV(csvText) {
+  const lines = csvText.split(/\r?\n/).filter(l => l.trim());
+  if (lines.length < 2) throw new Error('CSV needs a header row and at least one driver row');
+  const header = parseCSVLine(lines[0]);
+  if (header.length < 5) throw new Error('Header must include Position, Driver, Team, Points, then at least one race code');
+  // Standard order: Position, Driver, Team, Points, then race columns
+  const lowerHeader = header.map(h => h.toLowerCase());
+  const posIdx = lowerHeader.findIndex(h => h.startsWith('pos'));
+  const drvIdx = lowerHeader.findIndex(h => h.startsWith('driv'));
+  const teamIdx = lowerHeader.findIndex(h => h.startsWith('team') || h.startsWith('const'));
+  const ptsIdx = lowerHeader.findIndex(h => h.startsWith('pts') || h.startsWith('point'));
+  if (drvIdx < 0) throw new Error('Header row missing a "Driver" column');
+  // Race columns are everything after the four fixed columns. Use the max index
+  // of the fixed columns as the boundary.
+  const fixedEnd = Math.max(posIdx, drvIdx, teamIdx, ptsIdx) + 1;
+  const raceCodes = header.slice(fixedEnd).map(c => c.toUpperCase().trim()).filter(Boolean);
+  if (!raceCodes.length) throw new Error('No race columns found after Position/Driver/Team/Points');
+
+  const drivers = [];
+  for (let i = 1; i < lines.length; i++) {
+    const cols = parseCSVLine(lines[i]);
+    if (cols.length < fixedEnd) continue;
+    const name = (cols[drvIdx] || '').trim();
+    if (!name) continue;
+    const cells = raceCodes.map((_, ri) => parseCsvResultCell(cols[fixedEnd + ri] || ''));
+    drivers.push({
+      pos: posIdx >= 0 ? parseInt(cols[posIdx], 10) || (drivers.length + 1) : (drivers.length + 1),
+      name,
+      team: teamIdx >= 0 ? (cols[teamIdx] || '').trim() : '',
+      points: ptsIdx >= 0 ? parseInt((cols[ptsIdx] || '0').replace(/[^\d]/g, ''), 10) || 0 : 0,
+      cells,
+    });
+  }
+  if (!drivers.length) throw new Error('No driver rows found below the header');
+  return { headers: raceCodes, drivers, errors: [], formatType: 'csv' };
+}
+
+function openImportCSVModal() {
+  if (!state.activeSaveId) return toast('Open a save first', 'warn');
+  let parsedCSV = null;
+
+  modal({
+    title: `<span class="accent">CSV Import</span> — Full Season`,
+    size: 'wide',
+    body: `
+      <div class="field-help" style="margin-bottom:14px">
+        Upload a CSV with the columns <code>Position, Driver, Team, Points</code> followed by race columns in calendar order (e.g. <code>BHR, SAU, AUS, ...</code>). Each cell uses the shorthand below.
+      </div>
+
+      <details style="margin-bottom:14px;background:var(--bg-elev);border-radius:6px;padding:10px 14px">
+        <summary style="cursor:pointer;font-family:var(--f-mono);font-size:11px;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-soft)">▸ Cell format reference</summary>
+        <div style="font-family:var(--f-mono);font-size:10px;color:var(--text-muted);margin-top:10px;line-height:1.7">
+          Each cell is built from up to four parts (in this exact order):<br>
+          <b style="color:var(--text)">Result</b> — position (<code>1</code>, <code>2</code>, <code>17</code>) or status (<code>DNF</code>, <code>DSQ</code>, <code>DNS</code>). Empty cell = didn't compete.<br>
+          <b style="color:var(--text)">P</b> — pole position in the main race<br>
+          <b style="color:var(--text)">/N</b> — sprint points (1-8) on sprint weekends<br>
+          <b style="color:var(--text)">F</b> — fastest lap (1 championship pt if in top 10)<br><br>
+          <b style="color:var(--text)">Examples</b><br>
+          <code>4</code> — finished 4th<br>
+          <code>1P</code> — won from pole<br>
+          <code>2F</code> — 2nd + fastest lap<br>
+          <code>3P/7</code> — 3rd from pole + 7 sprint pts (= sprint P2)<br>
+          <code>1P/8F</code> — won from pole, won the sprint, set FL (perfect weekend)<br>
+          <code>DNF/3</code> — retired, 3 sprint pts (= sprint P6)<br>
+          <code>DSQ</code> — disqualified<br>
+          <i>(empty)</i> — did not compete this round
+        </div>
+      </details>
+
+      <div class="field-row">
+        <div class="field"><label>Year</label><input type="number" id="csv-year" value="${new Date().getFullYear()}"></div>
+        <div class="field"><label>Season Name</label><input type="text" id="csv-name" placeholder="e.g. 2024 F1 World Championship"></div>
+      </div>
+      <div class="field">
+        <label>Points System</label>
+        <select id="csv-points">
+          ${POINTS_SYSTEMS.map(p => `<option value="${p.id}" ${p.id === DEFAULT_POINTS_SYSTEM_ID ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field">
+        <label>Match races to a saved calendar preset <span style="font-weight:400;color:var(--text-muted);font-family:var(--f-body)">(optional)</span></label>
+        <select id="csv-cal-preset">
+          <option value="">— Use the CSV's race codes verbatim —</option>
+          ${(state.calendarPresets || []).map(p => `<option value="${esc(p.id)}">${esc(p.name)} · ${p.races.length} round${p.races.length === 1 ? '' : 's'}</option>`).join('')}
+        </select>
+      </div>
+
+      <div class="field">
+        <label>CSV file</label>
+        <div id="csv-drop-mount"></div>
+      </div>
+
+      <div class="field">
+        <label>…or paste CSV text directly</label>
+        <textarea id="csv-text" rows="8" placeholder='Position,Driver,Team,Points,BHR,SAU,AUS,...
+1,Max Verstappen,Red Bull,575,1P,2,1P/8F,...' style="font-family:var(--f-mono);font-size:11px;width:100%;min-height:160px"></textarea>
+      </div>
+
+      <div id="csv-preview"></div>`,
+    footer: `<button class="btn btn-ghost" data-act="cancel">Cancel</button><button class="btn btn-ghost" data-act="parse">⚙ VALIDATE</button><button class="btn btn-primary" data-act="ok" disabled>Build Season</button>`,
+    onMount: (root, close) => {
+      const ta = $('#csv-text', root);
+      const preview = $('#csv-preview', root);
+      const okBtn = $('[data-act="ok"]', root);
+      const calSel = $('#csv-cal-preset', root);
+
+      // File-drop / picker
+      const dropMount = $('#csv-drop-mount', root);
+      dropMount.innerHTML = `
+        <label class="csv-drop">
+          <input type="file" accept=".csv,text/csv,text/plain" style="display:none">
+          <div class="csv-drop-icon">📊</div>
+          <div class="csv-drop-title">Click to choose a CSV file</div>
+          <div class="csv-drop-sub">Or paste the CSV text into the textarea below. UTF-8 encoding recommended.</div>
+        </label>
+        <div class="csv-drop-filename" id="csv-drop-filename" hidden></div>`;
+      const fileInp = dropMount.querySelector('input[type="file"]');
+      const fileLabel = $('#csv-drop-filename', root);
+      fileInp.onchange = async () => {
+        const f = fileInp.files[0]; if (!f) return;
+        try {
+          const text = await f.text();
+          ta.value = text;
+          fileLabel.hidden = false;
+          fileLabel.textContent = `✓ Loaded ${f.name} (${(f.size / 1024).toFixed(1)} KB)`;
+          validate();
+        } catch (e) { toast('Could not read file: ' + e.message, 'error'); }
+      };
+
+      const validate = () => {
+        const raw = ta.value;
+        if (!raw.trim()) {
+          preview.innerHTML = '<div class="empty-row" style="padding:14px">Upload a CSV file or paste CSV text to validate.</div>';
+          okBtn.disabled = true; parsedCSV = null; return;
+        }
+        try {
+          parsedCSV = parseSeasonCSV(raw);
+        } catch (e) {
+          preview.innerHTML = `<div class="storage-warning" style="margin-top:14px"><div class="storage-warning-head">⚠ Couldn't parse</div><div class="storage-warning-body">${esc(e.message)}</div></div>`;
+          okBtn.disabled = true; parsedCSV = null; return;
+        }
+        okBtn.disabled = false;
+
+        // Stats for the preview header
+        const r = parsedCSV;
+        const totalCells = r.drivers.length * r.headers.length;
+        const filledCells = r.drivers.reduce((s, d) => s + d.cells.filter(Boolean).length, 0);
+        const totalPoles = r.drivers.reduce((s, d) => s + d.cells.filter(c => c?.pole).length, 0);
+        const totalFLs = r.drivers.reduce((s, d) => s + d.cells.filter(c => c?.fastestLap).length, 0);
+        const totalSprintPts = r.drivers.reduce((s, d) => s + d.cells.reduce((sp, c) => sp + (c?.sprintPoints || 0), 0), 0);
+        const driverHits = r.drivers.filter(d => matchDriverPresetForName(d.name)).length;
+        const teamHits = [...new Set(r.drivers.map(d => d.team).filter(Boolean))]
+          .filter(t => matchTeamPresetForName(t) || F1_TEAM_NORMALIZER[t.toLowerCase().trim()]).length;
+
+        const status = [
+          `<span style="color:var(--text-soft)">● ${r.drivers.length} drivers · ${r.headers.length} races</span>`,
+          `<span style="color:var(--text-soft)">● ${filledCells}/${totalCells} cells filled</span>`,
+          totalPoles ? `<span style="color:var(--sec-blue)">● ${totalPoles} poles</span>` : null,
+          totalFLs ? `<span style="color:var(--sec-purple)">● ${totalFLs} fastest laps</span>` : null,
+          totalSprintPts ? `<span style="color:var(--sec-yellow)">● ${totalSprintPts} sprint points</span>` : null,
+          driverHits ? `<span style="color:var(--sec-purple)">● ${driverHits} drivers from preset library</span>` : null,
+          teamHits ? `<span style="color:var(--sec-green)">● ${teamHits} teams from preset library</span>` : null,
+        ].filter(Boolean).join(' · ');
+
+        preview.innerHTML = `
+          <div style="margin-top:16px">
+            <div style="font-family:var(--f-mono);font-size:10px;color:var(--text-muted);margin-bottom:10px;padding:10px 12px;background:var(--bg-elev);border-radius:6px;border:1px solid var(--border-dim);line-height:1.8">
+              ${status}
+            </div>
+            <div style="overflow-x:auto;border:1px solid var(--border-dim);border-radius:6px;max-height:380px;overflow-y:auto">
+              <table style="border-collapse:collapse;font-family:var(--f-mono);font-size:11px;width:max-content;min-width:100%">
+                <thead><tr style="background:var(--bg-elev)">
+                  <th style="padding:8px 10px;text-align:left;border-bottom:1px solid var(--border)">POS</th>
+                  <th style="padding:8px 10px;text-align:left;border-bottom:1px solid var(--border)">DRIVER</th>
+                  <th style="padding:8px 10px;text-align:left;border-bottom:1px solid var(--border)">TEAM</th>
+                  <th style="padding:8px 10px;text-align:right;border-bottom:1px solid var(--border)">PTS</th>
+                  ${r.headers.map(h => `<th style="padding:8px 6px;text-align:center;border-bottom:1px solid var(--border);font-size:9px;letter-spacing:0.12em">${esc(h)}</th>`).join('')}
+                </tr></thead>
+                <tbody>
+                  ${r.drivers.map(d => `
+                    <tr style="border-bottom:1px solid var(--border-dim)">
+                      <td style="padding:6px 10px;color:var(--text-muted)">${d.pos}</td>
+                      <td style="padding:6px 10px;font-weight:600;white-space:nowrap">${esc(d.name)}</td>
+                      <td style="padding:6px 10px;color:var(--text-soft);white-space:nowrap">${esc(d.team)}</td>
+                      <td style="padding:6px 10px;text-align:right;font-weight:700">${d.points}</td>
+                      ${d.cells.map(c => {
+                        if (!c) return `<td style="padding:6px;text-align:center;color:var(--text-dim);opacity:0.5">—</td>`;
+                        let txt = '', col = 'var(--text)';
+                        if (c.dnf) { txt = 'DNF'; col = 'var(--red)'; }
+                        else if (c.dsq) { txt = 'DSQ'; col = 'var(--red)'; }
+                        else if (c.dns) { txt = 'DNS'; col = 'var(--text-muted)'; }
+                        else if (c.position) {
+                          txt = String(c.position);
+                          if (c.position === 1) col = 'var(--gold)';
+                          else if (c.position === 2) col = 'var(--silver)';
+                          else if (c.position === 3) col = 'var(--bronze)';
+                          else if (c.position > 10) col = 'var(--text-muted)';
+                        }
+                        if (c.pole) txt += `<sup style="color:var(--sec-blue);font-size:8px">P</sup>`;
+                        if (c.fastestLap) txt = `<span style="text-decoration:underline;text-decoration-color:var(--sec-purple);text-decoration-thickness:1.5px">${txt}</span>`;
+                        if (c.sprintPoints > 0) txt += `<sub style="color:var(--sec-yellow);font-size:8px;margin-left:1px">${c.sprintPoints}</sub>`;
+                        return `<td style="padding:6px;text-align:center;color:${col};font-weight:600">${txt}</td>`;
+                      }).join('')}
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+            <div class="field-help" style="margin-top:10px">Driver / team / track presets resolve automatically on build. POLE, FASTEST LAP and SPRINT POINTS shown above will all be set on the resulting races.</div>
+          </div>`;
+      };
+
+      ta.oninput = () => { if (parsedCSV) { parsedCSV = null; okBtn.disabled = true; } };
+      $('[data-act="parse"]', root).onclick = validate;
+      $('[data-act="cancel"]', root).onclick = close;
+      okBtn.onclick = () => {
+        if (!parsedCSV) return validate();
+        try {
+          buildSeasonFromImport(parsedCSV, {
+            year: $('#csv-year', root).value,
+            name: $('#csv-name', root).value,
+            pointsSystemId: $('#csv-points', root).value,
+            raceCodes: parsedCSV.headers,
+            calendarPresetId: calSel.value || null,
+          });
+          close();
+          renderAll();
+          toast(`Built season · ${parsedCSV.drivers.length} drivers · ${parsedCSV.headers.length} races`, 'success');
+        } catch (e) {
+          toast('Build failed: ' + e.message, 'error');
         }
       };
     }
@@ -9248,34 +10310,11 @@ function renderAll() {
     });
   }
 
-  const REVEAL_SEL = '.f1-matrix-row, .standings-row, .f1-table-row, .driver-card, .team-card, ' +
-                     '.record-tile, .universe-card, .save-card, .stat-leader-card, ' +
-                     '.record-detail-row, .rc-row, .race-meta-cell, .gp-row';
-  const revealObs = ('IntersectionObserver' in window)
-    ? new IntersectionObserver(entries => {
-        entries.forEach(e => {
-          if (e.isIntersecting) {
-            e.target.classList.add('p1-revealed');
-            revealObs.unobserve(e.target);
-          }
-        });
-      }, { threshold: 0.06, rootMargin: '0px 0px -30px 0px' })
-    : null;
-  function attachReveal(root) {
-    if (!revealObs || reduced) return;
-    const vh = window.innerHeight || 0;
-    root.querySelectorAll(REVEAL_SEL).forEach(el => {
-      if (el.dataset.p1Reveal) return;
-      el.dataset.p1Reveal = '1';
-      const r = el.getBoundingClientRect();
-      if (r.top < vh && r.bottom > 0) {
-        el.classList.add('p1-reveal', 'p1-revealed');
-        return;
-      }
-      el.classList.add('p1-reveal');
-      revealObs.observe(el);
-    });
-  }
+  // Scroll-reveal disabled — caused page-wide flicker when cloud realtime
+  // sync re-rendered card/row content. Cards now appear immediately.
+  const REVEAL_SEL = '';
+  const revealObs = null;
+  function attachReveal(root) { /* no-op */ }
 
   document.addEventListener('pointerdown', (e) => {
     const btn = e.target.closest('.btn, .tab, .race-session-tab');
@@ -9290,10 +10329,21 @@ function renderAll() {
     setTimeout(() => dot.remove(), 700);
   }, { passive: true });
 
+  // Page swap fade — only fires on actual tab changes. Cloud realtime sync
+  // can call renderAll() repeatedly with no view change; firing the fade
+  // each time visibly flickers the records / stats pages.
   let fadeTimer = null;
+  let lastFadeViewKey = null;
   function flashFade() {
     const app = document.getElementById('app');
     if (!app) return;
+    const activeTab = document.querySelector('.tab.active');
+    const viewName = activeTab?.dataset?.tab || '';
+    const backBtn = document.getElementById('race-back');
+    const raceId = backBtn ? (app.querySelector('[data-race]')?.dataset?.race || 'race') : '';
+    const viewKey = `${viewName}|${raceId}`;
+    if (viewKey === lastFadeViewKey) return;
+    lastFadeViewKey = viewKey;
     app.classList.add('p1-just-rendered');
     clearTimeout(fadeTimer);
     fadeTimer = setTimeout(() => app.classList.remove('p1-just-rendered'), 480);
