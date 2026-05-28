@@ -1924,6 +1924,161 @@ tr:hover td { background: rgba(255,255,255,0.012); }
   max-width: 220px;
 }
 
+/* ---- TRACK RECORDS — per-circuit tiles ---- */
+.track-rec-tile {
+  background: linear-gradient(180deg, var(--bg-2), color-mix(in srgb, var(--gold) 4%, var(--bg-2)));
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  padding: 18px 20px;
+  position: relative;
+  overflow: hidden;
+  transition: transform 0.22s var(--ease), border-color 0.22s var(--ease),
+              box-shadow 0.22s var(--ease);
+  cursor: pointer;
+  isolation: isolate;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.track-rec-tile::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, transparent, var(--gold), transparent);
+  opacity: 0.7;
+  transition: opacity 0.22s var(--ease);
+}
+.track-rec-tile:hover {
+  border-color: color-mix(in srgb, var(--gold) 35%, var(--border-hi));
+  transform: translateY(-3px);
+  box-shadow: var(--shadow-3), 0 0 24px rgba(255,215,107,0.12);
+}
+.track-rec-tile:hover::before { opacity: 1; }
+.track-rec-tile > * { position: relative; z-index: 1; }
+
+.track-rec-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.track-rec-flag {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.track-rec-flag img,
+.track-rec-flag .race-flag-img {
+  border-radius: 3px;
+  box-shadow: 0 1px 5px rgba(0,0,0,0.45);
+}
+.track-rec-titlewrap { min-width: 0; }
+.track-rec-name {
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: 17px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.track-rec-sub {
+  font-family: var(--f-mono);
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  margin-top: 3px;
+}
+.track-rec-stats {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.track-rec-stat {
+  display: grid;
+  grid-template-columns: 84px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 11px;
+  background: var(--bg-1);
+  border: 1px solid var(--border-dim);
+  border-radius: var(--r-sm);
+}
+.track-rec-stat-label {
+  font-family: var(--f-mono);
+  font-size: 8.5px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+.track-rec-stat-leader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.track-rec-portrait {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  border: 1.5px solid color-mix(in srgb, var(--gold) 55%, var(--border-hi));
+  background: var(--bg-3) center/cover no-repeat;
+}
+.track-rec-stat-name {
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: 12.5px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.track-rec-stat-empty { color: var(--text-dim); }
+.track-rec-stat-val {
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: 19px;
+  color: var(--gold);
+  font-variant-numeric: tabular-nums;
+}
+.track-rec-stat-val.zero { color: var(--text-dim); }
+
+/* Track-detail modal meta strip */
+.track-detail-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text);
+}
+.track-detail-meta .race-flag-img,
+.track-detail-meta img { border-radius: 3px; box-shadow: 0 1px 5px rgba(0,0,0,0.45); }
+.track-detail-chip {
+  font-family: var(--f-mono);
+  font-size: 9px;
+  font-weight: 400;
+  letter-spacing: 0.14em;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  padding: 3px 9px;
+  background: var(--bg-1);
+  border: 1px solid var(--border-dim);
+  border-radius: 999px;
+}
+
 /* ============== 19. HOME / SAVE SELECTION ============== */
 .home-hero {
   text-align: center;
@@ -9822,6 +9977,7 @@ if (!state.calendarPresets) state.calendarPresets = [];
 // FEATURE #8: Season templates — full snapshots of a season (calendar + teams + drivers, no results)
 if (!state.seasonTemplates) state.seasonTemplates = [];
 let standingsTab = 'drivers';
+let recordsTab = 'book'; // 'book' (career records) | 'tracks' (per-circuit records)
 let seasonWins = []; // populated by calcAllTimeRecords; reset before each call
 
 function loadState() {
@@ -10756,6 +10912,105 @@ function calcAllTimeRecords() {
 
 function topN(arr, key, n = 5) {
   return arr.slice().sort((a,b) => (b[key] || 0) - (a[key] || 0)).filter(x => (x[key] || 0) > 0).slice(0, n);
+}
+
+/* TRACK records — aggregates per circuit across every save and every season.
+   A "track" is keyed by its country code (BHR, MIA, USA, LVG … each circuit
+   gets its own code on import) so multiple GPs in one nation stay separate.
+   Falls back to the normalised race name when no country code is present. */
+function calcTrackRecords() {
+  const tracks = new Map();
+
+  const ensureTrack = (key, race) => {
+    if (!tracks.has(key)) tracks.set(key, {
+      key,
+      name: shortGrandPrixName(race),
+      fullName: race.name || key,
+      country: race.country || '',
+      circuit: race.circuit || '',
+      flagImage: race.flagImage || '',
+      count: 0,
+      drivers: new Map(),
+    });
+    const t = tracks.get(key);
+    if (!t.flagImage && race.flagImage) t.flagImage = race.flagImage;
+    if (!t.circuit && race.circuit) t.circuit = race.circuit;
+    if (!t.country && race.country) t.country = race.country;
+    return t;
+  };
+  const ensureDrv = (track, dkey, name) => {
+    if (!track.drivers.has(dkey)) track.drivers.set(dkey, {
+      key: dkey, name,
+      wins: 0, poles: 0, fastestLaps: 0, podiums: 0, starts: 0,
+      photo: '', color: '#3a3a4a', country: '',
+    });
+    return track.drivers.get(dkey);
+  };
+
+  Object.values(state.saves).forEach(save => {
+    Object.values(save.seasons).forEach(season => {
+      season.races.forEach(race => {
+        if (!race.completed) return;
+        const tkey = (race.country || '').toUpperCase().trim()
+          || (shortGrandPrixName(race) || '').toLowerCase().trim();
+        if (!tkey) return;
+        const track = ensureTrack(tkey, race);
+        track.count++;
+        // wins / podiums / starts from race results
+        (race.results || []).forEach(res => {
+          const drv = season.drivers.find(d => d.id === res.driverId);
+          if (!drv) return;
+          const dkey = normalizeDriverName(drv.name) || drv.name.toLowerCase().trim();
+          const agg = ensureDrv(track, dkey, drv.name);
+          if (drv.photo) agg.photo = drv.photo;
+          if (drv.country) agg.country = drv.country;
+          const team = season.teams.find(t => t.id === drv.teamId);
+          if (team?.color) agg.color = team.color;
+          if (res.dns) return;
+          agg.starts++;
+          if (res.dsq || res.dnf) return;
+          if (res.position === 1) agg.wins++;
+          if (res.position && res.position <= 3) agg.podiums++;
+        });
+        // pole
+        if (race.poleDriverId) {
+          const drv = season.drivers.find(d => d.id === race.poleDriverId);
+          if (drv) {
+            const dkey = normalizeDriverName(drv.name) || drv.name.toLowerCase().trim();
+            const agg = ensureDrv(track, dkey, drv.name);
+            agg.poles++;
+            if (drv.photo) agg.photo = drv.photo;
+          }
+        }
+        // fastest lap
+        if (race.fastestLapDriverId) {
+          const drv = season.drivers.find(d => d.id === race.fastestLapDriverId);
+          if (drv) {
+            const dkey = normalizeDriverName(drv.name) || drv.name.toLowerCase().trim();
+            const agg = ensureDrv(track, dkey, drv.name);
+            agg.fastestLaps++;
+            if (drv.photo) agg.photo = drv.photo;
+          }
+        }
+      });
+    });
+  });
+
+  return Array.from(tracks.values())
+    .map(t => ({ ...t, drivers: Array.from(t.drivers.values()) }))
+    .sort((a,b) => b.count - a.count || a.name.localeCompare(b.name));
+}
+
+// Return the top scorer of `key` from a list of aggregated drivers as
+// { ...driver, val } — or null when nobody has a positive total.
+function leaderOf(drivers, key) {
+  let best = null;
+  for (const d of drivers) {
+    const v = d[key] || 0;
+    if (v <= 0) continue;
+    if (!best || v > best.val) best = { ...d, val: v };
+  }
+  return best;
 }
 
 /* ---------- render: top bar ---------- */
@@ -14053,7 +14308,16 @@ const RECORD_CATEGORIES = [
 
 function renderRecords() {
   const recs = calcAllTimeRecords();
+  const trackRecs = calcTrackRecords();
   const wrap = document.createElement('div');
+
+  const bodyHTML = (tab) => tab === 'tracks'
+    ? renderTrackRecordsHTML(trackRecs)
+    : recordBookGridHTML(recs);
+
+  const titleHTML = (tab) => tab === 'tracks'
+    ? `TRACK <span style="font-weight:300;color:var(--text-dim)">RECORDS</span>`
+    : `RECORD <span style="font-weight:300;color:var(--text-dim)">BOOK</span>`;
 
   wrap.innerHTML = `
     <div class="f1-results-head">
@@ -14063,9 +14327,38 @@ function renderRecords() {
       </div>
     </div>
 
-    <h1 class="f1-page-title">RECORD <span style="font-weight:300;color:var(--text-dim)">BOOK</span></h1>
+    <h1 class="f1-page-title" id="records-title">${titleHTML(recordsTab)}</h1>
 
-    <div class="records-grid">
+    <div class="f1-filter-strip">
+      <button class="f1-filter ${recordsTab === 'book' ? 'active' : ''}" data-rtab="book">Career Records</button>
+      <button class="f1-filter ${recordsTab === 'tracks' ? 'active' : ''}" data-rtab="tracks">Track Records</button>
+    </div>
+
+    <div id="records-body">${bodyHTML(recordsTab)}</div>
+  `;
+
+  const wireBody = () => {
+    const bodyEl = $('#records-body', wrap);
+    $$('[data-cat]', bodyEl).forEach(tile => tile.onclick = () => openRecordDetail(tile.dataset.cat, recs));
+    $$('[data-track]', bodyEl).forEach(tile => tile.onclick = () => openTrackRecordDetail(tile.dataset.track, trackRecs));
+  };
+
+  setTimeout(() => {
+    wireBody();
+    $$('[data-rtab]', wrap).forEach(b => b.onclick = () => {
+      recordsTab = b.dataset.rtab;
+      $$('[data-rtab]', wrap).forEach(x => x.classList.toggle('active', x === b));
+      $('#records-title', wrap).innerHTML = titleHTML(recordsTab);
+      $('#records-body', wrap).innerHTML = bodyHTML(recordsTab);
+      wireBody();
+    });
+  }, 0);
+  return wrap;
+}
+
+// The career "Record Book" grid (drivers + teams across all seasons).
+function recordBookGridHTML(recs) {
+  return `<div class="records-grid">
       ${RECORD_CATEGORIES.map(cat => {
         const pool = cat.scope === 'drivers' ? recs.drivers : recs.teams;
         const sorted = pool.slice().sort((a,b) => (b[cat.key] || 0) - (a[cat.key] || 0)).filter(x => (x[cat.key] || 0) > 0);
@@ -14135,13 +14428,116 @@ function renderRecords() {
               </div>`}
           </div>`;
       }).join('')}
-    </div>
-  `;
+    </div>`;
+}
 
-  setTimeout(() => {
-    $$('[data-cat]', wrap).forEach(tile => tile.onclick = () => openRecordDetail(tile.dataset.cat, recs));
-  }, 0);
-  return wrap;
+// The per-circuit "Track Records" grid — one tile per circuit, each showing
+// the all-time wins / poles / fastest-lap leader at that track.
+function renderTrackRecordsHTML(trackRecs) {
+  if (!trackRecs.length) {
+    return `<div class="empty"><div class="empty-headline">NO TRACK DATA</div><div class="empty-sub">Complete some races to build track records.</div></div>`;
+  }
+  const miniPortrait = (d) => d.photo
+    ? `<span class="track-rec-portrait" style="background-image:url('${esc(d.photo)}')"></span>`
+    : `<span class="track-rec-portrait"></span>`;
+  const statRow = (label, lead) => `
+    <div class="track-rec-stat">
+      <span class="track-rec-stat-label">${label}</span>
+      ${lead ? `
+        <span class="track-rec-stat-leader">
+          ${miniPortrait(lead)}
+          <span class="track-rec-stat-name">${esc(lead.name)}</span>
+        </span>
+        <span class="track-rec-stat-val">${lead.val}</span>`
+      : `<span class="track-rec-stat-name track-rec-stat-empty">—</span><span class="track-rec-stat-val zero">0</span>`}
+    </div>`;
+  return `<div class="records-grid track-records-grid">
+      ${trackRecs.map(t => {
+        const winLead  = leaderOf(t.drivers, 'wins');
+        const poleLead = leaderOf(t.drivers, 'poles');
+        const flLead   = leaderOf(t.drivers, 'fastestLaps');
+        const flagHTML = raceFlagHTML({ country: t.country, flagImage: t.flagImage }, 24);
+        return `
+          <div class="track-rec-tile" data-track="${esc(t.key)}">
+            <div class="track-rec-head">
+              <span class="track-rec-flag">${flagHTML}</span>
+              <div class="track-rec-titlewrap">
+                <div class="track-rec-name">${esc(t.name)}</div>
+                <div class="track-rec-sub">${t.count} EDITION${t.count === 1 ? '' : 'S'}</div>
+              </div>
+            </div>
+            <div class="track-rec-stats">
+              ${statRow('WINS', winLead)}
+              ${statRow('POLES', poleLead)}
+              ${statRow('FASTEST LAP', flLead)}
+            </div>
+            <div class="record-tile-cta">VIEW TRACK HISTORY →</div>
+          </div>`;
+      }).join('')}
+    </div>`;
+}
+
+// Full per-track breakdown — ranked leaderboards for wins/poles/FL/podiums.
+function openTrackRecordDetail(trackKey, trackRecs) {
+  const t = trackRecs.find(x => x.key === trackKey); if (!t) return;
+  const sections = [
+    { key: 'wins',        label: 'Most Wins' },
+    { key: 'poles',       label: 'Most Poles' },
+    { key: 'fastestLaps', label: 'Fastest Laps' },
+    { key: 'podiums',     label: 'Most Podiums' },
+  ];
+  const listFor = (key) => {
+    const sorted = t.drivers.slice().filter(d => (d[key] || 0) > 0).sort((a,b) => (b[key] || 0) - (a[key] || 0));
+    if (!sorted.length) return `<div class="empty"><div class="empty-headline">NO DATA</div><div class="empty-sub">No driver has registered this at ${esc(t.name)} yet.</div></div>`;
+    return `<div class="record-detail-list">
+      ${sorted.map((r, i) => {
+        const rankClass = i === 0 ? 'gold' : i === 1 ? 'silver' : i === 2 ? 'bronze' : '';
+        const accent = r.color || '#3a3a4a';
+        const initials = r.name.split(/\s+/).map(s => s[0] || '').join('').slice(0, 2).toUpperCase();
+        const portraitHTML = r.photo
+          ? `<div class="record-detail-portrait" style="background-image:url('${esc(r.photo)}');border-color:${accent}"></div>`
+          : `<div class="record-detail-portrait" style="border-color:${accent};color:${accent}">${esc(initials)}</div>`;
+        const meta = [
+          r.starts ? `${r.starts} start${r.starts === 1 ? '' : 's'}` : null,
+          r.country ? `${flag(r.country)} ${r.country}` : null,
+        ].filter(Boolean).join(' · ');
+        return `<div class="record-detail-row">
+          <div class="record-detail-rank ${rankClass}">${i + 1}</div>
+          ${portraitHTML}
+          <div>
+            <div class="record-detail-name">${esc(r.name)}</div>
+            <div class="record-detail-meta">${esc(meta || '—')}</div>
+          </div>
+          <div class="record-detail-value">${r[key]}</div>
+        </div>`;
+      }).join('')}
+    </div>`;
+  };
+
+  modal({
+    title: `${esc(t.name)} <span class="accent">· TRACK HISTORY</span>`,
+    size: 'wide',
+    body: `
+      <div class="track-detail-meta">
+        ${raceFlagHTML({ country: t.country, flagImage: t.flagImage }, 22)}
+        <span>${esc(t.fullName || t.name)}</span>
+        ${t.circuit ? `<span class="track-detail-chip">${esc(t.circuit)}</span>` : ''}
+        <span class="track-detail-chip">${t.count} EDITION${t.count === 1 ? '' : 'S'}</span>
+      </div>
+      <div class="f1-filter-strip" id="track-detail-tabs">
+        ${sections.map((s, i) => `<button class="f1-filter ${i === 0 ? 'active' : ''}" data-tsec="${s.key}">${s.label}</button>`).join('')}
+      </div>
+      <div id="track-detail-body">${listFor('wins')}</div>
+    `,
+    footer: `<span style="font-family:var(--f-mono);font-size:10px;color:var(--text-muted);letter-spacing:0.1em;margin-right:auto">${t.drivers.length} DRIVERS</span><button class="btn btn-ghost" data-act="cancel">Close</button>`,
+    onMount: (root, close) => {
+      $('[data-act="cancel"]', root).onclick = close;
+      $$('[data-tsec]', root).forEach(b => b.onclick = () => {
+        $$('[data-tsec]', root).forEach(x => x.classList.toggle('active', x === b));
+        $('#track-detail-body', root).innerHTML = listFor(b.dataset.tsec);
+      });
+    }
+  });
 }
 
 function openRecordDetail(catId, recs) {
