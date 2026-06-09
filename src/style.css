@@ -4771,6 +4771,31 @@ tr:hover td { background: rgba(255,255,255,0.012); }
   flex-shrink: 0;
 }
 
+/* Drivers standings — team column shows the constructor logo large, no name */
+.standings-table td.team-logo-cell { vertical-align: middle; }
+.standings-team-logo {
+  width: 64px;
+  height: 40px;
+  border-radius: var(--r-sm);
+  background-size: contain;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-color: var(--bg-1);
+  border: 1px solid color-mix(in srgb, var(--team-color, var(--border)) 45%, var(--border));
+  display: inline-block;
+  vertical-align: middle;
+}
+.standings-team-logo.no-img {
+  display: inline-grid;
+  place-items: center;
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: 0.04em;
+  color: var(--team-color, var(--text-soft));
+  background: color-mix(in srgb, var(--team-color, var(--bg-3)) 14%, var(--bg-1));
+}
+
 /* Points cell — HUGE and dramatic */
 .standings-table tbody tr.standings-row > td.points-cell {
   font-family: var(--f-display);
