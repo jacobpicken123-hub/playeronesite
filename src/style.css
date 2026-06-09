@@ -8031,6 +8031,52 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
 .preset-badge.edited { color: var(--sec-cyan); background: rgba(0,217,255,0.06); }
 .preset-badge.sprint { color: var(--sec-yellow); background: rgba(255,214,10,0.08); }
 
+.preset-abbr {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--f-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  padding: 2px 6px;
+  border-radius: 3px;
+  color: var(--red-light);
+  background: var(--red-soft);
+  border: 1px solid var(--red-line);
+  line-height: 1;
+}
+
+/* Multi-era selector (preset editor) — pick one or more decades */
+.era-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.era-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-2);
+  color: var(--text-muted);
+  font-family: var(--f-display);
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+  user-select: none;
+  transition: all 0.18s var(--ease);
+}
+.era-chip:hover { border-color: var(--border-hi); background: var(--bg-3); color: var(--text-soft); }
+.era-chip input { accent-color: var(--red); cursor: pointer; margin: 0; }
+.era-chip.active {
+  border-color: var(--red);
+  background: var(--red-soft);
+  color: var(--red-light);
+}
+
 .preset-edit-btn {
   width: 36px;
   height: 36px;
