@@ -1169,29 +1169,29 @@ const SAMPLE_COUNTRIES = ['GBR','ITA','GER','FRA','ESP','NED','MEX','BRA','AUS',
    Add your own to the season; everything is editable after.
    ============================================ */
 const DRIVER_PRESETS = [
-  // 2026 SEASON — official grid
-  { name: 'Max Verstappen',       country: 'NED', number: 1,  era: '2026' },
-  { name: 'Isack Hadjar',         country: 'FRA', number: 6,  era: '2026' },
-  { name: 'Charles Leclerc',      country: 'MON', number: 16, era: '2026' },
-  { name: 'Lewis Hamilton',       country: 'GBR', number: 44, era: '2026' },
-  { name: 'George Russell',       country: 'GBR', number: 63, era: '2026' },
-  { name: 'Andrea Kimi Antonelli',country: 'ITA', number: 12, era: '2026' },
-  { name: 'Lando Norris',         country: 'GBR', number: 4,  era: '2026' },
-  { name: 'Oscar Piastri',        country: 'AUS', number: 81, era: '2026' },
-  { name: 'Fernando Alonso',      country: 'ESP', number: 14, era: '2026' },
-  { name: 'Lance Stroll',         country: 'CAN', number: 18, era: '2026' },
-  { name: 'Pierre Gasly',         country: 'FRA', number: 10, era: '2026' },
-  { name: 'Franco Colapinto',     country: 'ARG', number: 43, era: '2026' },
-  { name: 'Alexander Albon',      country: 'THA', number: 23, era: '2026' },
-  { name: 'Carlos Sainz',         country: 'ESP', number: 55, era: '2026' },
-  { name: 'Liam Lawson',          country: 'NZL', number: 30, era: '2026' },
-  { name: 'Arvid Lindblad',       country: 'GBR', number: 8,  era: '2026' },
-  { name: 'Esteban Ocon',         country: 'FRA', number: 31, era: '2026' },
-  { name: 'Oliver Bearman',       country: 'GBR', number: 87, era: '2026' },
-  { name: 'Nico Hülkenberg',      country: 'GER', number: 27, era: '2026' },
-  { name: 'Gabriel Bortoleto',    country: 'BRA', number: 5,  era: '2026' },
-  { name: 'Sergio Pérez',         country: 'MEX', number: 11, era: '2026' },
-  { name: 'Valtteri Bottas',      country: 'FIN', number: 77, era: '2026' },
+  // 2026 SEASON — official grid (driver → 2026 team; abbr + team editable after signing)
+  { name: 'Max Verstappen',       country: 'NED', number: 1,  era: '2026', abbr: 'VER', team: 'Red Bull Racing' },
+  { name: 'Isack Hadjar',         country: 'FRA', number: 6,  era: '2026', abbr: 'HAD', team: 'Red Bull Racing' },
+  { name: 'Charles Leclerc',      country: 'MON', number: 16, era: '2026', abbr: 'LEC', team: 'Ferrari' },
+  { name: 'Lewis Hamilton',       country: 'GBR', number: 44, era: '2026', abbr: 'HAM', team: 'Ferrari' },
+  { name: 'George Russell',       country: 'GBR', number: 63, era: '2026', abbr: 'RUS', team: 'Mercedes' },
+  { name: 'Andrea Kimi Antonelli',country: 'ITA', number: 12, era: '2026', abbr: 'ANT', team: 'Mercedes' },
+  { name: 'Lando Norris',         country: 'GBR', number: 4,  era: '2026', abbr: 'NOR', team: 'McLaren' },
+  { name: 'Oscar Piastri',        country: 'AUS', number: 81, era: '2026', abbr: 'PIA', team: 'McLaren' },
+  { name: 'Fernando Alonso',      country: 'ESP', number: 14, era: '2026', abbr: 'ALO', team: 'Aston Martin' },
+  { name: 'Lance Stroll',         country: 'CAN', number: 18, era: '2026', abbr: 'STR', team: 'Aston Martin' },
+  { name: 'Pierre Gasly',         country: 'FRA', number: 10, era: '2026', abbr: 'GAS', team: 'Alpine' },
+  { name: 'Franco Colapinto',     country: 'ARG', number: 43, era: '2026', abbr: 'COL', team: 'Alpine' },
+  { name: 'Alexander Albon',      country: 'THA', number: 23, era: '2026', abbr: 'ALB', team: 'Williams' },
+  { name: 'Carlos Sainz',         country: 'ESP', number: 55, era: '2026', abbr: 'SAI', team: 'Williams' },
+  { name: 'Liam Lawson',          country: 'NZL', number: 30, era: '2026', abbr: 'LAW', team: 'Racing Bulls' },
+  { name: 'Arvid Lindblad',       country: 'GBR', number: 8,  era: '2026', abbr: 'LIN', team: 'Racing Bulls' },
+  { name: 'Esteban Ocon',         country: 'FRA', number: 31, era: '2026', abbr: 'OCO', team: 'Haas' },
+  { name: 'Oliver Bearman',       country: 'GBR', number: 87, era: '2026', abbr: 'BEA', team: 'Haas' },
+  { name: 'Nico Hülkenberg',      country: 'GER', number: 27, era: '2026', abbr: 'HUL', team: 'Audi' },
+  { name: 'Gabriel Bortoleto',    country: 'BRA', number: 5,  era: '2026', abbr: 'BOR', team: 'Audi' },
+  { name: 'Sergio Pérez',         country: 'MEX', number: 11, era: '2026', abbr: 'PER', team: 'Cadillac' },
+  { name: 'Valtteri Bottas',      country: 'FIN', number: 77, era: '2026', abbr: 'BOT', team: 'Cadillac' },
 
   // CURRENT ERA
   { name: 'Max Verstappen',       country: 'NED', number: 1,  era: 'Current' },
@@ -2154,13 +2154,14 @@ function deleteSeason(id) {
 }
 
 /* ---------- driver / team / race CRUD ---------- */
-function addDriver({ name, number, country, teamId, photo }) {
+function addDriver({ name, number, country, teamId, photo, abbr }) {
   const s = activeSeason(); if (!s) return;
   s.drivers.push({
     id: uid(),
     name: name.trim(),
     number: Number(number) || 0,
     country: (country || '').toUpperCase().slice(0,3),
+    abbr: (abbr || '').toUpperCase().slice(0,3),
     teamId: teamId || null,
     photo: photo || ''
   });
@@ -8486,7 +8487,7 @@ function openPresetEditor(kind, existing, onSaved) {
   if (existing) {
     data = { ...existing };
   } else if (isDriver) {
-    data = { name: '', country: '', number: 1, photo: '', era: 'Current' };
+    data = { name: '', country: '', number: 1, abbr: '', photo: '', era: 'Current' };
   } else if (isTeam) {
     data = { name: '', short: '', color: '#e10600', country: '', logo: '', era: 'Current' };
   } else { // track
@@ -8504,8 +8505,9 @@ function openPresetEditor(kind, existing, onSaved) {
     </div>
     <div class="field-row">
       <div class="field"><label>Country (3-letter code)</label><input type="text" id="pe-country" value="${esc(data.country)}" placeholder="GBR" maxlength="3" style="text-transform:uppercase"></div>
-      <div class="field"><label>Era</label><select id="pe-era">${eraOptions}</select></div>
+      <div class="field"><label>Abbreviation</label><input type="text" id="pe-abbr" value="${esc(data.abbr || '')}" placeholder="HAM" maxlength="3" style="text-transform:uppercase"></div>
     </div>
+    <div class="field"><label>Era</label><select id="pe-era">${eraOptions}</select></div>
     <div class="field">
       <label>Driver Photos <span style="font-weight:400;color:var(--text-muted);font-family:var(--f-body);text-transform:none;letter-spacing:0">— add as many as you like (career eras, helmet variants, etc.)</span></label>
       <div id="pe-photo-mount"></div>
@@ -8649,9 +8651,10 @@ function openPresetEditor(kind, existing, onSaved) {
         if (!name) return toast('Name required', 'error');
         if (isDriver) {
           const number = Math.max(1, Math.min(99, Number($('#pe-number', root).value) || 1));
+          const abbr = $('#pe-abbr', root).value.trim().toUpperCase().slice(0, 3);
           const photos = data.photos || [];
           const defaultPhoto = (photos.find(p => p.isDefault) || photos[0])?.url || '';
-          const updated = { name, country, era, number, photos, photo: defaultPhoto };
+          const updated = { name, country, era, number, abbr, photos, photo: defaultPhoto };
           if (isEdit) savePresetEdit('driver', originalKey, updated);
           else addCustomPreset('driver', updated);
         } else if (isTeam) {
@@ -8746,8 +8749,8 @@ function openDriverPresetSearch() {
             ${portrait}
             <div class="preset-num">${p.number}</div>
             <div class="preset-info">
-              <div class="preset-name">${esc(p.name)} ${badges.join(' ')}</div>
-              <div class="preset-meta">${esc(p.era)}</div>
+              <div class="preset-name">${esc(p.name)} ${p.abbr ? `<span class="preset-abbr">${esc(p.abbr)}</span>` : ''} ${badges.join(' ')}</div>
+              <div class="preset-meta">${esc(p.era)}${p.team ? ` · ${esc(p.team)}` : ''}</div>
             </div>
             <div class="preset-flag">${flagImg(p.country, 18)} <span>${esc(p.country || '')}</span></div>
             <button class="preset-edit-btn" data-edit="${i}" title="Edit preset" aria-label="Edit">
@@ -8766,12 +8769,22 @@ function openDriverPresetSearch() {
             const usedNums = new Set(season.drivers.map(d => d.number));
             let num = p.number || 2;
             while (usedNums.has(num)) num = num + 1 > 99 ? 2 : num + 1;
-            const teamCounts = {};
-            season.teams.forEach(t => teamCounts[t.id] = 0);
-            season.drivers.forEach(d => { if (d.teamId) teamCounts[d.teamId] = (teamCounts[d.teamId] || 0) + 1; });
-            const freeTeam = season.teams.find(t => teamCounts[t.id] < 2) || season.teams[0];
+            // Prefer the driver's preset team (e.g. their 2026 constructor) when it
+            // exists in this season; otherwise drop them in the first open seat.
+            let targetTeam = null;
+            if (p.team) {
+              const want = p.team.toLowerCase().trim();
+              targetTeam = season.teams.find(t => (t.name || '').toLowerCase().trim() === want)
+                        || season.teams.find(t => (t.short || '').toLowerCase().trim() === want);
+            }
+            if (!targetTeam) {
+              const teamCounts = {};
+              season.teams.forEach(t => teamCounts[t.id] = 0);
+              season.drivers.forEach(d => { if (d.teamId) teamCounts[d.teamId] = (teamCounts[d.teamId] || 0) + 1; });
+              targetTeam = season.teams.find(t => teamCounts[t.id] < 2) || season.teams[0];
+            }
             const sign = (photoUrl) => {
-              addDriver({ name: p.name, number: num, country: p.country, teamId: freeTeam.id, photo: photoUrl || '' });
+              addDriver({ name: p.name, number: num, country: p.country, teamId: targetTeam.id, photo: photoUrl || '', abbr: p.abbr || '' });
               toast(`${p.name} signed`, 'success');
               renderList();
               renderMain();
