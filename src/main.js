@@ -1194,8 +1194,8 @@ const DRIVER_PRESETS = [
   { name: 'Valtteri Bottas',      country: 'FIN', number: 77, era: '2026', abbr: 'BOT', team: 'Cadillac' },
 
   // CURRENT ERA
-  { name: 'Max Verstappen',       country: 'NED', number: 1,  era: 'Current' },
-  { name: 'Lewis Hamilton',       country: 'GBR', number: 44, era: 'Current' },
+  { name: 'Max Verstappen',       country: 'NED', number: 1,  era: 'Current', eras: ['Current', '2010s'] },
+  { name: 'Lewis Hamilton',       country: 'GBR', number: 44, era: 'Current', eras: ['Current', '2010s', '2000s'] },
   { name: 'Charles Leclerc',      country: 'MON', number: 16, era: 'Current' },
   { name: 'Lando Norris',         country: 'GBR', number: 4,  era: 'Current' },
   { name: 'George Russell',       country: 'GBR', number: 63, era: 'Current' },
@@ -2199,7 +2199,7 @@ function deleteDriver(id) {
   });
   saveState();
 }
-function addTeam({ name, short, color, country, logo }) {
+function addTeam({ name, short, color, country, logo, presetKey }) {
   const s = activeSeason(); if (!s) return;
   s.teams.push({
     id: uid(),
@@ -2207,7 +2207,8 @@ function addTeam({ name, short, color, country, logo }) {
     short: (short || '').toUpperCase().slice(0,4),
     color: color || '#666',
     country: (country || '').toUpperCase().slice(0,3),
-    logo: logo || ''
+    logo: logo || '',
+    presetKey: presetKey || null
   });
   saveState();
 }
@@ -8392,6 +8393,14 @@ function openImportCSVModal() {
    Each preset has a stable key (`name|era`) used to look up edits.
    --------------------------------------------------------------- */
 function presetKey(p) { return `${(p.name || '').toLowerCase()}|${p.era || ''}`; }
+/* A preset can belong to several decades/eras. `eras` (array) is the source of
+   truth when present; legacy presets with a single `era` string still work. The
+   `era` field is kept as the stable "primary" era used for the preset key. */
+function presetEras(p) {
+  if (Array.isArray(p.eras) && p.eras.length) return p.eras;
+  return p.era ? [p.era] : [];
+}
+const presetEraLabel = (p) => presetEras(p).join(' · ') || '—';
 
 function getEffectiveDriverPresets() {
   const overrides = state.presetOverrides?.drivers || {};
@@ -8452,6 +8461,30 @@ function savePresetEdit(kind, originalKey, updated) {
     state.presetOverrides[target][originalKey] = updated;
   }
   saveState();
+  // Editing a team preset's logo should flow through to teams already added to a
+  // season from that preset — so the user doesn't have to remove and re-add them.
+  if (kind === 'team') {
+    const synced = syncTeamPresetToSeasons(originalKey, updated.name, updated.logo);
+    if (synced) { saveState(); renderMain(); }
+  }
+}
+
+/* Push an edited team preset's image onto every season team created from it.
+   Teams added after this feature carry `presetKey`; older teams are matched by
+   name so existing rosters (e.g. a Ferrari already in the season) update too. */
+function syncTeamPresetToSeasons(originalKey, name, logo) {
+  const nameKey = (name || '').toLowerCase().trim();
+  let changed = 0;
+  Object.values(state.saves || {}).forEach(save => {
+    Object.values(save.seasons || {}).forEach(season => {
+      (season.teams || []).forEach(t => {
+        const matches = (t.presetKey && t.presetKey === originalKey)
+          || (nameKey && (t.name || '').toLowerCase().trim() === nameKey);
+        if (matches) { t.logo = logo || ''; changed++; }
+      });
+    });
+  });
+  return changed;
 }
 
 function addCustomPreset(kind, data) {
@@ -8495,8 +8528,14 @@ function openPresetEditor(kind, existing, onSaved) {
   }
   const originalKey = existing ? presetKey(existing) : null;
 
-  const eraOptions = ERA_FILTERS.filter(e => e !== 'All').map(e =>
-    `<option value="${e}" ${data.era === e ? 'selected' : ''}>${e}</option>`).join('');
+  const _selEras = presetEras(data);
+  const eraChipsHtml = `<div class="field">
+      <label>Eras / Decades <span style="font-weight:400;color:var(--text-muted);font-family:var(--f-body);text-transform:none;letter-spacing:0">— pick one or more (e.g. a driver across several decades)</span></label>
+      <div class="era-chips" id="pe-era">
+        ${ERA_FILTERS.filter(e => e !== 'All').map(e =>
+          `<label class="era-chip${_selEras.includes(e) ? ' active' : ''}"><input type="checkbox" class="pe-era-cb" value="${e}" ${_selEras.includes(e) ? 'checked' : ''}><span>${e}</span></label>`).join('')}
+      </div>
+    </div>`;
 
   const driverFields = `
     <div class="field-row">
@@ -8507,7 +8546,7 @@ function openPresetEditor(kind, existing, onSaved) {
       <div class="field"><label>Country (3-letter code)</label><input type="text" id="pe-country" value="${esc(data.country)}" placeholder="GBR" maxlength="3" style="text-transform:uppercase"></div>
       <div class="field"><label>Abbreviation</label><input type="text" id="pe-abbr" value="${esc(data.abbr || '')}" placeholder="HAM" maxlength="3" style="text-transform:uppercase"></div>
     </div>
-    <div class="field"><label>Era</label><select id="pe-era">${eraOptions}</select></div>
+    ${eraChipsHtml}
     <div class="field">
       <label>Driver Photos <span style="font-weight:400;color:var(--text-muted);font-family:var(--f-body);text-transform:none;letter-spacing:0">— add as many as you like (career eras, helmet variants, etc.)</span></label>
       <div id="pe-photo-mount"></div>
@@ -8519,10 +8558,8 @@ function openPresetEditor(kind, existing, onSaved) {
       <div class="field"><label>Team Name</label><input type="text" id="pe-name" value="${esc(data.name)}" placeholder="e.g. Williams Racing"></div>
       <div class="field" style="max-width:120px"><label>Short</label><input type="text" id="pe-short" value="${esc(data.short)}" placeholder="WIL" maxlength="4" style="text-transform:uppercase"></div>
     </div>
-    <div class="field-row">
-      <div class="field"><label>Country (3-letter code)</label><input type="text" id="pe-country" value="${esc(data.country)}" placeholder="GBR" maxlength="3" style="text-transform:uppercase"></div>
-      <div class="field"><label>Era</label><select id="pe-era">${eraOptions}</select></div>
-    </div>
+    <div class="field"><label>Country (3-letter code)</label><input type="text" id="pe-country" value="${esc(data.country)}" placeholder="GBR" maxlength="3" style="text-transform:uppercase"></div>
+    ${eraChipsHtml}
     <div class="field-row">
       <div class="field" style="max-width:160px">
         <label>Team Colour</label>
@@ -8542,10 +8579,8 @@ function openPresetEditor(kind, existing, onSaved) {
       <div class="field"><label>Circuit</label><input type="text" id="pe-circuit" value="${esc(data.circuit || '')}" placeholder="e.g. Silverstone"></div>
       <div class="field" style="max-width:160px"><label>Length (km)</label><input type="number" id="pe-length" step="0.001" min="0" value="${data.length || ''}" placeholder="5.891"></div>
     </div>
-    <div class="field-row">
-      <div class="field"><label>Country code</label><input type="text" id="pe-country" value="${esc(data.country)}" placeholder="GBR" maxlength="3" style="text-transform:uppercase"></div>
-      <div class="field"><label>Era</label><select id="pe-era">${eraOptions}</select></div>
-    </div>
+    <div class="field"><label>Country code</label><input type="text" id="pe-country" value="${esc(data.country)}" placeholder="GBR" maxlength="3" style="text-transform:uppercase"></div>
+    ${eraChipsHtml}
     <div class="field">
       <label>Flag</label>
       <div id="pe-flag-mount"></div>
@@ -8643,31 +8678,37 @@ function openPresetEditor(kind, existing, onSaved) {
         $('#pe-country', root).oninput = () => renderFlag();
       }
 
+      $$('.pe-era-cb', root).forEach(cb => cb.onchange = () =>
+        cb.closest('.era-chip').classList.toggle('active', cb.checked));
       $('[data-act="cancel"]', root).onclick = close;
       $('[data-act="ok"]', root).onclick = () => {
         const name = $('#pe-name', root).value.trim();
         const country = $('#pe-country', root).value.trim().toUpperCase();
-        const era = $('#pe-era', root).value;
+        // A preset can span multiple decades. Keep the original `era` as the stable
+        // primary (for the preset key); `eras` carries the full set.
+        const eras = $$('.pe-era-cb', root).filter(cb => cb.checked).map(cb => cb.value);
+        if (!eras.length) eras.push(isEdit ? (data.era || 'Current') : 'Current');
+        const era = isEdit ? (data.era || eras[0]) : eras[0];
         if (!name) return toast('Name required', 'error');
         if (isDriver) {
           const number = Math.max(1, Math.min(99, Number($('#pe-number', root).value) || 1));
           const abbr = $('#pe-abbr', root).value.trim().toUpperCase().slice(0, 3);
           const photos = data.photos || [];
           const defaultPhoto = (photos.find(p => p.isDefault) || photos[0])?.url || '';
-          const updated = { name, country, era, number, abbr, photos, photo: defaultPhoto };
+          const updated = { name, country, era, eras, number, abbr, photos, photo: defaultPhoto };
           if (isEdit) savePresetEdit('driver', originalKey, updated);
           else addCustomPreset('driver', updated);
         } else if (isTeam) {
           const short = $('#pe-short', root).value.trim().toUpperCase() || name.slice(0, 3).toUpperCase();
           const color = $('#pe-color-hex', root).value.trim() || '#e10600';
-          const updated = { name, short, color, country, era, logo: data.logo || '' };
+          const updated = { name, short, color, country, era, eras, logo: data.logo || '' };
           if (isEdit) savePresetEdit('team', originalKey, updated);
           else addCustomPreset('team', updated);
         } else { // track
           const circuit = $('#pe-circuit', root).value.trim();
           const length = Number($('#pe-length', root).value) || 0;
           const sprint = $('#pe-sprint', root).checked;
-          const updated = { name, circuit, country, era, length, sprint, flagImage: data.flagImage || '' };
+          const updated = { name, circuit, country, era, eras, length, sprint, flagImage: data.flagImage || '' };
           if (isEdit) savePresetEdit('track', originalKey, updated);
           else addCustomPreset('track', updated);
         }
@@ -8729,9 +8770,9 @@ function openDriverPresetSearch() {
         const present = new Set(season.drivers.map(d => d.name.toLowerCase().trim()));
         const allPresets = getEffectiveDriverPresets();
         const items = allPresets.filter(p => {
-          if (_presetEraFilter !== 'All' && p.era !== _presetEraFilter) return false;
+          if (_presetEraFilter !== 'All' && !presetEras(p).includes(_presetEraFilter)) return false;
           if (!q) return true;
-          return p.name.toLowerCase().includes(q) || (p.country || '').toLowerCase().includes(q) || (p.era || '').toLowerCase().includes(q);
+          return p.name.toLowerCase().includes(q) || (p.country || '').toLowerCase().includes(q) || presetEras(p).some(e => e.toLowerCase().includes(q));
         });
         if (!items.length) {
           list.innerHTML = `<div class="preset-empty">No presets match "${esc(q)}"</div>`;
@@ -8750,7 +8791,7 @@ function openDriverPresetSearch() {
             <div class="preset-num">${p.number}</div>
             <div class="preset-info">
               <div class="preset-name">${esc(p.name)} ${p.abbr ? `<span class="preset-abbr">${esc(p.abbr)}</span>` : ''} ${badges.join(' ')}</div>
-              <div class="preset-meta">${esc(p.era)}${p.team ? ` · ${esc(p.team)}` : ''}</div>
+              <div class="preset-meta">${esc(presetEraLabel(p))}${p.team ? ` · ${esc(p.team)}` : ''}</div>
             </div>
             <div class="preset-flag">${flagImg(p.country, 18)} <span>${esc(p.country || '')}</span></div>
             <button class="preset-edit-btn" data-edit="${i}" title="Edit preset" aria-label="Edit">
@@ -8844,9 +8885,9 @@ function openTeamPresetSearch() {
         const present = new Set(season.teams.map(t => t.name.toLowerCase().trim()));
         const allPresets = getEffectiveTeamPresets();
         const items = allPresets.filter(p => {
-          if (_teamPresetEraFilter !== 'All' && p.era !== _teamPresetEraFilter) return false;
+          if (_teamPresetEraFilter !== 'All' && !presetEras(p).includes(_teamPresetEraFilter)) return false;
           if (!q) return true;
-          return p.name.toLowerCase().includes(q) || (p.country || '').toLowerCase().includes(q) || (p.era || '').toLowerCase().includes(q) || (p.short || '').toLowerCase().includes(q);
+          return p.name.toLowerCase().includes(q) || (p.country || '').toLowerCase().includes(q) || presetEras(p).some(e => e.toLowerCase().includes(q)) || (p.short || '').toLowerCase().includes(q);
         });
         if (!items.length) {
           list.innerHTML = `<div class="preset-empty">No presets match "${esc(q)}"</div>`;
@@ -8865,7 +8906,7 @@ function openTeamPresetSearch() {
             <div class="preset-num" style="color:${p.color}">${esc(p.short)}</div>
             <div class="preset-info">
               <div class="preset-name">${esc(p.name)} ${badges.join(' ')}</div>
-              <div class="preset-meta">${esc(p.era)}</div>
+              <div class="preset-meta">${esc(presetEraLabel(p))}</div>
             </div>
             <div class="preset-flag">${flagImg(p.country, 18)} <span>${esc(p.country || '')}</span></div>
             <button class="preset-edit-btn" data-edit="${i}" title="Edit preset" aria-label="Edit">
@@ -8881,8 +8922,9 @@ function openTeamPresetSearch() {
             if (ev.target.closest('[data-edit]')) return;
             if (row.classList.contains('added')) return;
             const p = items[Number(row.dataset.idx)];
-            // Logo and color copied onto the new team
-            addTeam({ name: p.name, short: p.short, color: p.color, country: p.country, logo: p.logo || '' });
+            // Logo and color copied onto the new team; presetKey links it back to
+            // the preset so later image edits flow through automatically.
+            addTeam({ name: p.name, short: p.short, color: p.color, country: p.country, logo: p.logo || '', presetKey: p.presetKey });
             toast(`${p.name} added`, 'success');
             renderList();
             renderMain();
@@ -8939,12 +8981,12 @@ function openTrackPresetSearch() {
         const present = new Set(season.races.map(r => (r.name || '').toLowerCase().trim() + '|' + (r.country || '').toUpperCase()));
         const allPresets = getEffectiveTrackPresets();
         const items = allPresets.filter(p => {
-          if (_trackPresetEraFilter !== 'All' && p.era !== _trackPresetEraFilter) return false;
+          if (_trackPresetEraFilter !== 'All' && !presetEras(p).includes(_trackPresetEraFilter)) return false;
           if (!q) return true;
           return p.name.toLowerCase().includes(q)
             || (p.circuit || '').toLowerCase().includes(q)
             || (p.country || '').toLowerCase().includes(q)
-            || (p.era || '').toLowerCase().includes(q);
+            || presetEras(p).some(e => e.toLowerCase().includes(q));
         });
         if (!items.length) {
           list.innerHTML = `<div class="preset-empty">No presets match "${esc(q)}"</div>`;
@@ -8966,7 +9008,7 @@ function openTrackPresetSearch() {
             <div class="preset-num preset-num-country">${esc(p.country || '')}</div>
             <div class="preset-info">
               <div class="preset-name">${esc(p.name)} ${badges.join(' ')}</div>
-              <div class="preset-meta">${esc(p.circuit || '')}${lengthStr ? ' · ' + lengthStr : ''} · ${esc(p.era)}</div>
+              <div class="preset-meta">${esc(p.circuit || '')}${lengthStr ? ' · ' + lengthStr : ''} · ${esc(presetEraLabel(p))}</div>
             </div>
             <button class="preset-edit-btn" data-edit="${i}" title="Edit preset" aria-label="Edit">
               <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
