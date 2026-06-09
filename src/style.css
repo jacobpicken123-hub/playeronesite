@@ -8347,3 +8347,35 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
   font-weight: 700;
   margin-right: 4px;
 }
+
+/* =============================================================
+   MOTION KILL-SWITCH  (must stay LAST in the stylesheet)
+   All animations and transitions are forced to run instantly.
+   Why instant instead of `animation:none`: several elements start
+   at opacity:0 and only become visible when their entrance
+   animation finishes (e.g. `.stagger > *`). Disabling the
+   animation outright would leave them invisible. Running it in
+   ~0ms applies the END state immediately — fully visible, zero
+   motion, and no flicker when the page re-renders (cloud sync,
+   imports, tab swaps). Infinite loops are clamped to one
+   iteration so they settle on their final frame instead of
+   strobing at near-zero duration.
+   ============================================================= */
+*, *::before, *::after {
+  animation-duration: 0.001ms !important;
+  animation-delay: 0ms !important;
+  animation-iteration-count: 1 !important;
+  transition: none !important;
+  scroll-behavior: auto !important;
+}
+/* Elements that used an ENTRANCE animation to fade/slide themselves into view
+   start at opacity:0 and only become visible once that animation finishes.
+   With motion killed (and to survive any busy-thread jank) we drop the
+   animation entirely and pin them to their visible end-state, so the topbar,
+   tabs and staggered content are always shown — never stuck on frame 0. */
+.topbar, .tabs, .stagger > * {
+  animation: none !important;
+  opacity: 1 !important;
+  transform: none !important;
+  clip-path: none !important;
+}
