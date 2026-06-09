@@ -8504,6 +8504,38 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
   margin-right: 4px;
 }
 
+/* =============================================================
+   MOTION KILL-SWITCH  (must stay LAST in the stylesheet)
+   All animations and transitions are forced to run instantly.
+   Why instant instead of `animation:none`: several elements start
+   at opacity:0 and only become visible when their entrance
+   animation finishes (e.g. `.stagger > *`). Disabling the
+   animation outright would leave them invisible. Running it in
+   ~0ms applies the END state immediately — fully visible, zero
+   motion, and no flicker when the page re-renders (cloud sync,
+   imports, tab swaps). Infinite loops are clamped to one
+   iteration so they settle on their final frame instead of
+   strobing at near-zero duration.
+   ============================================================= */
+*, *::before, *::after {
+  animation-duration: 0.001ms !important;
+  animation-delay: 0ms !important;
+  animation-iteration-count: 1 !important;
+  transition: none !important;
+  scroll-behavior: auto !important;
+}
+/* Elements that used an ENTRANCE animation to fade/slide themselves into view
+   start at opacity:0 and only become visible once that animation finishes.
+   With motion killed (and to survive any busy-thread jank) we drop the
+   animation entirely and pin them to their visible end-state, so the topbar,
+   tabs and staggered content are always shown — never stuck on frame 0. */
+.topbar, .tabs, .stagger > * {
+  animation: none !important;
+  opacity: 1 !important;
+  transform: none !important;
+  clip-path: none !important;
+}
+
 </style>
 </head>
 <body>
@@ -8594,6 +8626,12 @@ let cloudLastPushHashes = {};
 // In-flight write counter — used to debounce sync after a flurry of edits
 let pendingCloudWrites = 0;
 let cloudSyncTimer = null;
+// Timestamp (ms) until which incoming realtime events are treated as echoes of
+// our OWN writes and ignored. A counter alone wasn't enough: a big import push
+// (hundreds of row inserts) takes longer than the counter stayed elevated, so
+// the echoes slipped through and triggered partial re-pulls — making driver
+// points visibly recalculate. This window stays up for the whole push + drain.
+let cloudEchoSuppressUntil = 0;
 
 /* ---------- AUTH wrappers ---------- */
 async function cloudSignUp(email, password) {
@@ -8678,7 +8716,14 @@ async function cloudPullAllSaves() {
       id: sn.id, name: sn.name, year: sn.year,
       pointsSystemId: sn.points_system_id,
       polePointEnabled: sn.pole_point_enabled,
-      polePointValue: sn.pole_point_value,
+      polePointValue: sn.pole_point_value ?? 1,
+      // Reconstruct the fields calcDriverStandings actually reads
+      // (flPointEnabled / flPointValue) so a pulled season scores identically
+      // to the locally-built one — otherwise points jump on every pull.
+      // fl_point_value isn't stored separately in the cloud schema, so default
+      // to 1 (the standard FL bonus, which matches buildSeasonFromImport).
+      flPointEnabled: sn.fl_enabled,
+      flPointValue: 1,
       flEnabled: sn.fl_enabled,
       drivers: [], teams: [], races: [],
       _cloud: true,
@@ -8812,7 +8857,12 @@ async function cloudPushActive() {
       points_system_id: season.pointsSystemId,
       pole_point_enabled: season.polePointEnabled || false,
       pole_point_value: season.polePointValue || 1,
-      fl_enabled: season.flEnabled !== false,
+      // calcDriverStandings reads season.flPointEnabled — persist THAT, not the
+      // non-existent `flEnabled`. Reading the wrong field used to push a bogus
+      // value, and on pull the real flPointEnabled came back undefined, so the
+      // cloud copy scored fastest laps differently than the local build and the
+      // driver points oscillated on every realtime pull.
+      fl_enabled: season.flPointEnabled !== false,
     };
     const sh = hash(seasonRow);
     if (cloudLastPushHashes[`season:${season.id}`] !== sh) {
@@ -9007,13 +9057,26 @@ function scheduleCloudSync() {
   if (!CLOUD.enabled || !currentUser) return;
   pendingCloudWrites++;
   clearTimeout(cloudSyncTimer);
-  cloudSyncTimer = setTimeout(() => {
-    const n = pendingCloudWrites;
-    pendingCloudWrites = 0;
-    cloudPushActive().catch(e => {
+  cloudSyncTimer = setTimeout(async () => {
+    // Hold the echo-suppression window across the ENTIRE push. cloudPushActive()
+    // can insert hundreds of rows for a freshly imported season; each insert
+    // fires a realtime event back at us. We must keep ignoring those echoes
+    // until the push finishes, otherwise a mid-push pull sees partial results
+    // and the on-screen driver points keep recalculating. A generous ceiling
+    // covers even a very large import; it's reset to a short drain window the
+    // moment the push actually resolves.
+    cloudEchoSuppressUntil = Date.now() + 60000;
+    try {
+      await cloudPushActive();
+    } catch (e) {
       console.warn('[P1] cloud push failed', e);
       // Don't toast on every failure — just log. Local save still worked.
-    });
+    } finally {
+      // Push settled — keep ignoring our own trailing echoes for a short drain
+      // window, then resume reacting to genuine remote (collaborator) changes.
+      pendingCloudWrites = 0;
+      cloudEchoSuppressUntil = Date.now() + 2500;
+    }
   }, 800);
 }
 
@@ -9131,8 +9194,10 @@ function cloudSubscribeRealtime() {
 // On any incoming change, re-pull everything and re-render. Cheap because there are at most a handful of saves.
 let realtimeMergeTimer = null;
 function onCloudChange(payload) {
-  // Ignore changes we just pushed (avoids feedback loops). Heuristic: if we have pending writes, skip.
-  if (pendingCloudWrites > 0) return;
+  // Ignore changes we just pushed (avoids feedback loops). We skip while either
+  // a write is pending OR we're still inside the post-push echo window — the
+  // latter covers big imports whose row inserts echo back over several seconds.
+  if (pendingCloudWrites > 0 || Date.now() < cloudEchoSuppressUntil) return;
   clearTimeout(realtimeMergeTimer);
   realtimeMergeTimer = setTimeout(async () => {
     try {
@@ -9295,9 +9360,11 @@ function renderPublicView(data) {
       const localShape = {
         ...sn,
         pointsSystemId: sn.points_system_id,
+        flPointEnabled: sn.fl_enabled,
+        flPointValue: 1,
         flEnabled: sn.fl_enabled,
         polePointEnabled: sn.pole_point_enabled,
-        polePointValue: sn.pole_point_value,
+        polePointValue: sn.pole_point_value ?? 1,
         drivers: drivers.map(d => ({ id: d.id, name: d.name, number: d.number, teamId: d.team_id, dsq: d.dsq })),
         teams,
         races: races.map(r => ({
@@ -9685,6 +9752,30 @@ const SAMPLE_COUNTRIES = ['GBR','ITA','GER','FRA','ESP','NED','MEX','BRA','AUS',
    Add your own to the season; everything is editable after.
    ============================================ */
 const DRIVER_PRESETS = [
+  // 2026 SEASON — official grid
+  { name: 'Max Verstappen',       country: 'NED', number: 1,  era: '2026' },
+  { name: 'Isack Hadjar',         country: 'FRA', number: 6,  era: '2026' },
+  { name: 'Charles Leclerc',      country: 'MON', number: 16, era: '2026' },
+  { name: 'Lewis Hamilton',       country: 'GBR', number: 44, era: '2026' },
+  { name: 'George Russell',       country: 'GBR', number: 63, era: '2026' },
+  { name: 'Andrea Kimi Antonelli',country: 'ITA', number: 12, era: '2026' },
+  { name: 'Lando Norris',         country: 'GBR', number: 4,  era: '2026' },
+  { name: 'Oscar Piastri',        country: 'AUS', number: 81, era: '2026' },
+  { name: 'Fernando Alonso',      country: 'ESP', number: 14, era: '2026' },
+  { name: 'Lance Stroll',         country: 'CAN', number: 18, era: '2026' },
+  { name: 'Pierre Gasly',         country: 'FRA', number: 10, era: '2026' },
+  { name: 'Franco Colapinto',     country: 'ARG', number: 43, era: '2026' },
+  { name: 'Alexander Albon',      country: 'THA', number: 23, era: '2026' },
+  { name: 'Carlos Sainz',         country: 'ESP', number: 55, era: '2026' },
+  { name: 'Liam Lawson',          country: 'NZL', number: 30, era: '2026' },
+  { name: 'Arvid Lindblad',       country: 'GBR', number: 8,  era: '2026' },
+  { name: 'Esteban Ocon',         country: 'FRA', number: 31, era: '2026' },
+  { name: 'Oliver Bearman',       country: 'GBR', number: 87, era: '2026' },
+  { name: 'Nico Hülkenberg',      country: 'GER', number: 27, era: '2026' },
+  { name: 'Gabriel Bortoleto',    country: 'BRA', number: 5,  era: '2026' },
+  { name: 'Sergio Pérez',         country: 'MEX', number: 11, era: '2026' },
+  { name: 'Valtteri Bottas',      country: 'FIN', number: 77, era: '2026' },
+
   // CURRENT ERA
   { name: 'Max Verstappen',       country: 'NED', number: 1,  era: 'Current' },
   { name: 'Lewis Hamilton',       country: 'GBR', number: 44, era: 'Current' },
@@ -9794,13 +9885,26 @@ const DRIVER_PRESETS = [
   { name: 'Tony Brooks',          country: 'GBR', number: 8,  era: '1950s' },
 ];
 
-const ERA_FILTERS = ['All', 'Current', '2010s', '2000s', '1990s', '1980s', '1970s', '1960s', '1950s'];
+const ERA_FILTERS = ['All', '2026', 'Current', '2010s', '2000s', '1990s', '1980s', '1970s', '1960s', '1950s'];
 
 /* =====================================================
    TEAM PRESETS — searchable library of well-known constructors.
    Brand colours are approximations; users can edit after signing.
    ===================================================== */
 const TEAM_PRESETS = [
+  // 2026 SEASON — official constructors
+  { name: 'Red Bull Racing',  short: 'RBR', color: '#1e40af', country: 'AUT', era: '2026' },
+  { name: 'Ferrari',          short: 'FER', color: '#dc0000', country: 'ITA', era: '2026' },
+  { name: 'Mercedes',         short: 'MER', color: '#27f4d2', country: 'GER', era: '2026' },
+  { name: 'McLaren',          short: 'MCL', color: '#ff8000', country: 'GBR', era: '2026' },
+  { name: 'Aston Martin',     short: 'AST', color: '#006f62', country: 'GBR', era: '2026' },
+  { name: 'Alpine',           short: 'ALP', color: '#0090d0', country: 'FRA', era: '2026' },
+  { name: 'Williams',         short: 'WIL', color: '#005aff', country: 'GBR', era: '2026' },
+  { name: 'Racing Bulls',     short: 'RB',  color: '#1660ad', country: 'ITA', era: '2026' },
+  { name: 'Haas',             short: 'HAA', color: '#b6babd', country: 'USA', era: '2026' },
+  { name: 'Audi',             short: 'AUD', color: '#bb0a30', country: 'GER', era: '2026' },
+  { name: 'Cadillac',         short: 'CAD', color: '#1b2a4a', country: 'USA', era: '2026' },
+
   // CURRENT ERA
   { name: 'Red Bull Racing',  short: 'RBR', color: '#1e40af', country: 'AUT', era: 'Current' },
   { name: 'Ferrari',          short: 'FER', color: '#dc0000', country: 'ITA', era: 'Current' },
@@ -10212,6 +10316,36 @@ function defaultPresetPhoto(preset) {
   if (!all.length) return '';
   return (all.find(p => p.isDefault) || all[0]).url || '';
 }
+// Pick the preset photo that best fits a specific season. Drivers can carry
+// several labelled photos in their gallery (e.g. one tagged "2023", another
+// "2024"); when importing a season we match the season's year — then any label
+// found in the season name — and only fall back to the default photo if nothing
+// matches. So a 2023 import grabs the driver's 2023 portrait automatically.
+function pickPresetPhotoForSeason(preset, opts) {
+  const photos = presetPhotosList(preset);
+  if (!photos.length) return '';
+  const year = String((opts && opts.year) || '').trim();
+  const name = String((opts && opts.name) || '');
+  // 1. A photo whose label contains the season's 4-digit year (word-bounded so
+  //    "2023" doesn't match inside "12023").
+  if (/^\d{4}$/.test(year)) {
+    const re = new RegExp('\\b' + year + '\\b');
+    const byYear = photos.find(p => p.label && re.test(p.label));
+    if (byYear) return byYear.url;
+  }
+  // 2. A photo whose label appears within the season name (e.g. name
+  //    "2024 World Championship" matching a label of "2024" or "Red Bull 2024").
+  if (name.trim()) {
+    const lname = name.toLowerCase();
+    const byName = photos.find(p => {
+      const l = (p.label || '').toLowerCase().trim();
+      return l && lname.includes(l);
+    });
+    if (byName) return byName.url;
+  }
+  // 3. Default-flagged photo, else the first one.
+  return (photos.find(p => p.isDefault) || photos[0]).url || '';
+}
 
 /* Photo gallery widget — used inside the driver preset editor.
    Renders a grid of thumbnails with labels, a per-item "set as default"
@@ -10465,6 +10599,7 @@ function createSeason({
   teamBundleId,     // '' | 'default' | <saved-team-class-id>
   driverBundleId,   // '' | 'default' | <saved-driver-class-id>
   calendarPresetId, // '' | 'default' | <saved-calendar-preset-id>
+  driverCount,      // how many drivers to generate for the DEFAULT grid (1–30)
 }) {
   const save = activeSave(); if (!save) return;
   const id = uid();
@@ -10514,21 +10649,26 @@ function createSeason({
     ? driverBundleId
     : (withPresetDrivers && withPresetTeams ? 'default' : '');
   if (driverChoice === 'default' && season.teams.length) {
-    // Sample 20 drivers — two per team
-    let n = 2;
-    season.teams.forEach((team, ti) => {
-      for (let i = 0; i < 2; i++) {
-        const first = SAMPLE_FIRSTS[(ti*2+i) % SAMPLE_FIRSTS.length];
-        const last  = SAMPLE_LASTS[(ti*2+i + 5) % SAMPLE_LASTS.length];
-        season.drivers.push({
-          id: uid(),
-          name: `${first} ${last}`,
-          number: n++,
-          country: SAMPLE_COUNTRIES[(ti*2+i) % SAMPLE_COUNTRIES.length],
-          teamId: team.id,
-        });
-      }
-    });
+    // Generate the requested number of sample drivers (clamped 1–30, default 20)
+    // and distribute them round-robin across the teams so every team gets an
+    // even share (e.g. 30 drivers over 10 teams → 3 each; 25 → some 3, some 2).
+    const count = Math.max(1, Math.min(30, Math.round(Number(driverCount) || 20)));
+    for (let i = 0; i < count; i++) {
+      const team = season.teams[i % season.teams.length];
+      // Shift the last-name index by one extra step on each full pass through the
+      // first-name list, so names stay unique past 20 drivers (e.g. driver 0 and
+      // driver 20 share a first name but get different surnames).
+      const cycle = Math.floor(i / SAMPLE_FIRSTS.length);
+      const first = SAMPLE_FIRSTS[i % SAMPLE_FIRSTS.length];
+      const last  = SAMPLE_LASTS[(i + 5 + cycle) % SAMPLE_LASTS.length];
+      season.drivers.push({
+        id: uid(),
+        name: `${first} ${last}`,
+        number: i + 1,
+        country: SAMPLE_COUNTRIES[i % SAMPLE_COUNTRIES.length],
+        teamId: team.id,
+      });
+    }
   } else if (driverChoice) {
     const bundle = (state.driverClasses || []).find(c => c.id === driverChoice);
     if (bundle) {
@@ -15080,11 +15220,17 @@ function openNewSeasonModal() {
       <div class="field">
         <label>Drivers</label>
         <select id="ns-driver-bundle">
-          <option value="default" selected>Default — 20 sample drivers (paired to default teams)</option>
+          <option value="default" selected>Default — sample drivers (paired to default teams)</option>
           <option value="">— None — empty grid</option>
           ${driverBundles.length ? `<optgroup label="Your saved bundles">${driverBundles.map(b => `<option value="${esc(b.id)}">${esc(b.name)} · ${b.drivers.length} driver${b.drivers.length === 1 ? '' : 's'}</option>`).join('')}</optgroup>` : ''}
         </select>
         <span class="field-help">${driverBundles.length ? `${driverBundles.length} saved bundle${driverBundles.length === 1 ? '' : 's'} available. Saved drivers come without team assignments — sign them after.` : 'Save a driver bundle from the Drivers tab to reuse it here.'}</span>
+      </div>
+
+      <div class="field" id="ns-driver-count-field">
+        <label>Driver count <span style="color:var(--text-dim);font-family:var(--f-body);text-transform:none;letter-spacing:0">(default grid)</span></label>
+        <input type="number" id="ns-driver-count" value="20" min="1" max="30" step="1">
+        <span class="field-help">How many drivers to put on the grid, up to 30. Spread evenly across your teams. Only applies to the <b>Default</b> driver option — saved bundles use their own roster.</span>
       </div>
 
       <div class="field">
@@ -15119,11 +15265,23 @@ function openNewSeasonModal() {
         const teamBundleId = $('#ns-team-bundle', root).value;
         const driverBundleId = $('#ns-driver-bundle', root).value;
         const calendarPresetId = $('#ns-calendar', root).value;
-        createSeason({ year, name, pointsSystemId, teamBundleId, driverBundleId, calendarPresetId });
+        const driverCount = $('#ns-driver-count', root).value;
+        createSeason({ year, name, pointsSystemId, teamBundleId, driverBundleId, calendarPresetId, driverCount });
         close(); renderAll(); toast('Season opened', 'success');
       };
       $('[data-act="ok"]', root).onclick = submit;
       $('[data-act="cancel"]', root).onclick = close;
+      // The driver-count field only matters for the Default grid — dim it when a
+      // saved bundle or "None" is chosen so it's clear it won't apply.
+      const driverSel = $('#ns-driver-bundle', root);
+      const countField = $('#ns-driver-count-field', root);
+      const syncCountField = () => {
+        const isDefault = driverSel.value === 'default';
+        countField.style.opacity = isDefault ? '' : '0.4';
+        $('#ns-driver-count', root).disabled = !isDefault;
+      };
+      driverSel.onchange = syncCountField;
+      syncCountField();
       $('#ns-import-real', root).onclick = () => { close(); openImportRealSeasonModal(); };
       $('#ns-import-shot', root).onclick = () => { close(); openImportScreenshotModal(); };
       $('#ns-import-csv', root).onclick = () => { close(); openImportCSVModal(); };
@@ -15733,7 +15891,11 @@ function buildSeasonFromImport(parsed, opts) {
       number: preset?.number || allocNumber(),
       country: preset?.country || '',
       teamId: teamObj?.id || null,
-      photo: preset?.photo || '',
+      // Resolve the season-appropriate preset photo. Presets store images in a
+      // `photos` array (multi-photo feature, each with a label); we match the
+      // import's year/name to that label so e.g. a 2023 import uses the driver's
+      // "2023" photo, falling back to the default photo, then the legacy `photo`.
+      photo: pickPresetPhotoForSeason(preset, opts) || preset?.photo || '',
       dsq: false,
     };
     driverIdByImportName[d.name] = driverObj.id;
@@ -18947,7 +19109,8 @@ function renderAll() {
   if (window.__p1Enhanced) return;
   window.__p1Enhanced = true;
 
-  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // Motion removed — all decorative animations are disabled unconditionally.
+  const reduced = true;
 
   /* --- Inject ambient layers (aura + sparks) --- */
   const aura = document.createElement('div');
@@ -19072,6 +19235,7 @@ function renderAll() {
 
   /* --- 5. Button ripple (global delegation) --- */
   document.addEventListener('pointerdown', (e) => {
+    if (reduced) return;
     const btn = e.target.closest('.btn, .tab, .race-session-tab');
     if (!btn) return;
     if (getComputedStyle(btn).position === 'static') btn.style.position = 'relative';
