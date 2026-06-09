@@ -1485,6 +1485,8 @@ if (!state.customTeamPresets)   state.customTeamPresets   = [];
 if (!state.customTrackPresets)  state.customTrackPresets  = [];
 if (!state.presetOverrides)     state.presetOverrides     = { drivers: {}, teams: {}, tracks: {} };
 if (!state.presetOverrides.tracks) state.presetOverrides.tracks = {};
+// Keys of built-in presets the user has deleted (hidden) from the library.
+if (!state.hiddenPresets)       state.hiddenPresets       = { drivers: [], teams: [], tracks: [] };
 // Roster bundles — saved groups of drivers or teams that can be loaded into any season as a class.
 // Each: { id, name, savedAt, drivers: [{ name, number, country, photo, era }], note }
 if (!state.driverClasses) state.driverClasses = [];
@@ -4008,6 +4010,13 @@ function resolveDriverShort(text, drivers, excludeIds = []) {
     if (numMatch) return { match: numMatch };
   }
 
+  // User-assigned abbreviation takes priority — it's the explicit code the user
+  // set to disambiguate drivers (e.g. VER resolves to Verstappen even when other
+  // surnames also start with "VER").
+  const abbrHits = pool.filter(d => (d.abbr || '').trim().toUpperCase() === t);
+  if (abbrHits.length === 1) return { match: abbrHits[0] };
+  if (abbrHits.length > 1) return { ambiguous: abbrHits };
+
   if (/^[A-Z]+$/.test(t)) {
     const prefixHits = pool.filter(d => {
       const last = (d.name || '').split(/\s+/).pop().toUpperCase();
@@ -4950,8 +4959,11 @@ function renderStandings() {
                 ? `<div class="standings-portrait" style="--team-color:${color};background-image:url('${esc(drv.photo)}')"></div>`
                 : `<div class="standings-portrait" style="--team-color:${color}"></div>`;
               const team = season.teams.find(t => t.id === drv.teamId);
-              const teamMark = team?.logo
-                ? `<div class="team-logo small" style="background-image:url('${esc(team.logo)}');border-color:${color}"></div>`
+              // Team column shows the constructor logo large, with no name.
+              const teamMark = team
+                ? (team.logo
+                    ? `<div class="standings-team-logo" style="background-image:url('${esc(team.logo)}');--team-color:${color}" title="${esc(team.name)}"></div>`
+                    : `<div class="standings-team-logo no-img" style="--team-color:${color}" title="${esc(team.name)}">${esc(team.short || team.name.slice(0,3).toUpperCase())}</div>`)
                 : `<span class="team-dot" style="--team-color:${color}"></span>`;
               const { first, last } = splitName(drv.name);
               return `<tr class="standings-row p${i+1}" style="--team-color:${color}">
@@ -4968,7 +4980,7 @@ function renderStandings() {
                     <div class="driver-cell-team">${flag(drv.country)} ${esc(drv.country || '')}</div>
                   </div>
                 </div></td>
-                <td><span class="team-pill" style="--team-color:${color}">${teamMark}${esc(teamName(season, drv.teamId))}</span></td>
+                <td class="team-logo-cell">${teamMark}</td>
                 <td class="points-cell">${row.points}</td>
                 <td class="gap-cell">${i === 0 ? '—' : '−' + (leaderPts - row.points)}</td>
                 <td class="num ${row.wins ? '' : 'zero'}">${row.wins}</td>
@@ -8404,7 +8416,8 @@ const presetEraLabel = (p) => presetEras(p).join(' · ') || '—';
 
 function getEffectiveDriverPresets() {
   const overrides = state.presetOverrides?.drivers || {};
-  const merged = DRIVER_PRESETS.map(p => {
+  const hidden = new Set(state.hiddenPresets?.drivers || []);
+  const merged = DRIVER_PRESETS.filter(p => !hidden.has(presetKey(p))).map(p => {
     const k = presetKey(p);
     const ov = overrides[k];
     return ov ? { ...p, ...ov, presetKey: k, isBuiltin: true } : { ...p, presetKey: k, isBuiltin: true };
@@ -8415,7 +8428,8 @@ function getEffectiveDriverPresets() {
 
 function getEffectiveTeamPresets() {
   const overrides = state.presetOverrides?.teams || {};
-  const merged = TEAM_PRESETS.map(p => {
+  const hidden = new Set(state.hiddenPresets?.teams || []);
+  const merged = TEAM_PRESETS.filter(p => !hidden.has(presetKey(p))).map(p => {
     const k = presetKey(p);
     const ov = overrides[k];
     return ov ? { ...p, ...ov, presetKey: k, isBuiltin: true } : { ...p, presetKey: k, isBuiltin: true };
@@ -8426,7 +8440,8 @@ function getEffectiveTeamPresets() {
 
 function getEffectiveTrackPresets() {
   const overrides = state.presetOverrides?.tracks || {};
-  const merged = TRACK_PRESETS.map(p => {
+  const hidden = new Set(state.hiddenPresets?.tracks || []);
+  const merged = TRACK_PRESETS.filter(p => !hidden.has(presetKey(p))).map(p => {
     const k = presetKey(p);
     const ov = overrides[k];
     return ov ? { ...p, ...ov, presetKey: k, isBuiltin: true } : { ...p, presetKey: k, isBuiltin: true };
@@ -8497,6 +8512,18 @@ function addCustomPreset(kind, data) {
 function deleteCustomPreset(kind, key) {
   const field = presetCustomField(kind);
   state[field] = (state[field] || []).filter(p => presetKey(p) !== key);
+  saveState();
+}
+
+/* Delete (hide) a built-in preset from the library. The default lives in code,
+   so we remember its key and filter it out of the effective list. Any saved edit
+   override for it is dropped too. */
+function hideBuiltinPreset(kind, key) {
+  if (!state.hiddenPresets) state.hiddenPresets = { drivers: [], teams: [], tracks: [] };
+  const field = presetOverridesField(kind);
+  if (!state.hiddenPresets[field]) state.hiddenPresets[field] = [];
+  if (!state.hiddenPresets[field].includes(key)) state.hiddenPresets[field].push(key);
+  if (state.presetOverrides?.[field]) delete state.presetOverrides[field][key];
   saveState();
 }
 
@@ -8596,7 +8623,7 @@ function openPresetEditor(kind, existing, onSaved) {
   modal({
     title: `${isEdit ? 'Edit' : 'New'} <span class="accent">${isDriver ? 'Driver' : isTeam ? 'Team' : 'Track'}</span> Preset`,
     body: isDriver ? driverFields : isTeam ? teamFields : trackFields,
-    footer: `${isEdit && existing.isCustom ? '<button class="btn btn-ghost" data-act="delete" style="color:var(--red);margin-right:auto">Delete preset</button>' : (isEdit && existing.isBuiltin ? '<button class="btn btn-ghost" data-act="reset" style="margin-right:auto">Reset to default</button>' : '')}<button class="btn btn-ghost" data-act="cancel">Cancel</button><button class="btn btn-primary" data-act="ok">Save preset</button>`,
+    footer: `${isEdit ? `${existing.isBuiltin ? '<button class="btn btn-ghost" data-act="reset">Reset to default</button>' : ''}<button class="btn btn-ghost" data-act="delete" style="color:var(--red);margin-right:auto">Delete preset</button>` : ''}<button class="btn btn-ghost" data-act="cancel">Cancel</button><button class="btn btn-primary" data-act="ok">Save preset</button>`,
     onMount: (root, close) => {
       // Photo / logo upload widgets
       const mountUpload = (containerId, currentValue, onChange) => {
@@ -8718,8 +8745,13 @@ function openPresetEditor(kind, existing, onSaved) {
       };
       const delBtn = $('[data-act="delete"]', root);
       if (delBtn) delBtn.onclick = () => {
-        if (!confirm('Delete this custom preset? This cannot be undone.')) return;
-        deleteCustomPreset(kind, originalKey);
+        const builtin = isEdit && existing.isBuiltin;
+        const msg = builtin
+          ? 'Remove this preset from the library? It will no longer appear in the list (you can recreate it later with + NEW PRESET).'
+          : 'Delete this custom preset? This cannot be undone.';
+        if (!confirm(msg)) return;
+        if (builtin) hideBuiltinPreset(kind, originalKey);
+        else deleteCustomPreset(kind, originalKey);
         toast('Preset deleted', 'success');
         close();
         onSaved && onSaved();
@@ -10085,6 +10117,7 @@ function parseImportPaste(text, season, kind) {
   // Build a name → driver lookup. Match by full name OR last name (case-insensitive).
   const byFull = new Map();
   const byLast = new Map();
+  const byAbbr = new Map();
   drivers.forEach(d => {
     const lower = d.name.toLowerCase();
     byFull.set(lower, d);
@@ -10092,6 +10125,8 @@ function parseImportPaste(text, season, kind) {
     const last = parts[parts.length - 1].toLowerCase();
     if (!byLast.has(last)) byLast.set(last, []);
     byLast.get(last).push(d);
+    const a = (d.abbr || '').trim().toUpperCase();
+    if (a) { if (!byAbbr.has(a)) byAbbr.set(a, []); byAbbr.get(a).push(d); }
   });
 
   const findDriver = (line) => {
@@ -10099,6 +10134,12 @@ function parseImportPaste(text, season, kind) {
     // Try full name
     for (const [full, drv] of byFull) {
       if (lower.includes(full)) return drv;
+    }
+    // User-assigned abbreviation as a standalone token (timing exports list the
+    // 3-letter code) — honour it before surname matching to avoid conflicts.
+    for (const tok of line.toUpperCase().split(/[^A-Z0-9]+/)) {
+      const hit = tok && byAbbr.get(tok);
+      if (hit && hit.length === 1) return hit[0];
     }
     // Then last name (must be unique among drivers, otherwise prefer match nearest start of line)
     let best = null, bestIdx = Infinity;
