@@ -5596,6 +5596,47 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
   flex-shrink: 0;
 }
 
+/* Pole + fastest-lap holders under the winner */
+.race-card-extra {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 8px;
+}
+.race-card-extra-item {
+  --team-color: var(--border-hi);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 10px;
+  min-width: 0;
+  background: var(--bg-1);
+  border: 1px solid var(--border-dim);
+  border-left: 2px solid var(--team-color);
+  border-radius: var(--r-sm);
+}
+.race-card-extra-item.pole  { border-left-color: var(--sec-blue); }
+.race-card-extra-item.fl    { border-left-color: var(--sec-purple); }
+.race-card-extra-lbl {
+  font-family: var(--f-mono);
+  font-size: 8px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+.race-card-extra-item.pole .race-card-extra-lbl { color: var(--sec-blue); }
+.race-card-extra-item.fl   .race-card-extra-lbl { color: var(--sec-purple); }
+.race-card-extra-name {
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .race-card-pending-info {
   display: flex;
   align-items: center;
