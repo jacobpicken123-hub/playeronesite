@@ -8497,9 +8497,28 @@ function dedupePresetsByName(list) {
         const cur = ex[f];
         if ((cur === undefined || cur === '' || cur === null) && p[f] !== undefined && p[f] !== '' && p[f] !== null) ex[f] = p[f];
       });
+      // Multi-photo gallery array — carry it over if the canonical entry lacks one.
+      if ((!Array.isArray(ex.photos) || !ex.photos.length) && Array.isArray(p.photos) && p.photos.length) ex.photos = p.photos;
     }
   }
   return order;
+}
+
+/* Find a saved override for a built-in preset. Prefer the exact `name|era` key,
+   but fall back to ANY override stored under the same NAME (different era). This
+   keeps saved edits — especially uploaded photos/logos — attached to a preset
+   even when a new code version changes that preset's era / primary key (which
+   would otherwise orphan the override and make the image "disappear"). */
+function findPresetOverride(overrides, p) {
+  if (!overrides) return null;
+  const exact = overrides[presetKey(p)];
+  if (exact) return exact;
+  const name = (p.name || '').toLowerCase().trim();
+  if (!name) return null;
+  for (const k in overrides) {
+    if ((k.split('|')[0] || '').trim() === name) return overrides[k];
+  }
+  return null;
 }
 
 function getEffectiveDriverPresets() {
@@ -8507,7 +8526,7 @@ function getEffectiveDriverPresets() {
   const hidden = new Set(state.hiddenPresets?.drivers || []);
   const merged = DRIVER_PRESETS.filter(p => !hidden.has(presetKey(p))).map(p => {
     const k = presetKey(p);
-    const ov = overrides[k];
+    const ov = findPresetOverride(overrides, p);
     return ov ? { ...p, ...ov, presetKey: k, isBuiltin: true } : { ...p, presetKey: k, isBuiltin: true };
   });
   const customs = (state.customDriverPresets || []).map(p => ({ ...p, presetKey: presetKey(p), isCustom: true }));
@@ -8519,7 +8538,7 @@ function getEffectiveTeamPresets() {
   const hidden = new Set(state.hiddenPresets?.teams || []);
   const merged = TEAM_PRESETS.filter(p => !hidden.has(presetKey(p))).map(p => {
     const k = presetKey(p);
-    const ov = overrides[k];
+    const ov = findPresetOverride(overrides, p);
     return ov ? { ...p, ...ov, presetKey: k, isBuiltin: true } : { ...p, presetKey: k, isBuiltin: true };
   });
   const customs = (state.customTeamPresets || []).map(p => ({ ...p, presetKey: presetKey(p), isCustom: true }));
@@ -8531,7 +8550,7 @@ function getEffectiveTrackPresets() {
   const hidden = new Set(state.hiddenPresets?.tracks || []);
   const merged = TRACK_PRESETS.filter(p => !hidden.has(presetKey(p))).map(p => {
     const k = presetKey(p);
-    const ov = overrides[k];
+    const ov = findPresetOverride(overrides, p);
     return ov ? { ...p, ...ov, presetKey: k, isBuiltin: true } : { ...p, presetKey: k, isBuiltin: true };
   });
   const customs = (state.customTrackPresets || []).map(p => ({ ...p, presetKey: presetKey(p), isCustom: true }));
