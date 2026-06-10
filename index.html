@@ -5666,6 +5666,47 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
   flex-shrink: 0;
 }
 
+/* Pole + fastest-lap holders under the winner */
+.race-card-extra {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 8px;
+}
+.race-card-extra-item {
+  --team-color: var(--border-hi);
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 10px;
+  min-width: 0;
+  background: var(--bg-1);
+  border: 1px solid var(--border-dim);
+  border-left: 2px solid var(--team-color);
+  border-radius: var(--r-sm);
+}
+.race-card-extra-item.pole  { border-left-color: var(--sec-blue); }
+.race-card-extra-item.fl    { border-left-color: var(--sec-purple); }
+.race-card-extra-lbl {
+  font-family: var(--f-mono);
+  font-size: 8px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+.race-card-extra-item.pole .race-card-extra-lbl { color: var(--sec-blue); }
+.race-card-extra-item.fl   .race-card-extra-lbl { color: var(--sec-purple); }
+.race-card-extra-name {
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .race-card-pending-info {
   display: flex;
   align-items: center;
@@ -8872,6 +8913,11 @@ async function cloudPullAllSaves() {
   if (state.activeSaveId && !newSaves[state.activeSaveId]) state.activeSaveId = null;
   if (state.activeSeasonId && state.activeSaveId && !newSaves[state.activeSaveId].seasons[state.activeSeasonId]) state.activeSeasonId = null;
 
+  // The cloud round-trip can lose a team's logo (e.g. large image payloads). Re-fill
+  // any blank team logo from its matching preset in the local library so preset
+  // images survive a reload / cloud sync.
+  backfillTeamLogosFromPresets();
+
   // Reset the push-hash cache: whatever we just pulled is now our up-to-date baseline.
   cloudLastPushHashes = {};
 
@@ -9556,6 +9602,7 @@ function renderSignInScreen() {
           <div class="signin-divider">or</div>
           <button type="button" class="btn btn-ghost btn-full" data-act="magic">✦ EMAIL ME A MAGIC LINK</button>
           <button type="button" class="btn btn-ghost btn-full" data-act="google">G · CONTINUE WITH GOOGLE</button>
+          <button type="button" class="btn btn-ghost btn-full" data-act="guest">→ CONTINUE AS GUEST · local only, no cloud sync</button>
           <div class="signin-msg" id="signin-msg"></div>
         </form>
         <div class="signin-foot">
@@ -9600,6 +9647,22 @@ function renderSignInScreen() {
     try { await cloudGoogleSignIn(); }
     catch (err) { setMsg(err.message, 'error'); }
   });
+  $('[data-act="guest"]').addEventListener('click', () => enterGuestMode());
+}
+
+/* ---------- GUEST MODE: use the app locally without signing in ----------
+   State lives in localStorage only; all cloud helpers no-op while currentUser
+   is null. The flag persists so a reload stays in guest mode (lets you verify
+   that local changes survive a refresh). */
+const GUEST_KEY = 'p1_guest';
+const isGuest = () => { try { return localStorage.getItem(GUEST_KEY) === '1'; } catch { return false; } };
+function enterGuestMode() {
+  try { localStorage.setItem(GUEST_KEY, '1'); } catch {}
+  renderTopbar(); renderTabs(); renderAll();
+}
+function exitGuestMode() {
+  try { localStorage.removeItem(GUEST_KEY); } catch {}
+  location.reload();
 }
 /* =====================================================
    ▲ END SUPABASE CLOUD LAYER ▲
@@ -11166,8 +11229,13 @@ function calcTrackRecords() {
     Object.values(save.seasons).forEach(season => {
       season.races.forEach(race => {
         if (!race.completed) return;
-        const tkey = (race.country || '').toUpperCase().trim()
-          || (shortGrandPrixName(race) || '').toLowerCase().trim();
+        // Key per CIRCUIT, not per country — otherwise multiple GPs in one nation
+        // (e.g. Miami, Las Vegas and the US Grand Prix all in 'USA') collapse into
+        // a single track record. The GP name is unique per circuit and always set;
+        // circuit then country back it up. Same-named GPs across seasons still merge.
+        const tkey = (shortGrandPrixName(race) || '').toLowerCase().trim()
+          || (race.circuit || '').toLowerCase().trim()
+          || (race.country || '').toUpperCase().trim();
         if (!tkey) return;
         const track = ensureTrack(tkey, race);
         track.count++;
@@ -11289,6 +11357,9 @@ function renderTopbar() {
   if (CLOUD.enabled && currentUser) {
     act += `<button class="btn btn-ghost btn-sm" id="btn-account" title="${esc(currentUser.email)}">${esc(currentUser.email.split('@')[0])} ▾</button>`;
   }
+  if (!currentUser && isGuest()) {
+    act += `<button class="btn btn-ghost btn-sm" id="btn-guest" title="Local-only guest mode — click to sign in instead">GUEST ▾</button>`;
+  }
   actions.innerHTML = act;
 
   $('#btn-export') && ($('#btn-export').onclick = exportData);
@@ -11297,6 +11368,9 @@ function renderTopbar() {
   $('#btn-new-season') && ($('#btn-new-season').onclick = openNewSeasonModal);
   $('#btn-share') && ($('#btn-share').onclick = openShareModal);
   $('#btn-account') && ($('#btn-account').onclick = openAccountModal);
+  $('#btn-guest') && ($('#btn-guest').onclick = () => {
+    if (confirm('Leave guest mode and go to the sign-in screen? Your local data stays on this device.')) exitGuestMode();
+  });
 }
 
 /* ---------- render: tabs ---------- */
@@ -12149,6 +12223,21 @@ function renderCalendar() {
           const teamColor = winnerTeam?.color || 'var(--red)';
           const accent = winnerTeam?.color || (r.completed ? 'var(--sec-green)' : (r.id === nextPendingId ? 'var(--red)' : 'var(--text-muted)'));
           const laps = winner ? (r.totalLaps || '—') : '—';
+          // Pole + fastest-lap holders alongside the winner
+          const poleDrv = r.completed && r.poleDriverId ? season.drivers.find(d => d.id === r.poleDriverId) : null;
+          const flDrv = r.completed && r.fastestLapDriverId ? season.drivers.find(d => d.id === r.fastestLapDriverId) : null;
+          const drvTeamColor = (drv) => season.teams.find(t => t.id === drv?.teamId)?.color || 'var(--border-hi)';
+          const extraBlock = (poleDrv || flDrv) ? `
+            <div class="race-card-extra">
+              ${poleDrv ? `<div class="race-card-extra-item pole" style="--team-color:${drvTeamColor(poleDrv)}">
+                <span class="race-card-extra-lbl">Pole</span>
+                <span class="race-card-extra-name">${esc(splitName(poleDrv.name).last || poleDrv.name)}</span>
+              </div>` : ''}
+              ${flDrv ? `<div class="race-card-extra-item fl" style="--team-color:${drvTeamColor(flDrv)}">
+                <span class="race-card-extra-lbl">Fastest Lap</span>
+                <span class="race-card-extra-name">${esc(splitName(flDrv.name).last || flDrv.name)}</span>
+              </div>` : ''}
+            </div>` : '';
           const statusTag = r.completed
             ? '<span class="race-card-status-tag completed">DONE</span>'
             : (r.id === nextPendingId
@@ -12193,6 +12282,7 @@ function renderCalendar() {
                   </div>
                 </div>` : ''}
                 ${winnerBlock}
+                ${extraBlock}
               </div>
               <div class="race-card-actions">
                 <button class="btn btn-sm btn-ghost" data-edit-race="${r.id}" title="Edit info">✎ EDIT</button>
@@ -17259,6 +17349,34 @@ function presetEras(p) {
 }
 const presetEraLabel = (p) => presetEras(p).join(' · ') || '—';
 
+/* Collapse presets that share a name into ONE multi-era entry. Removes the visual
+   duplicates created when the same team/driver exists in more than one era block
+   (e.g. Ferrari in both 'Current' and '2026'), while preserving every era it
+   belongs to and merging in any data (logo, abbr, team) from either copy. The
+   first occurrence is canonical (customs precede built-ins; newer era blocks
+   precede older), so its key/flags drive edits and deletes. */
+function dedupePresetsByName(list) {
+  const byName = new Map();
+  const order = [];
+  for (const p of list) {
+    const k = (p.name || '').toLowerCase().trim();
+    if (!k) { order.push(p); continue; }
+    if (!byName.has(k)) {
+      const entry = { ...p, eras: [...presetEras(p)] };
+      byName.set(k, entry);
+      order.push(entry);
+    } else {
+      const ex = byName.get(k);
+      presetEras(p).forEach(e => { if (!ex.eras.includes(e)) ex.eras.push(e); });
+      ['abbr', 'team', 'logo', 'photo', 'color', 'short', 'country', 'number'].forEach(f => {
+        const cur = ex[f];
+        if ((cur === undefined || cur === '' || cur === null) && p[f] !== undefined && p[f] !== '' && p[f] !== null) ex[f] = p[f];
+      });
+    }
+  }
+  return order;
+}
+
 function getEffectiveDriverPresets() {
   const overrides = state.presetOverrides?.drivers || {};
   const hidden = new Set(state.hiddenPresets?.drivers || []);
@@ -17268,7 +17386,7 @@ function getEffectiveDriverPresets() {
     return ov ? { ...p, ...ov, presetKey: k, isBuiltin: true } : { ...p, presetKey: k, isBuiltin: true };
   });
   const customs = (state.customDriverPresets || []).map(p => ({ ...p, presetKey: presetKey(p), isCustom: true }));
-  return [...customs, ...merged];
+  return dedupePresetsByName([...customs, ...merged]);
 }
 
 function getEffectiveTeamPresets() {
@@ -17280,7 +17398,7 @@ function getEffectiveTeamPresets() {
     return ov ? { ...p, ...ov, presetKey: k, isBuiltin: true } : { ...p, presetKey: k, isBuiltin: true };
   });
   const customs = (state.customTeamPresets || []).map(p => ({ ...p, presetKey: presetKey(p), isCustom: true }));
-  return [...customs, ...merged];
+  return dedupePresetsByName([...customs, ...merged]);
 }
 
 function getEffectiveTrackPresets() {
@@ -17292,7 +17410,7 @@ function getEffectiveTrackPresets() {
     return ov ? { ...p, ...ov, presetKey: k, isBuiltin: true } : { ...p, presetKey: k, isBuiltin: true };
   });
   const customs = (state.customTrackPresets || []).map(p => ({ ...p, presetKey: presetKey(p), isCustom: true }));
-  return [...customs, ...merged];
+  return dedupePresetsByName([...customs, ...merged]);
 }
 
 /* Save an edit to a preset. For built-ins, write to overrides. For customs, replace in array. */
@@ -17327,6 +17445,23 @@ function savePresetEdit(kind, originalKey, updated) {
     const synced = syncTeamPresetToSeasons(originalKey, updated.name, updated.logo);
     if (synced) { saveState(); renderMain(); }
   }
+}
+
+/* Ensure every season team keeps its logo. If a team has no logo (e.g. the cloud
+   round-trip dropped it), pull the image back from its matching preset in the
+   local library. Only fills blanks — never overwrites a logo the team already has. */
+function backfillTeamLogosFromPresets() {
+  try {
+    Object.values(state.saves || {}).forEach(save => {
+      Object.values(save.seasons || {}).forEach(season => {
+        (season.teams || []).forEach(t => {
+          if (t.logo) return;
+          const preset = matchTeamPresetForName(t.name);
+          if (preset && preset.logo) t.logo = preset.logo;
+        });
+      });
+    });
+  } catch {}
 }
 
 /* Push an edited team preset's image onto every season team created from it.
@@ -17367,8 +17502,17 @@ function hideBuiltinPreset(kind, key) {
   if (!state.hiddenPresets) state.hiddenPresets = { drivers: [], teams: [], tracks: [] };
   const field = presetOverridesField(kind);
   if (!state.hiddenPresets[field]) state.hiddenPresets[field] = [];
-  if (!state.hiddenPresets[field].includes(key)) state.hiddenPresets[field].push(key);
-  if (state.presetOverrides?.[field]) delete state.presetOverrides[field][key];
+  // A displayed preset may be a de-duplicated merge of several same-name built-ins
+  // (e.g. Ferrari across 'Current' + '2026'). Hide ALL of them so it doesn't
+  // reappear from another era block.
+  const source = kind === 'driver' ? DRIVER_PRESETS : kind === 'team' ? TEAM_PRESETS : TRACK_PRESETS;
+  const name = (key.split('|')[0] || '').trim();
+  const keys = new Set([key]);
+  source.forEach(p => { if ((p.name || '').toLowerCase().trim() === name) keys.add(presetKey(p)); });
+  keys.forEach(k => {
+    if (!state.hiddenPresets[field].includes(k)) state.hiddenPresets[field].push(k);
+    if (state.presetOverrides?.[field]) delete state.presetOverrides[field][k];
+  });
   saveState();
 }
 
@@ -19266,10 +19410,13 @@ function renderAll() {
     if (!signedIn) {
       // Build the shell first so signin screen can target #app
       renderTopbar(); renderTabs();
-      renderSignInScreen();
+      // Guest mode persists across reloads — skip the sign-in wall.
+      if (isGuest()) { backfillTeamLogosFromPresets(); renderAll(); }
+      else { renderSignInScreen(); }
       return;
     }
   }
+  backfillTeamLogosFromPresets();
   renderAll();
 })();
 
