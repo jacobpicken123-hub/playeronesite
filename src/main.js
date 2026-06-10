@@ -8521,6 +8521,22 @@ function findPresetOverride(overrides, p) {
   return null;
 }
 
+/* Map of driver-name -> photo, gathered from every signed driver across all
+   saves/seasons. Used so the preset library can show a driver's photo that still
+   lives on a season entry even if it was never saved back onto the preset. */
+function collectSeasonDriverPhotos() {
+  const map = {};
+  Object.values(state.saves || {}).forEach(save => {
+    Object.values(save.seasons || {}).forEach(season => {
+      (season.drivers || []).forEach(d => {
+        const k = (d.name || '').toLowerCase().trim();
+        if (k && d.photo && !map[k]) map[k] = d.photo;
+      });
+    });
+  });
+  return map;
+}
+
 function getEffectiveDriverPresets() {
   const overrides = state.presetOverrides?.drivers || {};
   const hidden = new Set(state.hiddenPresets?.drivers || []);
@@ -8530,7 +8546,19 @@ function getEffectiveDriverPresets() {
     return ov ? { ...p, ...ov, presetKey: k, isBuiltin: true } : { ...p, presetKey: k, isBuiltin: true };
   });
   const customs = (state.customDriverPresets || []).map(p => ({ ...p, presetKey: presetKey(p), isCustom: true }));
-  return dedupePresetsByName([...customs, ...merged]);
+  const result = dedupePresetsByName([...customs, ...merged]);
+  // Fallback: if a preset has no photo, borrow it from a signed season driver of
+  // the same name — so re-importing code that lacks the photo doesn't blank the
+  // preset library while the image still exists on the seasons.
+  const seasonPhotos = collectSeasonDriverPhotos();
+  result.forEach(p => {
+    const hasPhoto = p.photo || (Array.isArray(p.photos) && p.photos.some(x => x && x.url));
+    if (!hasPhoto) {
+      const ph = seasonPhotos[(p.name || '').toLowerCase().trim()];
+      if (ph) p.photo = ph;
+    }
+  });
+  return result;
 }
 
 function getEffectiveTeamPresets() {
@@ -8576,6 +8604,10 @@ function savePresetEdit(kind, originalKey, updated) {
   const customField = presetCustomField(kind);
   const customs = state[customField] || [];
   const customIdx = customs.findIndex(p => presetKey(p) === originalKey);
+  // Capture the previous image so we can tell whether the photo/logo actually changed.
+  const prevStore = customIdx >= 0 ? customs[customIdx] : state.presetOverrides[target][originalKey];
+  const prevPhoto = (prevStore && prevStore.photo) || '';
+  const prevLogo = (prevStore && prevStore.logo) || '';
   if (customIdx >= 0) {
     customs[customIdx] = { ...customs[customIdx], ...updated };
     state[customField] = customs;
@@ -8583,10 +8615,14 @@ function savePresetEdit(kind, originalKey, updated) {
     state.presetOverrides[target][originalKey] = updated;
   }
   saveState();
-  // Editing a team preset's logo should flow through to teams already added to a
-  // season from that preset — so the user doesn't have to remove and re-add them.
+  // Editing a preset's image flows through to entries already added to a season —
+  // overwrite when the image CHANGED, fill any entry that has no image, and never
+  // clear (so editing other fields won't wipe photos).
   if (kind === 'team') {
-    const synced = syncTeamPresetToSeasons(originalKey, updated.name, updated.logo);
+    const synced = syncTeamImageToSeasons(originalKey, updated.name, updated.logo, prevLogo);
+    if (synced) { saveState(); renderMain(); }
+  } else if (kind === 'driver') {
+    const synced = syncDriverPhotoToSeasons(originalKey, updated.name, updated.photo, prevPhoto);
     if (synced) { saveState(); renderMain(); }
   }
 }
@@ -8608,18 +8644,40 @@ function backfillTeamLogosFromPresets() {
   } catch {}
 }
 
-/* Push an edited team preset's image onto every season team created from it.
-   Teams added after this feature carry `presetKey`; older teams are matched by
-   name so existing rosters (e.g. a Ferrari already in the season) update too. */
-function syncTeamPresetToSeasons(originalKey, name, logo) {
+/* Push an edited team preset's logo onto matching season teams. Overwrites when
+   the logo CHANGED; fills any team that has no logo; never clears. Matches by the
+   preset link or by name (so a Ferrari already in the season updates too). */
+function syncTeamImageToSeasons(originalKey, name, logo, prevLogo) {
+  if (!logo) return 0; // nothing to push, and never wipe an existing logo
   const nameKey = (name || '').toLowerCase().trim();
+  const logoChanged = logo !== (prevLogo || '');
   let changed = 0;
   Object.values(state.saves || {}).forEach(save => {
     Object.values(save.seasons || {}).forEach(season => {
       (season.teams || []).forEach(t => {
         const matches = (t.presetKey && t.presetKey === originalKey)
           || (nameKey && (t.name || '').toLowerCase().trim() === nameKey);
-        if (matches) { t.logo = logo || ''; changed++; }
+        if (matches && (logoChanged || !t.logo)) { t.logo = logo; changed++; }
+      });
+    });
+  });
+  return changed;
+}
+
+/* Same as above for driver preset photos: when a driver preset's photo is edited,
+   overwrite the matching season drivers' photo if it changed, and fill any season
+   driver that has no photo. Never clears. */
+function syncDriverPhotoToSeasons(originalKey, name, photo, prevPhoto) {
+  if (!photo) return 0;
+  const nameKey = (name || '').toLowerCase().trim();
+  const photoChanged = photo !== (prevPhoto || '');
+  let changed = 0;
+  Object.values(state.saves || {}).forEach(save => {
+    Object.values(save.seasons || {}).forEach(season => {
+      (season.drivers || []).forEach(d => {
+        const matches = (d.presetKey && d.presetKey === originalKey)
+          || (nameKey && (d.name || '').toLowerCase().trim() === nameKey);
+        if (matches && (photoChanged || !d.photo)) { d.photo = photo; changed++; }
       });
     });
   });
