@@ -12691,6 +12691,17 @@ const _quickEntry = { gp: true, sprint: true, quali: true };
 // resolver doesn't keep matching the same driver into multiple slots.
 // Returns { match } for a single hit, { ambiguous: [...] } for multiple, or
 // { match: null } for none.
+/* The abbreviation used to match a driver in quick entry / paste import.
+   Season drivers don't reliably carry `abbr` (cloud sync omits the field), so we
+   fall back to the abbreviation set on the matching driver preset — i.e. the
+   custom code the user configured in the preset menu. */
+function driverMatchAbbr(d) {
+  const own = (d.abbr || '').trim().toUpperCase();
+  if (own) return own;
+  const preset = matchDriverPresetForName(d.name);
+  return (preset && preset.abbr ? String(preset.abbr) : '').trim().toUpperCase();
+}
+
 function resolveDriverShort(text, drivers, excludeIds = []) {
   if (!text) return { match: null };
   const t = String(text).trim().toUpperCase();
@@ -12706,7 +12717,7 @@ function resolveDriverShort(text, drivers, excludeIds = []) {
 
   // 1b. User-assigned abbreviation — the explicit code set to disambiguate
   // drivers (e.g. VER → Verstappen even when other surnames also start "VER").
-  const abbrHits = pool.filter(d => (d.abbr || '').trim().toUpperCase() === t);
+  const abbrHits = pool.filter(d => driverMatchAbbr(d) === t);
   if (abbrHits.length === 1) return { match: abbrHits[0] };
   if (abbrHits.length > 1) return { ambiguous: abbrHits };
 
@@ -18968,7 +18979,7 @@ function parseImportPaste(text, season, kind) {
     const last = parts[parts.length - 1].toLowerCase();
     if (!byLast.has(last)) byLast.set(last, []);
     byLast.get(last).push(d);
-    const a = (d.abbr || '').trim().toUpperCase();
+    const a = driverMatchAbbr(d);
     if (a) { if (!byAbbr.has(a)) byAbbr.set(a, []); byAbbr.get(a).push(d); }
   });
 
