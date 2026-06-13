@@ -221,12 +221,12 @@ async function cloudPullAllSaves() {
   // The cloud round-trip can lose a team's logo (e.g. large image payloads). Re-fill
   // any blank team logo from its matching preset in the local library so preset
   // images survive a reload / cloud sync.
-  backfillTeamLogosFromPresets();
+  backfillTeamLogosFromPresets(); backfillDriverPhotosFromPresets();
 
   // Reset the push-hash cache: whatever we just pulled is now our up-to-date baseline.
   cloudLastPushHashes = {};
 
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch {}
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(stateForStorage())); } catch {}
 }
 
 /* ---------- CLOUD PUSH: serialize the active save tree and upsert into cloud ----------
@@ -1509,6 +1509,8 @@ if (!state.presetOverrides)     state.presetOverrides     = { drivers: {}, teams
 if (!state.presetOverrides.tracks) state.presetOverrides.tracks = {};
 // Keys of built-in presets the user has deleted (hidden) from the library.
 if (!state.hiddenPresets)       state.hiddenPresets       = { drivers: [], teams: [], tracks: [] };
+// Per-race championship-points multipliers (raceId -> 0.5 | 2). 1 = regular = absent.
+if (!state.racePointsMultipliers) state.racePointsMultipliers = {};
 // Roster bundles — saved groups of drivers or teams that can be loaded into any season as a class.
 // Each: { id, name, savedAt, drivers: [{ name, number, country, photo, era }], note }
 if (!state.driverClasses) state.driverClasses = [];
@@ -1538,10 +1540,38 @@ function loadState() {
   } catch (e) { console.warn('Could not load save', e); }
   return { saves: {}, activeSaveId: null, activeSeasonId: null, view: 'home' };
 }
+/* Driver photos and team logos are large data URLs. We keep them in memory (and
+   they still sync to the cloud) but DELIBERATELY strip them from the localStorage
+   copy so they don't bloat it / blow the storage quota. On load they're
+   re-hydrated from the preset library (and from the cloud when signed in). */
+function stateForStorage() {
+  const saves = {};
+  for (const sid in (state.saves || {})) {
+    const save = state.saves[sid];
+    const seasons = {};
+    for (const seid in (save.seasons || {})) {
+      const season = save.seasons[seid];
+      seasons[seid] = {
+        ...season,
+        drivers: (season.drivers || []).map(d => {
+          const { photo, photos, ...rest } = d;
+          return rest;
+        }),
+        teams: (season.teams || []).map(t => {
+          const { logo, ...rest } = t;
+          return rest;
+        }),
+      };
+    }
+    saves[sid] = { ...save, seasons };
+  }
+  return { ...state, saves };
+}
+
 function saveState() {
   try {
     state.saves[state.activeSaveId] && (state.saves[state.activeSaveId].updatedAt = Date.now());
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(stateForStorage()));
   } catch (e) { console.warn('Save failed', e); }
   // Mirror to cloud in the background (debounced, no-op if cloud disabled or not signed in)
   scheduleCloudSync();
@@ -1619,7 +1649,7 @@ function upgradeIdsToUuids() {
     }
   }
   if (changed) {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch {}
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(stateForStorage())); } catch {}
   }
   return changed;
 }
@@ -2278,6 +2308,22 @@ function deleteRace(id) {
 }
 
 /* ---------- standings & records calculations ---------- */
+/* Per-race championship-points multiplier. 1 = regular (default), 0.5 = half
+   points, 2 = double points. Stored in a local map keyed by race id (kept out of
+   the cloud-synced save objects so a cloud pull never drops it). */
+function racePointsMultiplier(race) {
+  if (!race) return 1;
+  const m = Number((state.racePointsMultipliers || {})[race.id]);
+  return (m === 0.5 || m === 2) ? m : 1;
+}
+function setRacePointsMultiplier(raceId, value) {
+  if (!state.racePointsMultipliers) state.racePointsMultipliers = {};
+  const v = Number(value);
+  if (v === 0.5 || v === 2) state.racePointsMultipliers[raceId] = v;
+  else delete state.racePointsMultipliers[raceId]; // 1 = regular → no entry
+  saveState();
+}
+
 function calcDriverStandings(season) {
   const ps = getPointsSystem(season.pointsSystemId || DEFAULT_POINTS_SYSTEM_ID);
   const totals = {};
@@ -2294,6 +2340,9 @@ function calcDriverStandings(season) {
   });
   season.races.forEach(race => {
     if (!race.completed) return;
+    // Per-race points multiplier: 1 = regular (default), 0.5 = half, 2 = double.
+    // Scales every point this race awards (positions, sprint, pole, fastest lap).
+    const mult = racePointsMultiplier(race);
     const finishers = (race.results || []).slice().sort((a,b) => (a.position || 999) - (b.position || 999));
     finishers.forEach(res => {
       const tot = totals[res.driverId]; if (!tot) return;
@@ -2308,7 +2357,7 @@ function calcDriverStandings(season) {
       // championship-DSQd drivers earn no points
       if (tot.championshipDsq) return;
       if (res.position && res.position <= ps.points.length) {
-        tot.points += ps.points[res.position - 1];
+        tot.points += ps.points[res.position - 1] * mult;
       }
       if (res.position === 1) tot.wins++;
       if (res.position && res.position <= 3) tot.podiums++;
@@ -2320,7 +2369,7 @@ function calcDriverStandings(season) {
         if (sr.dns || sr.dsq || sr.dnf) return;
         if (tot.championshipDsq) return;
         if (sr.position && sr.position <= ps.sprintPoints.length) {
-          tot.points += ps.sprintPoints[sr.position - 1];
+          tot.points += ps.sprintPoints[sr.position - 1] * mult;
         }
         if (sr.position === 1) tot.sprintWins++;
       });
@@ -2330,7 +2379,7 @@ function calcDriverStandings(season) {
       totals[race.poleDriverId].polePositions++;
       // pole-point bonus when enabled per-season
       if (season.polePointEnabled && Number(season.polePointValue) > 0) {
-        totals[race.poleDriverId].points += Number(season.polePointValue);
+        totals[race.poleDriverId].points += Number(season.polePointValue) * mult;
       }
     }
     // fastest lap
@@ -2348,7 +2397,7 @@ function calcDriverStandings(season) {
         const flRes = (race.results || []).find(r => r.driverId === race.fastestLapDriverId);
         if (flRes && !flRes.dnf && !flRes.dsq && !flRes.dns && flRes.position) {
           if (!ps.flRequiresTop10 || flRes.position <= 10) {
-            tot.points += flValue;
+            tot.points += flValue * mult;
           }
         }
       }
@@ -2389,6 +2438,7 @@ function calcAllTimeRecords() {
       wins: 0, podiums: 0, poles: 0, fastestLaps: 0,
       points: 0, championships: 0, starts: 0,
       sprintWins: 0, dnfs: 0, dsqs: 0, dnss: 0,
+      bestSeasonWins: 0, bestSeasonPoles: 0,
       countries: new Set(), latestCountry: '',
       photo: '', latestTeamColor: '#666',
     });
@@ -2427,6 +2477,9 @@ function calcAllTimeRecords() {
         agg.dnfs += d.dnfs || 0;
         agg.dsqs += d.dsqs || 0;
         agg.dnss += d.dnss || 0;
+        // single-season bests (most wins / poles a driver took in one season)
+        if (d.wins > agg.bestSeasonWins) agg.bestSeasonWins = d.wins;
+        if (d.polePositions > agg.bestSeasonPoles) agg.bestSeasonPoles = d.polePositions;
         if (drv.country) { agg.countries.add(drv.country); agg.latestCountry = drv.country; }
         if (drv.photo) agg.photo = drv.photo;
         const drvTeam = season.teams.find(t => t.id === drv.teamId);
@@ -2448,9 +2501,10 @@ function calcAllTimeRecords() {
         if (tm.logo) agg.logo = tm.logo;
         if (tm.country) agg.latestCountry = tm.country;
       });
-      // championship counts only if season has completed races
-      const hasResults = season.races.some(r => r.completed);
-      if (hasResults) {
+      // A world champion is only crowned when the season is FULLY finished — every
+      // round completed. Mid-season leaders are not recorded as champions.
+      const seasonFinished = (season.races || []).length > 0 && season.races.every(r => r.completed);
+      if (seasonFinished) {
         if (dStandings.length) {
           // skip champ-DSQd
           const winner = dStandings.find(d => !d.championshipDsq);
@@ -3539,6 +3593,15 @@ function renderCalendar() {
               </div>
             </div>` : `
             <div class="race-card-pending-info">awaiting lights-out</div>`;
+          const pm = racePointsMultiplier(r);
+          const pmBadge = pm !== 1 ? `<span class="race-card-mult-badge ${pm === 2 ? 'dbl' : 'half'}">${pm === 2 ? '2×' : '½'}</span>` : '';
+          const pmToggle = `
+            <div class="race-card-mult" title="Championship points awarded for this round">
+              <span class="race-card-mult-lbl">PTS</span>
+              <button class="race-card-mult-btn ${pm === 1 ? 'active' : ''}" data-mult="${r.id}|1">1×</button>
+              <button class="race-card-mult-btn ${pm === 0.5 ? 'active' : ''}" data-mult="${r.id}|0.5">½</button>
+              <button class="race-card-mult-btn ${pm === 2 ? 'active' : ''}" data-mult="${r.id}|2">2×</button>
+            </div>`;
           return `
             <div class="race-card ${r.completed ? 'completed' : 'pending'}" data-race="${r.id}" style="--accent-color:${accent}">
               <div class="race-card-head">
@@ -3548,6 +3611,7 @@ function renderCalendar() {
                 </div>
                 <div class="race-card-head-right">
                   ${r.sprint ? '<span class="race-card-sprint-badge">SPR</span>' : ''}
+                  ${pmBadge}
                   ${statusTag}
                   <div class="race-card-flag">${raceFlagHTML(r, 26)}</div>
                 </div>
@@ -3565,6 +3629,7 @@ function renderCalendar() {
                 ${winnerBlock}
                 ${extraBlock}
               </div>
+              ${pmToggle}
               <div class="race-card-actions">
                 <button class="btn btn-sm btn-ghost" data-edit-race="${r.id}" title="Edit info">✎ EDIT</button>
                 <button class="btn btn-sm btn-danger btn-icon" data-del-race="${r.id}" title="Remove">✕</button>
@@ -3821,8 +3886,14 @@ function renderCalendar() {
     $('#search-track-presets', wrap)?.addEventListener('click', openTrackPresetSearch);
     $('#open-cal-presets', wrap)?.addEventListener('click', openCalendarPresets);
     $$('[data-race]', wrap).forEach(row => row.onclick = (e) => {
-      if (e.target.closest('[data-edit-race]') || e.target.closest('[data-del-race]')) return;
+      if (e.target.closest('[data-edit-race]') || e.target.closest('[data-del-race]') || e.target.closest('[data-mult]')) return;
       state.view = 'race'; state.raceId = row.dataset.race; renderAll();
+    });
+    $$('[data-mult]', wrap).forEach(b => b.onclick = (e) => {
+      e.stopPropagation();
+      const [raceId, val] = b.dataset.mult.split('|');
+      setRacePointsMultiplier(raceId, val);
+      renderMain();
     });
     $$('[data-edit-race]', wrap).forEach(b => b.onclick = (e) => { e.stopPropagation(); openRaceModal(b.dataset.editRace); });
     $$('[data-del-race]', wrap).forEach(b => b.onclick = (e) => {
@@ -5862,6 +5933,8 @@ const RECORD_CATEGORIES = [
   { id: 'team_wins',           label: 'Most Race Wins · Teams', scope: 'teams',   key: 'wins',          unit: 'WINS' },
   { id: 'team_champs',         label: "Constructors' Titles",   scope: 'teams',   key: 'championships', unit: 'TITLES' },
   { id: 'driver_poles',        label: 'Most Pole Positions',    scope: 'drivers', key: 'poles',         unit: 'POLES' },
+  { id: 'driver_season_wins',  label: 'Most Wins in a Season',  scope: 'drivers', key: 'bestSeasonWins',  unit: 'WINS' },
+  { id: 'driver_season_poles', label: 'Most Poles in a Season', scope: 'drivers', key: 'bestSeasonPoles', unit: 'POLES' },
   { id: 'driver_fl',           label: 'Most Fastest Laps',      scope: 'drivers', key: 'fastestLaps',   unit: 'FLs' },
   { id: 'driver_dnfs',         label: 'Most DNFs',              scope: 'drivers', key: 'dnfs',          unit: 'DNFs' },
   { id: 'driver_points',       label: 'Most Career Points',     scope: 'drivers', key: 'points',        unit: 'PTS' },
@@ -8644,6 +8717,24 @@ function backfillTeamLogosFromPresets() {
   } catch {}
 }
 
+/* Driver photos aren't persisted in localStorage (see stateForStorage). Re-hydrate
+   each season driver's photo from its matching preset so the image is back after a
+   reload. Only fills blanks. */
+function backfillDriverPhotosFromPresets() {
+  try {
+    Object.values(state.saves || {}).forEach(save => {
+      Object.values(save.seasons || {}).forEach(season => {
+        (season.drivers || []).forEach(d => {
+          if (d.photo) return;
+          const preset = matchDriverPresetForName(d.name);
+          const ph = preset ? defaultPresetPhoto(preset) : '';
+          if (ph) d.photo = ph;
+        });
+      });
+    });
+  } catch {}
+}
+
 /* Push an edited team preset's logo onto matching season teams. Overwrites when
    the logo CHANGED; fills any team that has no logo; never clears. Matches by the
    preset link or by name (so a Ferrari already in the season updates too). */
@@ -10604,12 +10695,12 @@ function renderAll() {
       // Build the shell first so signin screen can target #app
       renderTopbar(); renderTabs();
       // Guest mode persists across reloads — skip the sign-in wall.
-      if (isGuest()) { backfillTeamLogosFromPresets(); renderAll(); }
+      if (isGuest()) { backfillTeamLogosFromPresets(); backfillDriverPhotosFromPresets(); renderAll(); }
       else { renderSignInScreen(); }
       return;
     }
   }
-  backfillTeamLogosFromPresets();
+  backfillTeamLogosFromPresets(); backfillDriverPhotosFromPresets();
   renderAll();
 })();
 
