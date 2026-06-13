@@ -5410,6 +5410,53 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
   border: 1px solid rgba(255,214,10,0.55);
   color: var(--sec-yellow);
 }
+
+/* Per-race points multiplier badge + toggle */
+.race-card-mult-badge {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--f-mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  padding: 3px 7px;
+  border-radius: var(--r-xs);
+}
+.race-card-mult-badge.dbl  { color: var(--sec-green); background: rgba(16,220,136,0.10); border: 1px solid rgba(16,220,136,0.55); }
+.race-card-mult-badge.half { color: var(--sec-cyan);  background: rgba(0,217,255,0.10);  border: 1px solid rgba(0,217,255,0.55); }
+.race-card-mult {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 14px 0;
+}
+.race-card-mult-lbl {
+  font-family: var(--f-mono);
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  color: var(--text-muted);
+  margin-right: 2px;
+}
+.race-card-mult-btn {
+  flex: 1;
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  padding: 5px 0;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+  transition: all 0.15s var(--ease);
+}
+.race-card-mult-btn:hover { border-color: var(--border-hi); color: var(--text-soft); }
+.race-card-mult-btn.active {
+  border-color: var(--red);
+  background: var(--red-soft);
+  color: var(--red-light);
+}
 .race-card-status-tag {
   display: inline-flex;
   align-items: center;
