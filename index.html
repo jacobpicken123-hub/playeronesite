@@ -8831,7 +8831,7 @@ async function cloudSignOut() {
    Cloud rows live in normalized tables; we re-assemble them into the same shape your
    render code already expects (state.saves[id] = { id, name, seasons: { [seasonId]: {...} } }).
 */
-async function cloudPullAllSaves() {
+async function cloudPullAllSaves(preferLocalIfNewer = false) {
   if (!CLOUD.enabled || !currentUser) return;
 
   // 1. Saves the user can access (via RLS — only owned/shared)
@@ -8937,6 +8937,13 @@ async function cloudPullAllSaves() {
       _updatedAt: rc.updated_at ? new Date(rc.updated_at).getTime() : null,
       _lastEditedBy: rc.last_edited_by || null,
     });
+    // Restore the per-race half/double-points multiplier (if the column exists).
+    if (rc.point_multiplier !== undefined && rc.point_multiplier !== null) {
+      state.racePointsMultipliers ||= {};
+      const pm = Number(rc.point_multiplier);
+      if (pm === 0.5 || pm === 2) state.racePointsMultipliers[rc.id] = pm;
+      else delete state.racePointsMultipliers[rc.id];
+    }
   }
   // Attach to seasons
   for (const seasonId of Object.keys(teamsBySeason)) {
@@ -8955,10 +8962,22 @@ async function cloudPullAllSaves() {
     }
   }
 
-  // Merge cloud saves into state — keep activeSaveId if it still exists, else clear it
+  // Merge cloud saves into state. Cloud is authoritative EXCEPT, on the initial
+  // reload, where a local save is newer than its cloud copy (edits the debounced
+  // push hadn't flushed before the last reload) or exists only locally — those are
+  // kept and queued for re-push, so a reload never silently reverts recent work.
+  let needsRepush = false;
+  if (preferLocalIfNewer) {
+    for (const localId in (state.saves || {})) {
+      const local = state.saves[localId];
+      const cloud = newSaves[localId];
+      if (!cloud) { newSaves[localId] = local; needsRepush = true; }
+      else if ((local.updatedAt || 0) > (cloud.updatedAt || 0)) { newSaves[localId] = local; needsRepush = true; }
+    }
+  }
   state.saves = newSaves;
   if (state.activeSaveId && !newSaves[state.activeSaveId]) state.activeSaveId = null;
-  if (state.activeSeasonId && state.activeSaveId && !newSaves[state.activeSaveId].seasons[state.activeSeasonId]) state.activeSeasonId = null;
+  if (state.activeSeasonId && state.activeSaveId && newSaves[state.activeSaveId] && !newSaves[state.activeSaveId].seasons[state.activeSeasonId]) state.activeSeasonId = null;
 
   // The cloud round-trip can lose a team's logo (e.g. large image payloads). Re-fill
   // any blank team logo from its matching preset in the local library so preset
@@ -8969,6 +8988,34 @@ async function cloudPullAllSaves() {
   cloudLastPushHashes = {};
 
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(stateForStorage())); } catch {}
+
+  // If we kept any newer-local or local-only saves above, re-push them so the
+  // cloud catches up to what's on screen.
+  if (needsRepush) scheduleCloudSync();
+}
+
+/* ---------- CLOUD IMAGE STORAGE ----------
+   Driver photos / team logos are large base64 data-URLs. Storing them inside the
+   Postgres rows bloats the database toward Supabase's free-tier limit. Instead we
+   upload them once to a Storage bucket ("season-images") and store only the short
+   public URL in the row. If the bucket isn't set up yet (or anything fails), we
+   return the original value so the app falls back to the previous base64 behavior
+   — nothing breaks before the one-time bucket setup is done. */
+const SEASON_IMAGE_BUCKET = 'season-images';
+async function uploadImageToBucket(value, path) {
+  if (!CLOUD.enabled || !currentUser) return value;
+  // Already a URL (or empty) → nothing to upload.
+  if (!value || typeof value !== 'string' || !value.startsWith('data:')) return value;
+  try {
+    const blob = await (await fetch(value)).blob();
+    const ext = (blob.type && blob.type.split('/')[1]) || 'jpg';
+    const key = `${currentUser.id}/${path}.${ext}`;
+    const { error } = await CLOUD.client.storage.from(SEASON_IMAGE_BUCKET)
+      .upload(key, blob, { upsert: true, contentType: blob.type || 'image/jpeg' });
+    if (error) return value; // bucket missing / no policy → keep base64 for now
+    const { data } = CLOUD.client.storage.from(SEASON_IMAGE_BUCKET).getPublicUrl(key);
+    return data?.publicUrl || value;
+  } catch { return value; }
 }
 
 /* ---------- CLOUD PUSH: serialize the active save tree and upsert into cloud ----------
@@ -8978,8 +9025,17 @@ async function cloudPushActive() {
   if (!CLOUD.enabled || !currentUser) return;
   // Upgrade any legacy short IDs to proper UUIDs before pushing — Supabase rejects non-UUID strings
   upgradeIdsToUuids();
-  const save = state.saves[state.activeSaveId];
-  if (!save) return;
+  // Push EVERY local save, not just the active one, so all seasons reach the cloud
+  // and none silently disappear on the next reload.
+  for (const save of Object.values(state.saves || {})) {
+    if (!save) continue;
+    try { await cloudPushOneSave(save); }
+    catch (e) { console.warn('[P1] cloud push (save) failed', save.id, e); }
+  }
+}
+
+async function cloudPushOneSave(save) {
+  if (!CLOUD.enabled || !currentUser || !save) return;
 
   // First-time push of this save: use explicit INSERT (the only path the INSERT policy allows)
   // and immediately create the save_members owner row so subsequent updates pass user_is_save_owner().
@@ -9035,25 +9091,36 @@ async function cloudPushActive() {
       cloudLastPushHashes[`season:${season.id}`] = sh;
     }
 
-    // Teams — only push changed rows
+    // Teams — only push changed rows. Logos are uploaded to Storage first so the
+    // row holds just a short URL instead of a big base64 blob.
     if (season.teams?.length) {
-      const teamRows = season.teams.map(t => ({
-        id: t.id, season_id: season.id, name: t.name, short: t.short,
-        country: t.country, color: t.color, logo: t.logo || null, dsq: t.dsq || false,
-      }));
+      const teamRows = [];
+      for (const t of season.teams) {
+        const logo = await uploadImageToBucket(t.logo, `teams/${t.id}`);
+        if (logo && logo !== t.logo) t.logo = logo; // keep in-memory copy as the URL
+        teamRows.push({
+          id: t.id, season_id: season.id, name: t.name, short: t.short,
+          country: t.country, color: t.color, logo: logo || null, dsq: t.dsq || false,
+        });
+      }
       const changed = teamRows.filter(r => cloudLastPushHashes[`team:${r.id}`] !== hash(r));
       if (changed.length) {
         const { error } = await CLOUD.client.from('teams').upsert(changed);
         if (!error) changed.forEach(r => cloudLastPushHashes[`team:${r.id}`] = hash(r));
       }
     }
-    // Drivers
+    // Drivers — photos uploaded to Storage first (URL stored instead of base64).
     if (season.drivers?.length) {
-      const drvRows = season.drivers.map(d => ({
-        id: d.id, season_id: season.id, name: d.name, number: d.number,
-        country: d.country, photo: d.photo || null, team_id: d.teamId || null,
-        dsq: d.dsq || false,
-      }));
+      const drvRows = [];
+      for (const d of season.drivers) {
+        const photo = await uploadImageToBucket(d.photo, `drivers/${d.id}`);
+        if (photo && photo !== d.photo) d.photo = photo; // keep in-memory copy as the URL
+        drvRows.push({
+          id: d.id, season_id: season.id, name: d.name, number: d.number,
+          country: d.country, photo: photo || null, team_id: d.teamId || null,
+          dsq: d.dsq || false,
+        });
+      }
       const changed = drvRows.filter(r => cloudLastPushHashes[`driver:${r.id}`] !== hash(r));
       if (changed.length) {
         const { error } = await CLOUD.client.from('drivers').upsert(changed);
@@ -9069,10 +9136,18 @@ async function cloudPushActive() {
         sprint: r.sprint || false, completed: r.completed || false,
         pole_driver_id: r.poleDriverId || null,
         fastest_lap_driver_id: r.fastestLapDriverId || null,
+        // Half / double points per race, persisted so they survive a reload / new device.
+        point_multiplier: racePointsMultiplier(r),
       }));
       const changedRaces = raceRows.filter(r => cloudLastPushHashes[`race:${r.id}`] !== hash(r));
       if (changedRaces.length) {
-        const { error } = await CLOUD.client.from('races').upsert(changedRaces);
+        let { error } = await CLOUD.client.from('races').upsert(changedRaces);
+        if (error && /point_multiplier|column/i.test(error.message || '')) {
+          // The point_multiplier column hasn't been added yet — retry without it so
+          // races still sync. (Run the one-time ALTER TABLE to enable multiplier sync.)
+          const stripped = changedRaces.map(({ point_multiplier, ...rest }) => rest);
+          ({ error } = await CLOUD.client.from('races').upsert(stripped));
+        }
         if (!error) changedRaces.forEach(r => cloudLastPushHashes[`race:${r.id}`] = hash(r));
       }
       // Results — only re-push for races whose results array changed
@@ -9243,6 +9318,24 @@ function scheduleCloudSync() {
     }
   }, 800);
 }
+
+// Best-effort: when the page is being hidden/closed/reloaded, flush any pending
+// (debounced) cloud write immediately instead of waiting out the timer — so a quick
+// reload doesn't lose the last edit. If the request gets cut off mid-flight, the
+// next load's "prefer newer local" merge still recovers it from localStorage.
+(function wireCloudFlushOnExit() {
+  if (typeof window === 'undefined') return;
+  const flush = () => {
+    if (!CLOUD.enabled || !currentUser || pendingCloudWrites <= 0) return;
+    clearTimeout(cloudSyncTimer);
+    cloudEchoSuppressUntil = Date.now() + 60000;
+    try { cloudPushActive(); } catch {}
+  };
+  window.addEventListener('pagehide', flush);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') flush();
+  });
+})();
 
 /* ---------- COLLABORATION: invite + accept ---------- */
 async function cloudInvite(saveId, role = 'editor') {
@@ -9490,7 +9583,9 @@ async function cloudInit() {
         history.replaceState({}, '', url.toString());
       } catch (e) { console.warn('Could not accept invite:', e.message); }
     }
-    await cloudPullAllSaves();
+    // Initial reload while already signed in: keep any local edits newer than the
+    // cloud copy so a refresh doesn't revert work the debounced push hadn't flushed.
+    await cloudPullAllSaves(true);
     cloudSubscribeRealtime();
     return true;
   }
@@ -10300,11 +10395,16 @@ function stateForStorage() {
       seasons[seid] = {
         ...season,
         drivers: (season.drivers || []).map(d => {
-          const { photo, photos, ...rest } = d;
+          // Drop the heavy multi-photo gallery always; drop the single photo only
+          // when it's a big base64 blob. Short Storage/URLs are kept so they survive
+          // a reload (and the "prefer newer local" merge).
+          const { photos, ...rest } = d;
+          if (rest.photo && String(rest.photo).startsWith('data:')) delete rest.photo;
           return rest;
         }),
         teams: (season.teams || []).map(t => {
-          const { logo, ...rest } = t;
+          const rest = { ...t };
+          if (rest.logo && String(rest.logo).startsWith('data:')) delete rest.logo;
           return rest;
         }),
       };
@@ -11444,6 +11544,9 @@ function renderTopbar() {
   let act = `<span id="presence-slot" class="presence-slot"></span>`;
   act += `<button class="btn btn-ghost btn-sm" id="btn-export">⇣ EXPORT</button>
           <button class="btn btn-ghost btn-sm" id="btn-import">⇡ IMPORT</button>`;
+  if (state.activeSeasonId) {
+    act += `<button class="btn btn-ghost btn-sm" id="btn-export-csv" title="Export this season as a re-importable CSV with exact points">⇣ CSV</button>`;
+  }
   if (CLOUD.enabled && currentUser && state.activeSaveId) {
     act += `<button class="btn btn-ghost btn-sm" id="btn-share" title="Invite a collaborator">✦ SHARE</button>`;
   }
@@ -11463,6 +11566,7 @@ function renderTopbar() {
 
   $('#btn-export') && ($('#btn-export').onclick = exportData);
   $('#btn-import') && ($('#btn-import').onclick = importData);
+  $('#btn-export-csv') && ($('#btn-export-csv').onclick = () => exportSeasonCSV(state.activeSeasonId));
   $('#btn-new-save') && ($('#btn-new-save').onclick = openNewSaveModal);
   $('#btn-new-season') && ($('#btn-new-season').onclick = openNewSeasonModal);
   $('#btn-share') && ($('#btn-share').onclick = openShareModal);
@@ -13520,8 +13624,16 @@ function renderRaceEditor(container, race) {
     const qualiResults = qualiWorking
       .filter(r => r.position || r.time)
       .map(r => ({ driverId: r.driverId, position: r.position ? Number(r.position) : null, time: r.time || '' }));
-    updateRace(race.id, { qualifyingResults: qualiResults });
-    toast(`Qualifying saved · ${qualiResults.length} entries`, 'success');
+    // P1 in qualifying automatically takes pole for the race.
+    const p1 = qualiWorking.find(r => Number(r.position) === 1);
+    const update = { qualifyingResults: qualiResults };
+    if (p1) {
+      pole = p1.driverId;
+      update.poleDriverId = pole;
+      $$('[data-pole]', container).forEach(x => x.classList.toggle('on', x.dataset.pole === pole));
+    }
+    updateRace(race.id, update);
+    toast(p1 ? `Qualifying saved · pole to P1` : `Qualifying saved · ${qualiResults.length} entries`, 'success');
     saveState();
   };
 
@@ -16281,9 +16393,12 @@ function buildSeasonFromImport(parsed, opts) {
   season.races = raceObjs;
 
   // 4. Apply results per race
-  // F1 sprint scoring (modern era): 8-7-6-5-4-3-2-1 for top 8.
-  // We reverse-engineer the sprint finishing position from the sprint points scored.
-  const SPRINT_POINT_TO_POS = { 8: 1, 7: 2, 6: 3, 5: 4, 4: 5, 3: 6, 2: 7, 1: 8 };
+  // Reverse-engineer each driver's sprint finishing position from the sprint
+  // POINTS they scored. The map is derived from the season's own points system,
+  // so it works for the modern 8-7-…-1 sprint AND the 2021 3-2-1 sprint.
+  const sprintPS = POINTS_SYSTEMS.find(p => p.id === (opts.pointsSystemId || DEFAULT_POINTS_SYSTEM_ID)) || POINTS_SYSTEMS[0];
+  const SPRINT_POINT_TO_POS = {};
+  (sprintPS.sprintPoints || []).forEach((pts, i) => { if (SPRINT_POINT_TO_POS[pts] == null) SPRINT_POINT_TO_POS[pts] = i + 1; });
   for (let ri = 0; ri < raceObjs.length; ri++) {
     const race = raceObjs[ri];
     let anyResults = false;
@@ -16319,6 +16434,14 @@ function buildSeasonFromImport(parsed, opts) {
       race.poleDriverId = poleDrvId;
       race.fastestLapDriverId = flDrvId;
     }
+  }
+
+  // Apply per-race points multipliers parsed from race-code suffixes (e.g. BEL*0.5)
+  if (Array.isArray(parsed.raceMultipliers)) {
+    raceObjs.forEach((race, idx) => {
+      const m = Number(parsed.raceMultipliers[idx]);
+      if (m === 0.5 || m === 2) setRacePointsMultiplier(race.id, m);
+    });
   }
 
   save.seasons[seasonId] = season;
@@ -17231,7 +17354,24 @@ function parseSeasonCSV(csvText) {
   // Race columns are everything after the four fixed columns. Use the max index
   // of the fixed columns as the boundary.
   const fixedEnd = Math.max(posIdx, drvIdx, teamIdx, ptsIdx) + 1;
-  const raceCodes = header.slice(fixedEnd).map(c => c.toUpperCase().trim()).filter(Boolean);
+  // Race columns may carry a points-multiplier suffix: "BEL*0.5" (half points,
+  // e.g. 2021 Belgium) or "MIA*2" (double points). Strip it off the code used for
+  // track matching and keep a parallel multiplier array.
+  const rawRaceCodes = header.slice(fixedEnd).map(c => c.toUpperCase().trim()).filter(Boolean);
+  const raceCodes = [];
+  const raceMultipliers = [];
+  rawRaceCodes.forEach(rc => {
+    let code = rc, mult = 1;
+    const star = rc.indexOf('*');
+    if (star >= 0) {
+      code = rc.slice(0, star).trim();
+      const ms = rc.slice(star + 1).trim();
+      if (ms === '0.5' || ms === '.5' || ms === 'H' || ms === 'HALF') mult = 0.5;
+      else if (ms === '2' || ms === 'D' || ms === 'DOUBLE') mult = 2;
+    }
+    raceCodes.push(code);
+    raceMultipliers.push(mult);
+  });
   if (!raceCodes.length) throw new Error('No race columns found after Position/Driver/Team/Points');
 
   const drivers = [];
@@ -17250,7 +17390,7 @@ function parseSeasonCSV(csvText) {
     });
   }
   if (!drivers.length) throw new Error('No driver rows found below the header');
-  return { headers: raceCodes, drivers, errors: [], formatType: 'csv' };
+  return { headers: raceCodes, raceMultipliers, drivers, errors: [], formatType: 'csv' };
 }
 
 function openImportCSVModal() {
@@ -17281,7 +17421,10 @@ function openImportCSVModal() {
           <code>1P/8F</code> — won from pole, won the sprint, set FL (perfect weekend)<br>
           <code>DNF/3</code> — retired, 3 sprint pts (= sprint P6)<br>
           <code>DSQ</code> — disqualified<br>
-          <i>(empty)</i> — did not compete this round
+          <i>(empty)</i> — did not compete this round<br><br>
+          <b style="color:var(--text)">Race column suffix</b> (in the header row)<br>
+          <code>BEL*0.5</code> — half points for that race (e.g. 2021 Belgium)<br>
+          <code>MIA*2</code> — double points for that race
         </div>
       </details>
 
@@ -19555,6 +19698,68 @@ function openSeasonSettings() {
       };
     }
   });
+}
+
+/* Build a CSV string for one season in the exact format the CSV importer reads,
+   straight from stored data — so re-importing reproduces the same points exactly.
+   Encodes position, pole (P), sprint points (/N), fastest lap (F), and per-race
+   half/double multipliers as a header suffix (CODE*0.5 / CODE*2). */
+function buildSeasonCSVText(season) {
+  const ps = POINTS_SYSTEMS.find(p => p.id === season.pointsSystemId) || POINTS_SYSTEMS[0];
+  const sprintPts = ps.sprintPoints || [];
+  const races = (season.races || []).slice().sort((a, b) => (a.round || 0) - (b.round || 0));
+  const standings = calcDriverStandings(season);
+
+  const csvEsc = v => {
+    const s = String(v == null ? '' : v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const codeFor = r => {
+    let code = (r.country || r.circuit || r.name || 'RND').toUpperCase().trim();
+    const m = racePointsMultiplier(r);
+    if (m === 0.5) code += '*0.5'; else if (m === 2) code += '*2';
+    return code;
+  };
+  const cellFor = (driverId, race) => {
+    const r = (race.results || []).find(x => x.driverId === driverId);
+    const sr = (race.sprintResults || []).find(x => x.driverId === driverId);
+    if (!r && !sr) return '';
+    let cell = '';
+    if (r) {
+      if (r.dns) cell = 'DNS'; else if (r.dsq) cell = 'DSQ'; else if (r.dnf) cell = 'DNF';
+      else if (r.position) cell = String(r.position);
+    }
+    if (race.poleDriverId === driverId) cell += 'P';
+    if (sr && sr.position && !sr.dnf && !sr.dsq && !sr.dns && sprintPts[sr.position - 1] != null) {
+      cell += '/' + sprintPts[sr.position - 1];
+    }
+    if (race.fastestLapDriverId === driverId) cell += 'F';
+    return cell;
+  };
+
+  const header = ['Position', 'Driver', 'Team', 'Points', ...races.map(codeFor)];
+  const rows = standings.map((d, i) => {
+    const drv = (season.drivers || []).find(x => x.id === (d.driverId || d.id));
+    const team = drv && (season.teams || []).find(t => t.id === drv.teamId);
+    const cells = races.map(r => cellFor(drv ? drv.id : null, r));
+    return [i + 1, csvEsc(drv ? drv.name : ''), csvEsc(team ? team.name : ''), d.points, ...cells].join(',');
+  });
+  return [header.map(csvEsc).join(','), ...rows].join('\n');
+}
+
+function exportSeasonCSV(seasonId) {
+  const save = activeSave();
+  const season = save && (save.seasons[seasonId] || save.seasons[state.activeSeasonId]);
+  if (!season) return toast('Open a season first', 'warn');
+  const csv = buildSeasonCSVText(season);
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const safe = (season.name || 'season').replace(/[^a-z0-9]+/gi, '_').replace(/^_|_$/g, '').toLowerCase() || 'season';
+  a.href = url; a.download = `${safe}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+  toast('Season CSV exported', 'success');
 }
 
 /* ---------- import / export ---------- */
