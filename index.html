@@ -8875,6 +8875,18 @@ async function cloudSignOut() {
   location.reload();
 }
 
+// Total race + sprint result rows across a whole save — a "completeness" measure
+// used to stop an incomplete cloud copy from overwriting a complete local one.
+function saveResultsCount(save) {
+  let n = 0;
+  for (const season of Object.values(save?.seasons || {})) {
+    for (const race of (season.races || [])) {
+      n += (race.results || []).length + (race.sprintResults || []).length;
+    }
+  }
+  return n;
+}
+
 /* ---------- CLOUD DATA: pull all saves user has access to into local `state` shape ----------
    Cloud rows live in normalized tables; we re-assemble them into the same shape your
    render code already expects (state.saves[id] = { id, name, seasons: { [seasonId]: {...} } }).
@@ -9010,17 +9022,29 @@ async function cloudPullAllSaves(preferLocalIfNewer = false) {
     }
   }
 
-  // Merge cloud saves into state. Cloud is authoritative EXCEPT, on the initial
-  // reload, where a local save is newer than its cloud copy (edits the debounced
-  // push hadn't flushed before the last reload) or exists only locally — those are
-  // kept and queued for re-push, so a reload never silently reverts recent work.
+  // Merge cloud saves into state on the initial reload. localStorage is written
+  // atomically and completely by saveState(), while the cloud copy is assembled
+  // from many separate writes that can PARTIALLY fail (a push that uploaded the
+  // season + some races but not all results bumps the save's timestamp, making the
+  // cloud copy look "newer" even though it's missing data). So we keep the LOCAL
+  // copy unless the cloud copy is BOTH genuinely newer AND has at least as many
+  // race results — which stops an incomplete cloud copy from wiping good local
+  // results/wins on reload, while still letting real edits from another device win.
   let needsRepush = false;
   if (preferLocalIfNewer) {
     for (const localId in (state.saves || {})) {
       const local = state.saves[localId];
       const cloud = newSaves[localId];
-      if (!cloud) { newSaves[localId] = local; needsRepush = true; }
-      else if ((local.updatedAt || 0) > (cloud.updatedAt || 0)) { newSaves[localId] = local; needsRepush = true; }
+      if (!cloud) { newSaves[localId] = local; needsRepush = true; continue; }
+      const localCount = saveResultsCount(local);
+      const cloudCount = saveResultsCount(cloud);
+      const cloudNewer = (cloud.updatedAt || 0) > (local.updatedAt || 0);
+      if (cloudNewer && cloudCount >= localCount) {
+        // Cloud is the better copy — keep it (already in newSaves).
+      } else {
+        newSaves[localId] = local;            // keep the complete local copy
+        if (cloudCount < localCount) needsRepush = true; // cloud is missing data — heal it
+      }
     }
   }
   state.saves = newSaves;
@@ -9043,27 +9067,36 @@ async function cloudPullAllSaves(preferLocalIfNewer = false) {
 }
 
 /* ---------- CLOUD IMAGE STORAGE ----------
-   Driver photos / team logos are large base64 data-URLs. Storing them inside the
-   Postgres rows bloats the database toward Supabase's free-tier limit. Instead we
-   upload them once to a Storage bucket ("season-images") and store only the short
-   public URL in the row. If the bucket isn't set up yet (or anything fails), we
-   return the original value so the app falls back to the previous base64 behavior
-   — nothing breaks before the one-time bucket setup is done. */
+   Driver photos / team logos are large base64 data-URLs. We upload them once to a
+   Storage bucket ("season-images") and store only the short public URL in the row. */
 const SEASON_IMAGE_BUCKET = 'season-images';
+// null = not tried yet, true = bucket works, false = bucket missing/not set up.
+// Once we learn the bucket isn't available we STOP attempting uploads for the rest
+// of the session (otherwise every save fires one 400 per image, flooding the console
+// and slowing the push). When unavailable we return null so the image is simply NOT
+// stored in the DB row — keeping rows tiny. This is deliberate: a big base64 blob can
+// make the drivers/teams upsert fail, which would also drop that driver's race results
+// (foreign key) — exactly the data loss we're fixing. Images still show this session
+// (kept in memory) and re-hydrate from the preset library on reload. To persist custom
+// images across devices, create the "season-images" bucket (one-time SQL provided).
+let imageBucketAvailable = null;
 async function uploadImageToBucket(value, path) {
   if (!CLOUD.enabled || !currentUser) return value;
-  // Already a URL (or empty) → nothing to upload.
-  if (!value || typeof value !== 'string' || !value.startsWith('data:')) return value;
+  if (!value || typeof value !== 'string') return value || null;
+  if (!value.startsWith('data:')) return value; // already a short URL — store as-is
+  // It's a base64 data-URL:
+  if (imageBucketAvailable === false) return null; // bucket not set up → don't store the blob
   try {
     const blob = await (await fetch(value)).blob();
     const ext = (blob.type && blob.type.split('/')[1]) || 'jpg';
     const key = `${currentUser.id}/${path}.${ext}`;
     const { error } = await CLOUD.client.storage.from(SEASON_IMAGE_BUCKET)
       .upload(key, blob, { upsert: true, contentType: blob.type || 'image/jpeg' });
-    if (error) return value; // bucket missing / no policy → keep base64 for now
+    if (error) { imageBucketAvailable = false; return null; } // stop trying; don't store the blob
+    imageBucketAvailable = true;
     const { data } = CLOUD.client.storage.from(SEASON_IMAGE_BUCKET).getPublicUrl(key);
-    return data?.publicUrl || value;
-  } catch { return value; }
+    return data?.publicUrl || null;
+  } catch { imageBucketAvailable = false; return null; }
 }
 
 /* ---------- CLOUD PUSH: serialize the active save tree and upsert into cloud ----------
