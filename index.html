@@ -9040,22 +9040,25 @@ async function cloudPullAllSaves(preferLocalIfNewer = false) {
   // copy unless the cloud copy is BOTH genuinely newer AND has at least as many
   // race results — which stops an incomplete cloud copy from wiping good local
   // results/wins on reload, while still letting real edits from another device win.
+  // SAFETY MERGE — runs on EVERY pull (reload AND realtime), not just reload.
+  // localStorage is written atomically/completely by saveState(); the cloud copy is
+  // assembled from many writes that can partially fail. The hard rule: a cloud copy
+  // with FEWER race results must NEVER overwrite a fuller local copy — that is the
+  // data-loss bug (results/points vanishing). We keep local and re-push to heal cloud.
   let needsRepush = false;
-  if (preferLocalIfNewer) {
-    for (const localId in (state.saves || {})) {
-      const local = state.saves[localId];
-      const cloud = newSaves[localId];
-      if (!cloud) { newSaves[localId] = local; needsRepush = true; continue; }
-      const localCount = saveResultsCount(local);
-      const cloudCount = saveResultsCount(cloud);
-      const cloudNewer = (cloud.updatedAt || 0) > (local.updatedAt || 0);
-      if (cloudNewer && cloudCount >= localCount) {
-        // Cloud is the better copy — keep it (already in newSaves).
-      } else {
-        newSaves[localId] = local;            // keep the complete local copy
-        if (cloudCount < localCount) needsRepush = true; // cloud is missing data — heal it
-      }
+  for (const localId in (state.saves || {})) {
+    const local = state.saves[localId];
+    const cloud = newSaves[localId];
+    if (!cloud) { newSaves[localId] = local; needsRepush = true; continue; } // local-only save
+    const localCount = saveResultsCount(local);
+    const cloudCount = saveResultsCount(cloud);
+    if (cloudCount < localCount) {
+      newSaves[localId] = local;            // cloud is missing data → keep local, heal cloud
+      needsRepush = true;
+    } else if (preferLocalIfNewer && cloudCount === localCount && (local.updatedAt || 0) > (cloud.updatedAt || 0)) {
+      newSaves[localId] = local;            // equal data, local has newer unflushed edits
     }
+    // else: cloud has at least as many results → accept cloud
   }
   state.saves = newSaves;
   if (state.activeSaveId && !newSaves[state.activeSaveId]) state.activeSaveId = null;
@@ -9274,19 +9277,22 @@ async function cloudPushOneSave(save) {
           }
         }
         if (!changedRaces.length) return;
-        // Replace existing rows: delete then insert. Use upsert as the insert so a
-        // row that already exists (delete blocked/filtered by RLS) UPDATES instead of
-        // throwing a 409 conflict — which previously spammed the console and left the
-        // hash unset so it retried forever.
-        await CLOUD.client.from(table).delete().in('race_id', changedRaces.map(r => r.id));
+        // NON-DESTRUCTIVE: upsert only — NEVER delete first. The old code deleted a
+        // race's results then re-inserted; if the insert was blocked (RLS/403) the
+        // results were wiped from the cloud permanently. Upserting on the
+        // (race_id, driver_id) key updates existing rows in place and inserts new
+        // ones, so cloud results can never be destroyed by a failed push.
         let ok = true;
         for (const part of chunk(rows, 500)) {
-          let { error } = await CLOUD.client.from(table).upsert(part);
+          let { error } = await CLOUD.client.from(table).upsert(part, { onConflict: 'race_id,driver_id' });
+          if (error) {
+            // Schema may use a different unique key — retry plain upsert.
+            const retry = await CLOUD.client.from(table).upsert(part);
+            error = retry.error;
+          }
           if (error) {
             const conflict = error.code === '23505' || /duplicate|conflict|409/i.test((error.message || '') + (error.code || ''));
             if (!conflict) { ok = false; break; }
-            // rows already exist and couldn't be replaced — accept as synced so we
-            // stop retrying (the data is present; further retries only spam).
           }
         }
         if (ok) changedRaces.forEach(r => cloudLastPushHashes[`${key}:${r.id}`] = r.h);
