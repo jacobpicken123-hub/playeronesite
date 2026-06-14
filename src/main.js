@@ -232,6 +232,16 @@ async function cloudPullAllSaves(preferLocalIfNewer = false) {
     }
   }
 
+  // Drop anything the user deleted locally — even if its cloud delete failed (RLS),
+  // so a pull can never resurrect a deleted save/season.
+  const tomb = state.deletedCloudIds || { saves: [], seasons: [] };
+  for (const sid of (tomb.saves || [])) delete newSaves[sid];
+  for (const save of Object.values(newSaves)) {
+    for (const seid of (tomb.seasons || [])) {
+      if (save.seasons && save.seasons[seid]) delete save.seasons[seid];
+    }
+  }
+
   // Merge cloud saves into state on the initial reload. localStorage is written
   // atomically and completely by saveState(), while the cloud copy is assembled
   // from many separate writes that can PARTIALLY fail (a push that uploaded the
@@ -294,6 +304,10 @@ const SEASON_IMAGE_BUCKET = 'season-images';
 // (kept in memory) and re-hydrate from the preset library on reload. To persist custom
 // images across devices, create the "season-images" bucket (one-time SQL provided).
 let imageBucketAvailable = null;
+// null = unknown, true = column exists, false = the races.point_multiplier column
+// hasn't been added yet. Once we learn it's missing we stop sending it so the races
+// upsert doesn't 400 on every save. (Run the one-time ALTER TABLE to enable it.)
+let racesMultiplierSupported = null;
 async function uploadImageToBucket(value, path) {
   if (!CLOUD.enabled || !currentUser) return value;
   if (!value || typeof value !== 'string') return value || null;
@@ -424,26 +438,35 @@ async function cloudPushOneSave(save) {
     }
     // Races — and for each race, replace results + sprint results
     if (season.races?.length) {
-      const raceRows = season.races.map(r => ({
-        id: r.id, season_id: season.id, round: r.round, name: r.name,
-        circuit: r.circuit, country: r.country, flag_image: r.flagImage || null,
-        date: r.date ? new Date(r.date).toISOString().slice(0, 10) : null,
-        sprint: r.sprint || false, completed: r.completed || false,
-        pole_driver_id: r.poleDriverId || null,
-        fastest_lap_driver_id: r.fastestLapDriverId || null,
-        // Half / double points per race, persisted so they survive a reload / new device.
-        point_multiplier: racePointsMultiplier(r),
-      }));
+      const includeMult = racesMultiplierSupported !== false;
+      const raceRows = season.races.map(r => {
+        const row = {
+          id: r.id, season_id: season.id, round: r.round, name: r.name,
+          circuit: r.circuit, country: r.country, flag_image: r.flagImage || null,
+          date: r.date ? new Date(r.date).toISOString().slice(0, 10) : null,
+          sprint: r.sprint || false, completed: r.completed || false,
+          pole_driver_id: r.poleDriverId || null,
+          fastest_lap_driver_id: r.fastestLapDriverId || null,
+        };
+        // Half / double points per race — only sent if the column exists, so a
+        // missing column doesn't 400 the whole races upsert.
+        if (includeMult) row.point_multiplier = racePointsMultiplier(r);
+        return row;
+      });
       const changedRaces = raceRows.filter(r => cloudLastPushHashes[`race:${r.id}`] !== hash(r));
       if (changedRaces.length) {
         let { error } = await CLOUD.client.from('races').upsert(changedRaces);
-        if (error && /point_multiplier|column/i.test(error.message || '')) {
-          // The point_multiplier column hasn't been added yet — retry without it so
-          // races still sync. (Run the one-time ALTER TABLE to enable multiplier sync.)
+        if (error && /point_multiplier|column|schema cache|PGRST204/i.test((error.message || '') + (error.code || ''))) {
+          // The point_multiplier column hasn't been added yet — stop sending it for
+          // the rest of this session and retry without it so races still sync.
+          racesMultiplierSupported = false;
           const stripped = changedRaces.map(({ point_multiplier, ...rest }) => rest);
           ({ error } = await CLOUD.client.from('races').upsert(stripped));
         }
-        if (!error) changedRaces.forEach(r => cloudLastPushHashes[`race:${r.id}`] = hash(r));
+        if (!error) {
+          if (racesMultiplierSupported === null) racesMultiplierSupported = true;
+          changedRaces.forEach(r => cloudLastPushHashes[`race:${r.id}`] = hash(r));
+        }
       }
       // Results & sprint results — BATCHED. A fresh import has hundreds of result
       // rows; doing a delete+insert per race meant 40+ sequential round-trips that
@@ -465,13 +488,20 @@ async function cloudPushOneSave(save) {
           }
         }
         if (!changedRaces.length) return;
-        const { error: delErr } = await CLOUD.client.from(table)
-          .delete().in('race_id', changedRaces.map(r => r.id));
-        if (delErr) return; // leave hashes unset so the next push retries cleanly
+        // Replace existing rows: delete then insert. Use upsert as the insert so a
+        // row that already exists (delete blocked/filtered by RLS) UPDATES instead of
+        // throwing a 409 conflict — which previously spammed the console and left the
+        // hash unset so it retried forever.
+        await CLOUD.client.from(table).delete().in('race_id', changedRaces.map(r => r.id));
         let ok = true;
         for (const part of chunk(rows, 500)) {
-          const { error } = await CLOUD.client.from(table).insert(part);
-          if (error) { ok = false; break; }
+          let { error } = await CLOUD.client.from(table).upsert(part);
+          if (error) {
+            const conflict = error.code === '23505' || /duplicate|conflict|409/i.test((error.message || '') + (error.code || ''));
+            if (!conflict) { ok = false; break; }
+            // rows already exist and couldn't be replaced — accept as synced so we
+            // stop retrying (the data is present; further retries only spam).
+          }
         }
         if (ok) changedRaces.forEach(r => cloudLastPushHashes[`${key}:${r.id}`] = r.h);
       };
@@ -635,6 +665,55 @@ function setCloudSyncStatus(s) {
   }
 }
 
+/* ---------- PRESET LIBRARY CLOUD BACKUP ----------
+   The preset library (custom drivers/teams/tracks, edits/overrides, roster bundles,
+   calendar presets, season templates) lives only in localStorage — so it (and the
+   driver/team PHOTOS inside it) is lost on a new device, a storage clear, or when
+   base64 photos overflow the localStorage quota and the whole save silently fails.
+   We back the whole library up to a single per-user row (user_presets.data jsonb),
+   including the photos, so it survives all of the above. Guarded: if the table
+   hasn't been created yet it disables itself for the session (no error spam). */
+let presetsTableAvailable = null; // null=unknown, true, false
+const PRESET_BACKUP_KEYS = [
+  'customDriverPresets', 'customTeamPresets', 'customTrackPresets',
+  'presetOverrides', 'hiddenPresets', 'driverClasses', 'teamClasses',
+  'calendarPresets', 'seasonTemplates',
+];
+function collectPresetBlob() {
+  const blob = {};
+  for (const k of PRESET_BACKUP_KEYS) if (state[k] !== undefined) blob[k] = state[k];
+  return blob;
+}
+async function cloudPushPresets() {
+  if (!CLOUD.enabled || !currentUser || presetsTableAvailable === false) return;
+  const blob = collectPresetBlob();
+  const sig = JSON.stringify(blob);
+  if (cloudLastPushHashes['presets'] === sig) return; // unchanged
+  const { error } = await CLOUD.client.from('user_presets')
+    .upsert({ user_id: currentUser.id, data: blob, updated_at: new Date().toISOString() });
+  if (error) { presetsTableAvailable = false; return; } // table not set up → stop trying
+  presetsTableAvailable = true;
+  cloudLastPushHashes['presets'] = sig;
+}
+async function cloudPullPresets() {
+  if (!CLOUD.enabled || !currentUser || presetsTableAvailable === false) return;
+  const { data, error } = await CLOUD.client.from('user_presets')
+    .select('data').eq('user_id', currentUser.id).maybeSingle();
+  if (error) { presetsTableAvailable = false; return; }
+  presetsTableAvailable = true;
+  if (data && data.data && Object.keys(data.data).length) {
+    // Cloud is the durable backup — apply it (this is what restores the photos).
+    for (const k of PRESET_BACKUP_KEYS) {
+      if (data.data[k] !== undefined) state[k] = data.data[k];
+    }
+    cloudLastPushHashes['presets'] = JSON.stringify(collectPresetBlob());
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(stateForStorage())); } catch {}
+  } else {
+    // Nothing in the cloud yet → push whatever is local up so it's backed up.
+    cloudPushPresets();
+  }
+}
+
 function scheduleCloudSync() {
   if (!CLOUD.enabled || !currentUser) return;
   pendingCloudWrites++;
@@ -653,6 +732,7 @@ function scheduleCloudSync() {
     let okPush = true;
     try {
       await cloudPushActive();
+      await cloudPushPresets(); // back up the preset library (+ its photos) too
     } catch (e) {
       okPush = false;
       console.warn('[P1] cloud push failed', e);
@@ -955,6 +1035,7 @@ async function cloudInit() {
             history.replaceState({}, '', url.toString());
           }
           await cloudPullAllSaves();
+          await cloudPullPresets(); // restore the preset library (+ photos) from cloud
           cloudSubscribeRealtime();
           renderAll();
         } catch (e) { console.warn('[P1] post-signin hydrate failed', e); }
@@ -983,6 +1064,7 @@ async function cloudInit() {
     // Initial reload while already signed in: keep any local edits newer than the
     // cloud copy so a refresh doesn't revert work the debounced push hadn't flushed.
     await cloudPullAllSaves(true);
+    await cloudPullPresets(); // restore the preset library (+ photos) from cloud
     cloudSubscribeRealtime();
     return true;
   }
@@ -1745,6 +1827,12 @@ if (!state.presetOverrides.tracks) state.presetOverrides.tracks = {};
 if (!state.hiddenPresets)       state.hiddenPresets       = { drivers: [], teams: [], tracks: [] };
 // Per-race championship-points multipliers (raceId -> 0.5 | 2). 1 = regular = absent.
 if (!state.racePointsMultipliers) state.racePointsMultipliers = {};
+// Tombstones: IDs the user deleted locally. Cloud deletes can silently fail (RLS),
+// leaving the row alive so the next pull resurrects it. We remember deleted IDs and
+// filter them out of every pull so a delete always sticks. Persisted in localStorage.
+if (!state.deletedCloudIds) state.deletedCloudIds = { saves: [], seasons: [] };
+if (!state.deletedCloudIds.saves) state.deletedCloudIds.saves = [];
+if (!state.deletedCloudIds.seasons) state.deletedCloudIds.seasons = [];
 // Roster bundles — saved groups of drivers or teams that can be loaded into any season as a class.
 // Each: { id, name, savedAt, drivers: [{ name, number, country, photo, era }], note }
 if (!state.driverClasses) state.driverClasses = [];
@@ -2274,6 +2362,8 @@ function deleteSave(id) {
   // Issue the cloud delete BEFORE removing from local state so the helper can
   // still see the save_id in cloudSaveIds for cleanup. The promise fires-and-forgets;
   // local state proceeds regardless of cloud success.
+  if (!state.deletedCloudIds) state.deletedCloudIds = { saves: [], seasons: [] };
+  if (!state.deletedCloudIds.saves.includes(id)) state.deletedCloudIds.saves.push(id);
   cloudDeleteSave(id);
   delete state.saves[id];
   if (state.activeSaveId === id) {
@@ -2437,6 +2527,8 @@ function createSeason({
 
 function deleteSeason(id) {
   const save = activeSave(); if (!save) return;
+  if (!state.deletedCloudIds) state.deletedCloudIds = { saves: [], seasons: [] };
+  if (!state.deletedCloudIds.seasons.includes(id)) state.deletedCloudIds.seasons.push(id);
   cloudDeleteSeason(id);
   delete save.seasons[id];
   if (state.activeSeasonId === id) {
@@ -8957,22 +9049,29 @@ function presetOverridesField(kind) {
        : 'tracks';
 }
 
-function savePresetEdit(kind, originalKey, updated) {
+function savePresetEdit(kind, originalKey, updated, basePreset) {
   if (!state.presetOverrides) state.presetOverrides = { drivers: {}, teams: {}, tracks: {} };
   if (!state.presetOverrides.tracks) state.presetOverrides.tracks = {};
-  const target = presetOverridesField(kind);
   const customField = presetCustomField(kind);
   const customs = state[customField] || [];
   const customIdx = customs.findIndex(p => presetKey(p) === originalKey);
   // Capture the previous image so we can tell whether the photo/logo actually changed.
-  const prevStore = customIdx >= 0 ? customs[customIdx] : state.presetOverrides[target][originalKey];
+  const prevStore = customIdx >= 0 ? customs[customIdx] : (basePreset || {});
   const prevPhoto = (prevStore && prevStore.photo) || '';
   const prevLogo = (prevStore && prevStore.logo) || '';
   if (customIdx >= 0) {
+    // Already one of the user's own presets — just update it in place.
     customs[customIdx] = { ...customs[customIdx], ...updated };
     state[customField] = customs;
   } else {
-    state.presetOverrides[target][originalKey] = updated;
+    // Editing a BUILT-IN preset → make it the user's own ("MINE"): create a full
+    // custom preset from the built-in's data + the edits, and hide the built-in so
+    // there's no duplicate. This way every edit saves/backs-up like a custom preset.
+    const clean = { ...(basePreset || {}), ...updated };
+    delete clean.isBuiltin; delete clean.isCustom; delete clean.presetKey;
+    if (!state[customField]) state[customField] = [];
+    state[customField].push(clean);
+    hideBuiltinPreset(kind, originalKey); // hides the built-in + clears any old override
   }
   saveState();
   // Editing a preset's image flows through to entries already added to a season —
@@ -9292,20 +9391,20 @@ function openPresetEditor(kind, existing, onSaved) {
           const photos = data.photos || [];
           const defaultPhoto = (photos.find(p => p.isDefault) || photos[0])?.url || '';
           const updated = { name, country, era, eras, number, abbr, photos, photo: defaultPhoto };
-          if (isEdit) savePresetEdit('driver', originalKey, updated);
+          if (isEdit) savePresetEdit('driver', originalKey, updated, existing);
           else addCustomPreset('driver', updated);
         } else if (isTeam) {
           const short = $('#pe-short', root).value.trim().toUpperCase() || name.slice(0, 3).toUpperCase();
           const color = $('#pe-color-hex', root).value.trim() || '#e10600';
           const updated = { name, short, color, country, era, eras, logo: data.logo || '' };
-          if (isEdit) savePresetEdit('team', originalKey, updated);
+          if (isEdit) savePresetEdit('team', originalKey, updated, existing);
           else addCustomPreset('team', updated);
         } else { // track
           const circuit = $('#pe-circuit', root).value.trim();
           const length = Number($('#pe-length', root).value) || 0;
           const sprint = $('#pe-sprint', root).checked;
           const updated = { name, circuit, country, era, eras, length, sprint, flagImage: data.flagImage || '' };
-          if (isEdit) savePresetEdit('track', originalKey, updated);
+          if (isEdit) savePresetEdit('track', originalKey, updated, existing);
           else addCustomPreset('track', updated);
         }
         toast(`Preset ${isEdit ? 'updated' : 'added'}`, 'success');
