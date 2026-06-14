@@ -3073,12 +3073,11 @@ function renderTabs() {
   if (!state.activeSeasonId) { tabs.innerHTML = ''; return; }
   const items = [
     { id: 'dashboard', label: 'Dashboard', n: '01' },
-    { id: 'drivers',   label: 'Drivers',   n: '02' },
-    { id: 'teams',     label: 'Constructors', n: '03' },
-    { id: 'calendar',  label: 'Calendar',  n: '04' },
-    { id: 'standings', label: 'Standings', n: '05' },
-    { id: 'stats',     label: 'Stats',     n: '06' },
-    { id: 'records',   label: 'Records',   n: '07' },
+    { id: 'drivers',   label: 'Lineup',    n: '02' },
+    { id: 'calendar',  label: 'Calendar',  n: '03' },
+    { id: 'standings', label: 'Standings', n: '04' },
+    { id: 'stats',     label: 'Stats',     n: '05' },
+    { id: 'records',   label: 'Records',   n: '06' },
   ];
   tabs.innerHTML = items.map(t => `
     <button class="tab ${state.view === t.id ? 'active' : ''}" data-tab="${t.id}">
@@ -3099,8 +3098,8 @@ function renderMain() {
   if (!state.activeSeasonId) return root.innerHTML = '', root.appendChild(renderHomeSave());
   switch (state.view) {
     case 'dashboard': return root.innerHTML = '', root.appendChild(renderDashboard());
-    case 'drivers':   return root.innerHTML = '', root.appendChild(renderDrivers());
-    case 'teams':     return root.innerHTML = '', root.appendChild(renderTeams());
+    case 'drivers':   return root.innerHTML = '', root.appendChild(renderLineup());
+    case 'teams':     return root.innerHTML = '', root.appendChild(renderLineup());
     case 'calendar':  return root.innerHTML = '', root.appendChild(renderCalendar());
     case 'standings': return root.innerHTML = '', root.appendChild(renderStandings());
     case 'stats':     return root.innerHTML = '', root.appendChild(renderStats());
@@ -3585,7 +3584,157 @@ function renderDrivers() {
   return wrap;
 }
 
-function openDriverModal(driverId) {
+/* Combined LINEUP page — drivers grouped by constructor (F1.com "driver lineup"
+   style: team-colour top bar, big number on each edge, driver either side of the
+   team logo). Replaces the separate Drivers + Constructors pages; both driver and
+   team presets/bundles are reachable from the one toolbar. */
+function renderLineup() {
+  const season = activeSeason();
+  const wrap = document.createElement('div');
+  const standings = calcDriverStandings(season);
+  const ptsMap = Object.fromEntries(standings.map(s => [s.driverId, s.points]));
+
+  const photo = d => d && d.photo
+    ? `<div class="lineup-photo" style="background-image:url('${esc(d.photo)}')"></div>`
+    : `<div class="lineup-photo lineup-photo-empty"></div>`;
+  const sideText = (d, t) => {
+    const { first, last } = splitName(d.name);
+    return `<div class="lineup-driver-text">
+        <span class="lineup-first">${esc(first || '')}</span>
+        <span class="lineup-last">${esc(last)}</span>
+        <span class="lineup-team">${esc(t.name)}${d.country ? ' ' + flagImg(d.country, 14) : ''}</span>
+      </div>`;
+  };
+  const emptySlot = (t, side) => `<div class="lineup-driver lineup-driver-${side} lineup-empty" data-add-driver="${t.id}"><span class="lineup-add">+ DRIVER</span></div>`;
+  const teamLogo = (t) => t.logo
+    ? `<div class="lineup-logo-img" style="background-image:url('${esc(t.logo)}')"></div>`
+    : `<div class="lineup-logo-fallback" style="color:${t.color};border-color:${t.color}">${esc((t.short || t.name || '?').slice(0, 3).toUpperCase())}</div>`;
+
+  const teamRow = (t) => {
+    const drivers = season.drivers.filter(d => d.teamId === t.id).sort((a, b) => (a.number || 0) - (b.number || 0));
+    const d1 = drivers[0], d2 = drivers[1];
+    const color = t.color || '#666';
+    const left = d1
+      ? `<div class="lineup-driver lineup-driver-left" data-edit-driver="${d1.id}">${sideText(d1, t)}${photo(d1)}</div>`
+      : emptySlot(t, 'left');
+    const right = d2
+      ? `<div class="lineup-driver lineup-driver-right" data-edit-driver="${d2.id}">${photo(d2)}${sideText(d2, t)}</div>`
+      : emptySlot(t, 'right');
+    return `
+      <div class="lineup-row ${t.dsq ? 'champ-dsq' : ''}" style="--team-color:${color}">
+        <div class="lineup-grid">
+          <div class="lineup-num lineup-num-left">${d1 ? (d1.number || '–') : ''}</div>
+          ${left}
+          <div class="lineup-logo" data-edit-team="${t.id}" title="Edit ${esc(t.name)}">${teamLogo(t)}</div>
+          ${right}
+          <div class="lineup-num lineup-num-right">${d2 ? (d2.number || '–') : ''}</div>
+        </div>
+        <div class="lineup-row-actions">
+          <button class="btn btn-sm btn-ghost" data-edit-team="${t.id}">✎ EDIT TEAM</button>
+          <button class="btn btn-sm btn-ghost" data-dsq-team="${t.id}">${t.dsq ? '✓ REINSTATE' : '⊘ DSQ'}</button>
+          <button class="btn btn-sm btn-danger" data-del-team="${t.id}" title="Delete team">✕</button>
+        </div>
+      </div>`;
+  };
+
+  // Drivers with no (valid) team — shown as free agents below the grid.
+  const teamIds = new Set(season.teams.map(t => t.id));
+  const freeAgents = season.drivers.filter(d => !d.teamId || !teamIds.has(d.teamId)).sort((a, b) => (a.number || 0) - (b.number || 0));
+
+  wrap.innerHTML = `
+    <div class="f1-results-head" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
+      <div class="f1-round-strip">
+        <span class="f1-round-pill">${esc(String(season.year))}</span>
+        <span class="f1-round-meta">${season.teams.length} TEAMS · ${season.drivers.length} DRIVERS</span>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-ghost" id="ln-driver-presets">⌕ DRIVER PRESETS</button>
+        <button class="btn btn-ghost" id="ln-team-presets">⌕ TEAM PRESETS</button>
+        <button class="btn btn-ghost" id="ln-driver-bundles">★ DRIVER BUNDLES</button>
+        <button class="btn btn-ghost" id="ln-team-bundles">★ TEAM BUNDLES</button>
+        <button class="btn btn-ghost" id="ln-bulk">⇡ BULK IMPORT</button>
+        <button class="btn btn-ghost" id="ln-add-team">+ TEAM</button>
+        <button class="btn btn-primary" id="ln-add-driver">+ DRIVER</button>
+      </div>
+    </div>
+
+    <h1 class="f1-page-title">${esc(String(season.year))} <span style="font-weight:300;color:var(--text-dim)">DRIVER LINEUP</span></h1>
+
+    ${season.teams.length ? `<div class="lineup-list">${season.teams.map(teamRow).join('')}</div>` : `
+      <div class="empty">
+        <div class="empty-headline">NO CONSTRUCTORS</div>
+        <div class="empty-sub">Add teams from the preset library or seed the standard ten, then assign drivers.</div>
+        <div style="display:flex;gap:8px;justify-content:center">
+          <button class="btn btn-ghost" id="ln-seed">SEED 10 STANDARD TEAMS</button>
+          <button class="btn btn-ghost" id="ln-team-presets-2">⌕ TEAM PRESETS</button>
+          <button class="btn btn-primary" id="ln-add-team-2">+ NEW CONSTRUCTOR</button>
+        </div>
+      </div>`}
+
+    ${freeAgents.length ? `
+      <div class="section-head" style="margin:26px 0 12px"><h2 class="section-title">Free Agents</h2></div>
+      <div class="lineup-free">
+        ${freeAgents.map(d => `
+          <div class="lineup-free-card" data-edit-driver="${d.id}" style="--team-color:var(--text-dim)">
+            <span class="lineup-free-num">${d.number || '–'}</span>
+            ${photo(d)}
+            <div class="lineup-driver-text">
+              <span class="lineup-first">${esc(splitName(d.name).first || '')}</span>
+              <span class="lineup-last" style="color:var(--text)">${esc(splitName(d.name).last)}</span>
+              <span class="lineup-team">No team${d.country ? ' ' + flagImg(d.country, 14) : ''}</span>
+            </div>
+          </div>`).join('')}
+      </div>` : ''}
+  `;
+
+  setTimeout(() => {
+    // toolbar
+    $('#ln-driver-presets', wrap)?.addEventListener('click', openDriverPresetSearch);
+    $('#ln-team-presets', wrap)?.addEventListener('click', openTeamPresetSearch);
+    $('#ln-team-presets-2', wrap)?.addEventListener('click', openTeamPresetSearch);
+    $('#ln-driver-bundles', wrap)?.addEventListener('click', () => openRosterClasses('driver'));
+    $('#ln-team-bundles', wrap)?.addEventListener('click', () => openRosterClasses('team'));
+    $('#ln-bulk', wrap)?.addEventListener('click', openBulkImportDrivers);
+    $('#ln-add-team', wrap)?.addEventListener('click', () => openTeamModal());
+    $('#ln-add-team-2', wrap)?.addEventListener('click', () => openTeamModal());
+    $('#ln-add-driver', wrap)?.addEventListener('click', () => openDriverModal());
+    $('#ln-seed', wrap)?.addEventListener('click', () => {
+      PRESET_TEAMS.forEach(t => addTeam({ name: t.name, short: t.short, color: t.color, country: t.country }));
+      renderMain(); toast('Standard ten teams seeded', 'success');
+    });
+
+    // row interactions
+    $$('[data-edit-driver]', wrap).forEach(b => b.onclick = (e) => { e.stopPropagation(); openDriverModal(b.dataset.editDriver); });
+    $$('[data-edit-team]', wrap).forEach(b => b.onclick = (e) => { e.stopPropagation(); openTeamModal(b.dataset.editTeam); });
+    $$('[data-add-driver]', wrap).forEach(b => b.onclick = (e) => { e.stopPropagation(); openDriverModal(null, b.dataset.addDriver); });
+    $$('[data-dsq-team]', wrap).forEach(b => b.onclick = (e) => {
+      e.stopPropagation();
+      const t = season.teams.find(x => x.id === b.dataset.dsqTeam);
+      const willDsq = !t.dsq;
+      confirmModal({
+        title: willDsq ? 'Disqualify constructor?' : 'Reinstate constructor?',
+        message: willDsq
+          ? `<b>${esc(t.name)}</b> and its drivers will be excluded from championship standings. Results stay, but no points score.`
+          : `<b>${esc(t.name)}</b> will be reinstated.`,
+        danger: willDsq,
+        onConfirm: () => { toggleTeamDsq(t.id); toast(willDsq ? 'Excluded from championship' : 'Reinstated', willDsq ? 'warn' : 'success'); renderMain(); }
+      });
+    });
+    $$('[data-del-team]', wrap).forEach(b => b.onclick = (e) => {
+      e.stopPropagation();
+      const t = season.teams.find(x => x.id === b.dataset.delTeam);
+      confirmModal({
+        title: 'Disband constructor?',
+        message: `Permanently delete <b>${esc(t.name)}</b>? Drivers become free agents.`,
+        danger: true,
+        onConfirm: () => { deleteTeam(t.id); toast('Team disbanded', 'warn'); renderMain(); }
+      });
+    });
+  }, 0);
+  return wrap;
+}
+
+function openDriverModal(driverId, presetTeamId) {
   const season = activeSeason();
   const editing = driverId ? season.drivers.find(d => d.id === driverId) : null;
   let photoValue = editing?.photo || '';
@@ -3623,7 +3772,7 @@ function openDriverModal(driverId) {
           <label>Team</label>
           <select id="d-team">
             <option value="">— None —</option>
-            ${season.teams.map(t => `<option value="${t.id}" ${editing?.teamId === t.id ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}
+            ${season.teams.map(t => `<option value="${t.id}" ${(editing?.teamId === t.id || (!editing && presetTeamId === t.id)) ? 'selected' : ''}>${esc(t.name)}</option>`).join('')}
           </select>
         </div>
       </div>`,
@@ -3924,19 +4073,27 @@ function renderCalendar() {
             : (r.id === nextPendingId
                 ? '<span class="race-card-status-tag next">NEXT</span>'
                 : '<span class="race-card-status-tag upcoming">UPCOMING</span>');
-          const winnerPhoto = winnerDrv
-            ? (winnerDrv.photo
-                ? `<div class="race-card-winner-photo" style="background-image:url('${esc(winnerDrv.photo)}')"></div>`
-                : `<div class="race-card-winner-photo"></div>`)
-            : '';
-          const winnerBlock = r.completed && winnerDrv ? `
-            <div class="race-card-winner" style="--team-color:${teamColor}">
-              ${winnerPhoto}
-              <div class="race-card-winner-info">
-                <div class="race-card-winner-lbl">Winner · P1</div>
-                <div class="race-card-winner-name">${esc(winnerDrv.name)}</div>
-                <div class="race-card-winner-team">${esc(winnerTeam?.name || '')}</div>
-              </div>
+          // Podium — top 3, drawn on stepped platforms (P1 tallest/centre, then P2, P3).
+          // Each driver's step is their team colour, so it works for any number of teams.
+          const podSpot = (pos) => {
+            const res = r.completed && r.results?.length ? r.results.find(x => x.position === pos) : null;
+            const drv = res ? season.drivers.find(d => d.id === res.driverId) : null;
+            const tm = drv ? season.teams.find(t => t.id === drv.teamId) : null;
+            const color = tm?.color || 'var(--text-muted)';
+            if (!drv) {
+              return `<div class="podium-spot p${pos} empty" style="--team-color:${color}">
+                <div class="podium-step"><span class="podium-pos">${pos}</span></div></div>`;
+            }
+            const ph = drv.photo ? ` style="background-image:url('${esc(drv.photo)}')"` : '';
+            return `<div class="podium-spot p${pos}" style="--team-color:${color}">
+                <div class="podium-photo"${ph}></div>
+                <div class="podium-name">${esc(splitName(drv.name).last || drv.name)}</div>
+                <div class="podium-step"><span class="podium-pos">${pos}</span></div>
+              </div>`;
+          };
+          const winnerBlock = (r.completed && winnerDrv) ? `
+            <div class="race-podium">
+              ${podSpot(2)}${podSpot(1)}${podSpot(3)}
             </div>` : `
             <div class="race-card-pending-info">awaiting lights-out</div>`;
           const pm = racePointsMultiplier(r);
