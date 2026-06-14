@@ -9273,7 +9273,10 @@ async function cloudPushOneSave(save) {
           const h = hash(arr);
           if (arr.length && cloudLastPushHashes[`${key}:${race.id}`] !== h) {
             changedRaces.push({ id: race.id, h });
-            for (const rr of arr) rows.push({ ...rr, race_id: race.id });
+            // season_id is REQUIRED: the RLS policy gates writes on
+            // user_can_access_season(season_id). Omitting it made season_id null,
+            // the check failed, and every result was rejected with 403 (data loss).
+            for (const rr of arr) rows.push({ ...rr, race_id: race.id, season_id: season.id });
           }
         }
         if (!changedRaces.length) return;
