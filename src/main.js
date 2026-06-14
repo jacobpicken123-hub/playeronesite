@@ -408,31 +408,45 @@ async function cloudPushOneSave(save) {
         }
         if (!error) changedRaces.forEach(r => cloudLastPushHashes[`race:${r.id}`] = hash(r));
       }
-      // Results — only re-push for races whose results array changed
-      for (const race of season.races) {
-        const resultsHash = hash(race.results || []);
-        if (race.results?.length && cloudLastPushHashes[`results:${race.id}`] !== resultsHash) {
-          await CLOUD.client.from('race_results').delete().eq('race_id', race.id);
-          const rows = race.results.map(rr => ({
-            race_id: race.id, driver_id: rr.driverId,
-            position: rr.position || null, time: rr.time || null,
-            dnf: rr.dnf || false, dsq: rr.dsq || false, dns: rr.dns || false,
-          }));
-          const { error } = await CLOUD.client.from('race_results').insert(rows);
-          if (!error) cloudLastPushHashes[`results:${race.id}`] = resultsHash;
+      // Results & sprint results — BATCHED. A fresh import has hundreds of result
+      // rows; doing a delete+insert per race meant 40+ sequential round-trips that
+      // could take many seconds. If a reload landed mid-push, the races not yet
+      // uploaded came back empty on the next pull — their winners "disappeared".
+      // Batching collapses it to a couple of bulk requests so the push is fast and
+      // the delete→insert gap is tiny.
+      const chunk = (arr, n) => { const out = []; for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n)); return out; };
+
+      const flushResults = async (table, key, getRows) => {
+        const changedRaces = [];
+        const rows = [];
+        for (const race of season.races) {
+          const arr = getRows(race) || [];
+          const h = hash(arr);
+          if (arr.length && cloudLastPushHashes[`${key}:${race.id}`] !== h) {
+            changedRaces.push({ id: race.id, h });
+            for (const rr of arr) rows.push({ ...rr, race_id: race.id });
+          }
         }
-        const sprintHash = hash(race.sprintResults || []);
-        if (race.sprintResults?.length && cloudLastPushHashes[`sprint:${race.id}`] !== sprintHash) {
-          await CLOUD.client.from('sprint_results').delete().eq('race_id', race.id);
-          const rows = race.sprintResults.map(rr => ({
-            race_id: race.id, driver_id: rr.driverId,
-            position: rr.position || null,
-            dnf: rr.dnf || false, dsq: rr.dsq || false, dns: rr.dns || false,
-          }));
-          const { error } = await CLOUD.client.from('sprint_results').insert(rows);
-          if (!error) cloudLastPushHashes[`sprint:${race.id}`] = sprintHash;
+        if (!changedRaces.length) return;
+        const { error: delErr } = await CLOUD.client.from(table)
+          .delete().in('race_id', changedRaces.map(r => r.id));
+        if (delErr) return; // leave hashes unset so the next push retries cleanly
+        let ok = true;
+        for (const part of chunk(rows, 500)) {
+          const { error } = await CLOUD.client.from(table).insert(part);
+          if (error) { ok = false; break; }
         }
-      }
+        if (ok) changedRaces.forEach(r => cloudLastPushHashes[`${key}:${r.id}`] = r.h);
+      };
+
+      await flushResults('race_results', 'results', race => (race.results || []).map(rr => ({
+        driver_id: rr.driverId, position: rr.position || null, time: rr.time || null,
+        dnf: rr.dnf || false, dsq: rr.dsq || false, dns: rr.dns || false,
+      })));
+      await flushResults('sprint_results', 'sprint', race => (race.sprintResults || []).map(rr => ({
+        driver_id: rr.driverId, position: rr.position || null,
+        dnf: rr.dnf || false, dsq: rr.dsq || false, dns: rr.dns || false,
+      })));
     }
   }
 }
@@ -550,9 +564,44 @@ async function cloudDeleteRace(raceId) {
 }
 
 // Debounced sync — called from saveState; coalesces a flurry of edits into one push
+// ---------- cloud sync status badge ----------
+// Shows the user whether their changes are still uploading. While it says
+// "Saving…" they should NOT reload (the beforeunload guard below also warns them).
+let cloudSyncStatus = 'idle'; // 'idle' | 'pending' | 'syncing' | 'saved' | 'error'
+let _cloudSavedTimer = null;
+function cloudSyncBadgeHTML() {
+  if (!CLOUD.enabled || !currentUser) return '';
+  const map = {
+    idle:    { t: '✓ Saved',        c: 'sync-ok' },
+    pending: { t: '⟳ Saving…',      c: 'sync-busy' },
+    syncing: { t: '⟳ Saving…',      c: 'sync-busy' },
+    saved:   { t: '✓ Saved',        c: 'sync-ok' },
+    error:   { t: '⚠ Not saved',    c: 'sync-err' },
+  };
+  const m = map[cloudSyncStatus] || map.idle;
+  const busy = cloudSyncStatus === 'syncing' || cloudSyncStatus === 'pending';
+  const title = busy ? 'Uploading to the cloud — please wait before reloading'
+    : cloudSyncStatus === 'error' ? 'Last upload failed — it will retry on your next change'
+    : 'All changes are saved to the cloud';
+  return `<span class="cloud-sync-badge ${m.c}" title="${title}">${m.t}</span>`;
+}
+function renderCloudSyncBadge() {
+  const slot = document.getElementById('cloud-sync-slot');
+  if (slot) slot.innerHTML = cloudSyncBadgeHTML();
+}
+function setCloudSyncStatus(s) {
+  cloudSyncStatus = s;
+  renderCloudSyncBadge();
+  if (s === 'saved') {
+    clearTimeout(_cloudSavedTimer);
+    _cloudSavedTimer = setTimeout(() => { if (cloudSyncStatus === 'saved') { cloudSyncStatus = 'idle'; renderCloudSyncBadge(); } }, 4000);
+  }
+}
+
 function scheduleCloudSync() {
   if (!CLOUD.enabled || !currentUser) return;
   pendingCloudWrites++;
+  setCloudSyncStatus('pending');
   clearTimeout(cloudSyncTimer);
   cloudSyncTimer = setTimeout(async () => {
     // Hold the echo-suppression window across the ENTIRE push. cloudPushActive()
@@ -563,9 +612,12 @@ function scheduleCloudSync() {
     // covers even a very large import; it's reset to a short drain window the
     // moment the push actually resolves.
     cloudEchoSuppressUntil = Date.now() + 60000;
+    setCloudSyncStatus('syncing');
+    let okPush = true;
     try {
       await cloudPushActive();
     } catch (e) {
+      okPush = false;
       console.warn('[P1] cloud push failed', e);
       // Don't toast on every failure — just log. Local save still worked.
     } finally {
@@ -573,8 +625,47 @@ function scheduleCloudSync() {
       // window, then resume reacting to genuine remote (collaborator) changes.
       pendingCloudWrites = 0;
       cloudEchoSuppressUntil = Date.now() + 2500;
+      setCloudSyncStatus(okPush ? 'saved' : 'error');
     }
   }, 800);
+}
+
+// Push to the cloud RIGHT NOW (not debounced) and block the UI with an overlay
+// until it finishes — used after an import so the user physically waits for the
+// whole season to finish uploading before they can touch anything (no reload mid-push).
+async function cloudPushNowBlocking(message) {
+  if (!CLOUD.enabled || !currentUser) return true; // local-only: nothing to wait for
+  clearTimeout(cloudSyncTimer);
+  pendingCloudWrites++;
+  cloudEchoSuppressUntil = Date.now() + 120000;
+  setCloudSyncStatus('syncing');
+  showSyncOverlay(message || 'Uploading to the cloud…');
+  let ok = true;
+  try { await cloudPushActive(); }
+  catch (e) { ok = false; console.warn('[P1] blocking cloud push failed', e); }
+  finally {
+    pendingCloudWrites = 0;
+    cloudEchoSuppressUntil = Date.now() + 2500;
+    setCloudSyncStatus(ok ? 'saved' : 'error');
+    hideSyncOverlay();
+  }
+  return ok;
+}
+
+function showSyncOverlay(message) {
+  let el = document.getElementById('sync-overlay');
+  if (!el) { el = document.createElement('div'); el.id = 'sync-overlay'; el.className = 'sync-overlay'; document.body.appendChild(el); }
+  el.innerHTML = `
+    <div class="sync-overlay-card">
+      <div class="sync-overlay-title">⟳ Saving to cloud</div>
+      <div class="sync-overlay-msg">${esc(message || '')}</div>
+      <div class="sync-overlay-sub">Please don't close or reload this tab until it finishes.</div>
+    </div>`;
+  el.style.display = 'flex';
+}
+function hideSyncOverlay() {
+  const el = document.getElementById('sync-overlay');
+  if (el) el.remove();
 }
 
 // Best-effort: when the page is being hidden/closed/reloaded, flush any pending
@@ -592,6 +683,17 @@ function scheduleCloudSync() {
   window.addEventListener('pagehide', flush);
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') flush();
+  });
+  // Warn before leaving/reloading while a cloud upload is still pending or running,
+  // so the user doesn't reload mid-push and lose race results.
+  window.addEventListener('beforeunload', (e) => {
+    if (CLOUD.enabled && currentUser &&
+        (pendingCloudWrites > 0 || cloudSyncStatus === 'pending' || cloudSyncStatus === 'syncing')) {
+      flush();
+      e.preventDefault();
+      e.returnValue = 'Still saving to the cloud — wait a moment before leaving so your changes are not lost.';
+      return e.returnValue;
+    }
   });
 })();
 
@@ -2791,6 +2893,7 @@ function renderTopbar() {
 
   // actions
   let act = `<span id="presence-slot" class="presence-slot"></span>`;
+  if (CLOUD.enabled && currentUser) act += `<span id="cloud-sync-slot"></span>`;
   act += `<button class="btn btn-ghost btn-sm" id="btn-export">⇣ EXPORT</button>
           <button class="btn btn-ghost btn-sm" id="btn-import">⇡ IMPORT</button>`;
   if (state.activeSeasonId) {
@@ -2813,6 +2916,7 @@ function renderTopbar() {
   }
   actions.innerHTML = act;
 
+  renderCloudSyncBadge();
   $('#btn-export') && ($('#btn-export').onclick = exportData);
   $('#btn-import') && ($('#btn-import').onclick = importData);
   $('#btn-export-csv') && ($('#btn-export-csv').onclick = () => exportSeasonCSV(state.activeSeasonId));
@@ -7875,7 +7979,7 @@ Red Bull
       $('[data-act="cancel"]', root).onclick = close;
       ta.oninput = () => { if (parsed) { parsed = null; okBtn.disabled = true; } };
       racesInp.oninput = () => { if (parsed) doParse(); };  // re-render preview with codes
-      okBtn.onclick = () => {
+      okBtn.onclick = async () => {
         if (!parsed) return doParse();
         try {
           const year = $('#imp-year', root).value;
@@ -7891,6 +7995,7 @@ Red Bull
           buildSeasonFromImport(parsed, { year, name, pointsSystemId, raceCodes, calendarPresetId });
           close();
           renderAll();
+          await cloudPushNowBlocking('Uploading the imported season — this can take a few seconds.');
           toast(`Imported ${parsed.drivers.length} driver${parsed.drivers.length === 1 ? '' : 's'} across ${parsed.headers.length} race${parsed.headers.length === 1 ? '' : 's'}`, 'success');
         } catch (e) {
           toast('Import failed: ' + e.message, 'error');
@@ -8286,7 +8391,7 @@ function openImportScreenshotModal() {
       };
 
       $('[data-act="cancel"]', root).onclick = close;
-      $('[data-act="ok"]', root).onclick = () => {
+      $('[data-act="ok"]', root).onclick = async () => {
         if (!raceCodes.length) return toast('Add some race codes first', 'error');
         const filled = drivers.filter(d => d.name.trim());
         if (!filled.length) return toast('Add at least one driver', 'error');
@@ -8324,6 +8429,7 @@ function openImportScreenshotModal() {
           buildSeasonFromImport(parsed, opts);
           close();
           renderAll();
+          await cloudPushNowBlocking('Uploading the imported season — this can take a few seconds.');
           toast(`Built season · ${parsedDrivers.length} drivers · ${raceCodes.length} races`, 'success');
         } catch (e) {
           toast('Build failed: ' + e.message, 'error');
@@ -8654,7 +8760,7 @@ function openImportCSVModal() {
       ta.oninput = () => { if (parsedCSV) { parsedCSV = null; okBtn.disabled = true; } };
       $('[data-act="parse"]', root).onclick = validate;
       $('[data-act="cancel"]', root).onclick = close;
-      okBtn.onclick = () => {
+      okBtn.onclick = async () => {
         if (!parsedCSV) return validate();
         try {
           buildSeasonFromImport(parsedCSV, {
@@ -8666,6 +8772,7 @@ function openImportCSVModal() {
           });
           close();
           renderAll();
+          await cloudPushNowBlocking('Uploading the imported season — this can take a few seconds.');
           toast(`Built season · ${parsedCSV.drivers.length} drivers · ${parsedCSV.headers.length} races`, 'success');
         } catch (e) {
           toast('Build failed: ' + e.message, 'error');
