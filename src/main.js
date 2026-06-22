@@ -2088,10 +2088,18 @@ function encodeAtDim(img, maxDim, quality) {
   const c = document.createElement('canvas');
   c.width = Math.round(w); c.height = Math.round(h);
   const ctx = c.getContext('2d');
-  ctx.fillStyle = '#1a1a1a'; ctx.fillRect(0,0,c.width,c.height);
+  // NOTE: do NOT paint a background — that's what put a grey box behind transparent
+  // logos. Draw onto the transparent canvas and detect whether the image actually
+  // uses transparency. Transparent images (logos) are saved as PNG to keep their
+  // see-through background; opaque images (photos) stay JPEG for smaller size.
   ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(img, 0, 0, c.width, c.height);
-  return c.toDataURL('image/jpeg', quality);
+  let hasAlpha = false;
+  try {
+    const data = ctx.getImageData(0, 0, c.width, c.height).data;
+    for (let i = 3; i < data.length; i += 4) { if (data[i] < 250) { hasAlpha = true; break; } }
+  } catch { hasAlpha = true; } // can't inspect pixels → prefer lossless PNG to be safe
+  return hasAlpha ? c.toDataURL('image/png') : c.toDataURL('image/jpeg', quality);
 }
 
 /**
@@ -3327,7 +3335,7 @@ function renderDashboard() {
             const t = season.teams.find(x => x.id === tLeader.teamId);
             const tc = t?.color || '#666';
             const mark = t?.logo
-              ? `<div class="dash-leader-portrait" style="background-image:url('${esc(t.logo)}');border-color:${tc}"></div>`
+              ? `<div class="dash-leader-portrait is-team-logo" style="background-image:url('${esc(t.logo)}');border-color:${tc}"></div>`
               : `<div class="dash-leader-portrait" style="border-color:${tc};color:${tc}">${esc((t?.short || t?.name || '?').slice(0,3).toUpperCase())}</div>`;
             return `<div class="dash-leader-row">
               ${mark}
@@ -3444,7 +3452,7 @@ function renderDashboard() {
               ${tStand.slice(0,5).map((row, i) => {
                 const t = season.teams.find(x => x.id === row.teamId); if (!t) return '';
                 const teamMark = t.logo
-                  ? `<div class="standings-portrait" style="--team-color:${t.color};background-image:url('${esc(t.logo)}')"></div>`
+                  ? `<div class="standings-portrait is-team-logo" style="--team-color:${t.color};background-image:url('${esc(t.logo)}')"></div>`
                   : `<div class="standings-portrait" style="--team-color:${t.color}">${esc((t.short || t.name).slice(0,3).toUpperCase())}</div>`;
                 return `<tr class="standings-row p${i+1}">
                   <td class="pos-cell">${i+1}</td>
@@ -4057,16 +4065,26 @@ function renderCalendar() {
           const poleDrv = r.completed && r.poleDriverId ? season.drivers.find(d => d.id === r.poleDriverId) : null;
           const flDrv = r.completed && r.fastestLapDriverId ? season.drivers.find(d => d.id === r.fastestLapDriverId) : null;
           const drvTeamColor = (drv) => season.teams.find(t => t.id === drv?.teamId)?.color || 'var(--border-hi)';
-          const extraBlock = (poleDrv || flDrv) ? `
+          // Completed rounds get an inline Fastest Lap picker so you can
+          // allocate / change the FL straight from the calendar without opening
+          // the race editor. Pole stays a read-only chip (set in the editor).
+          const flSelectOptions = season.drivers.slice()
+            .sort((a, b) => (a.number || 999) - (b.number || 999))
+            .map(d => `<option value="${d.id}"${d.id === r.fastestLapDriverId ? ' selected' : ''}>${esc(d.name)}</option>`)
+            .join('');
+          const extraBlock = r.completed ? `
             <div class="race-card-extra">
               ${poleDrv ? `<div class="race-card-extra-item pole" style="--team-color:${drvTeamColor(poleDrv)}">
                 <span class="race-card-extra-lbl">Pole</span>
                 <span class="race-card-extra-name">${esc(splitName(poleDrv.name).last || poleDrv.name)}</span>
               </div>` : ''}
-              ${flDrv ? `<div class="race-card-extra-item fl" style="--team-color:${drvTeamColor(flDrv)}">
+              <div class="race-card-extra-item fl race-card-fl-edit" style="--team-color:${flDrv ? drvTeamColor(flDrv) : 'var(--sec-purple)'}">
                 <span class="race-card-extra-lbl">Fastest Lap</span>
-                <span class="race-card-extra-name">${esc(splitName(flDrv.name).last || flDrv.name)}</span>
-              </div>` : ''}
+                <select class="race-card-fl-select" data-fl-select="${r.id}" title="Allocate fastest lap">
+                  <option value="">— set FL —</option>
+                  ${flSelectOptions}
+                </select>
+              </div>
             </div>` : '';
           const statusTag = r.completed
             ? '<span class="race-card-status-tag completed">DONE</span>'
@@ -4389,7 +4407,7 @@ function renderCalendar() {
     $('#search-track-presets', wrap)?.addEventListener('click', openTrackPresetSearch);
     $('#open-cal-presets', wrap)?.addEventListener('click', openCalendarPresets);
     $$('[data-race]', wrap).forEach(row => row.onclick = (e) => {
-      if (e.target.closest('[data-edit-race]') || e.target.closest('[data-del-race]') || e.target.closest('[data-mult]')) return;
+      if (e.target.closest('[data-edit-race]') || e.target.closest('[data-del-race]') || e.target.closest('[data-mult]') || e.target.closest('.race-card-fl-edit')) return;
       state.view = 'race'; state.raceId = row.dataset.race; renderAll();
     });
     $$('[data-mult]', wrap).forEach(b => b.onclick = (e) => {
@@ -4397,6 +4415,19 @@ function renderCalendar() {
       const [raceId, val] = b.dataset.mult.split('|');
       setRacePointsMultiplier(raceId, val);
       renderMain();
+    });
+    // Inline Fastest Lap allocation from the calendar cards.
+    $$('[data-fl-select]', wrap).forEach(sel => {
+      sel.onclick = (e) => e.stopPropagation();
+      sel.onchange = (e) => {
+        e.stopPropagation();
+        const raceId = sel.dataset.flSelect;
+        const driverId = sel.value || null;
+        updateRace(raceId, { fastestLapDriverId: driverId });
+        const drv = driverId ? season.drivers.find(d => d.id === driverId) : null;
+        toast(drv ? `Fastest lap → ${drv.name}` : 'Fastest lap cleared', 'success');
+        renderMain();
+      };
     });
     $$('[data-edit-race]', wrap).forEach(b => b.onclick = (e) => { e.stopPropagation(); openRaceModal(b.dataset.editRace); });
     $$('[data-del-race]', wrap).forEach(b => b.onclick = (e) => {
@@ -4830,6 +4861,47 @@ function renderRaceEditor(container, race) {
     }).join('');
   }
 
+  // --- Inline POLE / FASTEST LAP markers for quick-entry (race panel only) ---
+  // So a whole race can be scored without leaving Quick Entry. Each marker is a
+  // chip (when set) or a code-input (when empty), plus a one-tap smart default.
+  function markerChip(driverId, which) {
+    const drv = season.drivers.find(d => d.id === driverId);
+    if (!drv) return markerInput(which);
+    const team = season.teams.find(t => t.id === drv.teamId);
+    const color = team?.color || '#6b7280';
+    const photoStyle = drv.photo
+      ? `background-image:url('${esc(drv.photo)}');border-color:${color}`
+      : `border-color:${color}`;
+    return `<div class="qe-marker-chip" style="--team-color:${color}">
+        <span class="qe-marker-photo" style="${photoStyle}"></span>
+        <span class="qe-marker-chip-name">${esc(drv.name)}</span>
+        <button class="qe-marker-clear" data-clear="${which}" title="Clear" aria-label="Clear">
+          <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg>
+        </button>
+      </div>`;
+  }
+  function markerInput(which) {
+    return `<input class="qe-marker-input" data-marker="${which}" type="text" placeholder="code / #" autocomplete="off" autocapitalize="characters" spellcheck="false">`;
+  }
+  function markerSlotHTML(which) {
+    const id = which === 'pole' ? pole : fl;
+    return id ? markerChip(id, which) : markerInput(which);
+  }
+  function markersBarHTML() {
+    return `<div class="qe-markers ${_quickEntry.gp ? '' : 'hidden'}" id="qe-markers">
+      <div class="qe-marker">
+        <span class="qe-marker-lbl"><span class="qe-marker-ico pole">P</span>Pole</span>
+        <div class="qe-marker-slot" id="qe-slot-pole">${markerSlotHTML('pole')}</div>
+        <button class="qe-marker-default" id="qe-def-pole" title="Set pole to qualifying P1">↘ Quali&nbsp;P1</button>
+      </div>
+      <div class="qe-marker">
+        <span class="qe-marker-lbl"><span class="qe-marker-ico fl">⚡</span>Fastest&nbsp;Lap</span>
+        <div class="qe-marker-slot" id="qe-slot-fl">${markerSlotHTML('fl')}</div>
+        <button class="qe-marker-default" id="qe-def-fl" title="Set fastest lap to the race winner">↘ Winner</button>
+      </div>
+    </div>`;
+  }
+
   container.innerHTML = `
     <div class="race-session-tabs">
       <button class="race-session-tab ${_raceEditorTab === 'quali' ? 'active' : ''}" data-rstab="quali">
@@ -4920,6 +4992,7 @@ function renderRaceEditor(container, race) {
           <span class="tag red">RACE</span>
         </div>
       </div>
+      ${markersBarHTML()}
       <div class="results-editor">
         <div class="results-editor-head ${_quickEntry.gp ? 'hidden' : ''}" style="grid-template-columns: 60px 44px 1fr 70px 70px 60px 60px 60px">
           <div>POS</div><div></div><div>DRIVER</div><div>POLE</div><div>FL</div><div>DNF</div><div>DSQ</div><div>DNS</div>
@@ -4927,7 +5000,7 @@ function renderRaceEditor(container, race) {
         <div id="gp-rows">${_quickEntry.gp ? buildQuickEntryHTML(working, 'gp', season.drivers, season) : rowHTML(working, 'gp')}</div>
         <div class="results-editor-foot">
           <span class="results-help">${_quickEntry.gp
-            ? 'Quick mode: type 3-letter codes (VER, HAM) or race numbers (1, 44). Pole / FL / DNF set in detailed mode.'
+            ? 'Quick mode: type codes (VER, HAM) or numbers (1, 44) for the order — set Pole & Fastest Lap above. DNF / DSQ / DNS in detailed mode.'
             : `Positions 1–${MAX_POS}. DNF = retired, DSQ = disqualified, DNS = did not start. POLE & FL must be unique.`}</span>
           <div style="display:flex;gap:8px">
             <button class="btn btn-ghost" id="race-import">↧ IMPORT FROM PASTE</button>
@@ -5015,6 +5088,7 @@ function renderRaceEditor(container, race) {
     bindQuickEntry('gp', working);
     if (sprintWorking) bindQuickEntry('sprint', sprintWorking);
     bindQuickEntry('quali', qualiWorking);
+    bindMarkers();
 
     $$('.entry-mode-toggle', container).forEach(toggle => {
       const target = toggle.dataset.target;
@@ -5044,11 +5118,19 @@ function renderRaceEditor(container, race) {
     if (panel) {
       const head = panel.querySelector('.results-editor-head');
       if (head) head.classList.toggle('hidden', !!_quickEntry[kind]);
+      // Inline Pole/FL markers only exist on the race panel — show in quick
+      // mode (where the per-row POLE/FL buttons are hidden) and refresh chips.
+      if (kind === 'gp') {
+        const markers = panel.querySelector('#qe-markers');
+        if (markers) markers.classList.toggle('hidden', !_quickEntry.gp);
+        const ps = $('#qe-slot-pole', container); if (ps) ps.innerHTML = markerSlotHTML('pole');
+        const fs = $('#qe-slot-fl', container); if (fs) fs.innerHTML = markerSlotHTML('fl');
+      }
       const help = panel.querySelector('.results-help');
       if (help) {
         if (_quickEntry[kind]) {
           help.textContent = kind === 'gp'
-            ? 'Quick mode: type 3-letter codes (VER, HAM) or race numbers (1, 44). Pole / FL / DNF set in detailed mode.'
+            ? 'Quick mode: type codes (VER, HAM) or numbers (1, 44) for the order — set Pole & Fastest Lap above. DNF / DSQ / DNS in detailed mode.'
             : kind === 'sprint'
               ? 'Quick mode: type 3-letter codes (VER, HAM) or race numbers. DNF / DSQ / DNS set in detailed mode.'
               : 'Quick mode: type 3-letter codes (VER, HAM) or race numbers (1, 44) to set grid order. Lap times entered in detailed mode.';
@@ -5162,6 +5244,55 @@ function renderRaceEditor(container, race) {
         }, 0);
       };
     });
+  }
+
+  // Re-render one marker slot (pole|fl) and re-wire, after a change.
+  function reRenderMarker(which) {
+    const slot = $(`#qe-slot-${which}`, container);
+    if (slot) slot.innerHTML = markerSlotHTML(which);
+    bindMarkers();
+  }
+
+  // Wire the inline Pole / Fastest Lap markers shown in race quick-entry mode.
+  // Code-inputs resolve the same tokens as the grid (VER, HAM, 44); the default
+  // buttons grab quali P1 (pole) or the current race winner (fastest lap).
+  function bindMarkers() {
+    $$('.qe-marker-input', container).forEach(input => {
+      const set = (id) => { if (input.dataset.marker === 'pole') pole = id; else fl = id; };
+      input.oninput = () => {
+        const t = input.value.trim();
+        if (/^[A-Za-z]{3}$/.test(t)) {
+          const r = resolveDriverShort(t, season.drivers);
+          if (r.match) { set(r.match.id); reRenderMarker(input.dataset.marker); }
+        }
+      };
+      input.onkeydown = (e) => {
+        if (e.key !== 'Enter' && e.key !== 'Tab') return;
+        const t = input.value.trim(); if (!t) return;
+        e.preventDefault();
+        const r = resolveDriverShort(t, season.drivers);
+        if (r.match) { set(r.match.id); reRenderMarker(input.dataset.marker); }
+        else if (r.ambiguous) toast(`Ambiguous — ${r.ambiguous.length} matches`, 'warn');
+        else toast('No matching driver', 'error');
+      };
+    });
+    $$('.qe-marker-clear', container).forEach(btn => btn.onclick = () => {
+      if (btn.dataset.clear === 'pole') pole = null; else fl = null;
+      reRenderMarker(btn.dataset.clear);
+    });
+    const defPole = $('#qe-def-pole', container);
+    if (defPole) defPole.onclick = () => {
+      const id = (qualiWorking.find(r => Number(r.position) === 1)
+              || working.find(r => Number(r.position) === 1))?.driverId;
+      if (!id) return toast('Set a P1 in qualifying or the race first', 'warn');
+      pole = id; reRenderMarker('pole');
+    };
+    const defFl = $('#qe-def-fl', container);
+    if (defFl) defFl.onclick = () => {
+      const id = working.find(r => Number(r.position) === 1)?.driverId;
+      if (!id) return toast('Set the race winner (P1) first', 'warn');
+      fl = id; reRenderMarker('fl');
+    };
   }
 
   bind();
