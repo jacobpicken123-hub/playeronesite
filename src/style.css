@@ -26,11 +26,11 @@
   --border-dim:   #181b21;
   --border-hi:    #2f3540;
 
-  --red:          #e1062f;
-  --red-light:    #ff3357;
-  --red-glow:     rgba(225, 6, 47, 0.35);
-  --red-soft:     rgba(225, 6, 47, 0.08);
-  --red-line:     rgba(225, 6, 47, 0.45);
+  --red:          #e10600;   /* official F1 red */
+  --red-light:    #ff1801;   /* F1 bright red */
+  --red-glow:     rgba(225, 6, 0, 0.35);
+  --red-soft:     rgba(225, 6, 0, 0.08);
+  --red-line:     rgba(225, 6, 0, 0.45);
   --accent:       var(--red);
 
   --sec-cyan:     #00d9ff;
@@ -56,8 +56,8 @@
   --shadow-3: 0 12px 36px rgba(0,0,0,0.65), 0 1px 0 rgba(255,255,255,0.02) inset;
   --shadow-glow: 0 0 0 1px rgba(225,6,47,0.35), 0 6px 24px rgba(225,6,47,0.18);
 
-  --f-display: 'Bebas Neue', 'Titillium Web', 'Impact', sans-serif;
-  --f-body:    'Manrope', system-ui, -apple-system, sans-serif;
+  --f-display: 'Titillium Web', 'Bebas Neue', 'Impact', sans-serif;
+  --f-body:    'Titillium Web', system-ui, -apple-system, sans-serif;
   --f-mono:    'JetBrains Mono', 'Menlo', 'Consolas', monospace;
   --f-serif:   'Instrument Serif', 'Times New Roman', serif;
 
@@ -5731,6 +5731,38 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
   overflow: hidden;
   text-overflow: ellipsis;
 }
+/* Inline Fastest Lap allocator on the calendar cards */
+.race-card-fl-select {
+  width: 100%;
+  margin-top: 1px;
+  padding: 4px 6px;
+  background: var(--bg-2);
+  border: 1px solid var(--border-dim);
+  border-radius: var(--r-xs);
+  color: var(--text);
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: linear-gradient(45deg, transparent 50%, var(--sec-purple) 50%),
+                    linear-gradient(135deg, var(--sec-purple) 50%, transparent 50%);
+  background-position: calc(100% - 12px) center, calc(100% - 7px) center;
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+  padding-right: 22px;
+}
+.race-card-fl-select:hover { border-color: var(--sec-purple); }
+.race-card-fl-select:focus {
+  outline: none;
+  border-color: var(--sec-purple);
+  box-shadow: 0 0 0 2px rgba(167,139,250,0.18);
+}
+.race-card-fl-select option { text-transform: none; }
+.race-card-fl-edit { gap: 4px; }
 
 .race-card-pending-info {
   display: flex;
@@ -6480,6 +6512,126 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
   background: linear-gradient(180deg, rgba(225,6,47,0.2), rgba(225,6,47,0.08));
   color: var(--red-light);
   box-shadow: 0 0 0 1px rgba(225,6,47,0.3) inset, 0 2px 8px rgba(225,6,47,0.15);
+}
+
+/* Inline POLE / FASTEST LAP bar shown in race quick-entry mode */
+.qe-markers {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+  padding: 14px 18px 0;
+}
+.qe-markers.hidden { display: none; }
+@media (max-width: 720px) { .qe-markers { grid-template-columns: 1fr; } }
+.qe-marker {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  background: var(--bg-1);
+  border: 1px solid var(--border-dim);
+  border-radius: var(--r);
+}
+.qe-marker-lbl {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--f-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.qe-marker-ico {
+  display: grid;
+  place-items: center;
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  font-size: 10px;
+  font-weight: 700;
+}
+.qe-marker-ico.pole { background: rgba(96,165,250,0.14); border: 1px solid var(--sec-blue); color: var(--sec-blue); }
+.qe-marker-ico.fl   { background: rgba(167,139,250,0.14); border: 1px solid var(--sec-purple); color: var(--sec-purple); }
+.qe-marker-slot { flex: 1; min-width: 0; }
+.qe-marker-input {
+  width: 100%;
+  padding: 7px 10px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--text);
+  font-family: var(--f-mono);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.qe-marker-input:focus {
+  outline: none;
+  border-color: var(--sec-cyan);
+  box-shadow: 0 0 0 2px rgba(0,217,255,0.15);
+}
+.qe-marker-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px 4px 4px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--team-color) 14%, var(--bg-2)), var(--bg-2) 70%);
+  border: 1px solid color-mix(in srgb, var(--team-color) 40%, var(--border));
+  border-radius: 999px;
+}
+.qe-marker-photo {
+  width: 24px; height: 24px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  border: 1.5px solid var(--team-color);
+  background: var(--bg-3) center/cover no-repeat;
+}
+.qe-marker-chip-name {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.qe-marker-clear {
+  display: grid;
+  place-items: center;
+  width: 20px; height: 20px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background 0.15s var(--ease), color 0.15s var(--ease);
+}
+.qe-marker-clear:hover { background: rgba(225,6,47,0.14); color: var(--red-light); }
+.qe-marker-default {
+  flex-shrink: 0;
+  padding: 7px 11px;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--text-soft);
+  font-family: var(--f-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all 0.15s var(--ease);
+}
+.qe-marker-default:hover {
+  border-color: var(--sec-cyan);
+  color: var(--sec-cyan);
+  background: rgba(0,217,255,0.06);
 }
 
 .quick-entry {
@@ -8556,6 +8708,46 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
 }
 
 /* =============================================================
+   TEAM LOGOS — kill the grey tile
+   Logo containers default to a `var(--bg-1)` fill, so a transparent
+   logo PNG (e.g. the Red Bull bull) sits on a grey square. Whenever a
+   container actually carries a logo image (matched via the inline
+   `background-image` style so text/initial fallbacks are untouched),
+   strip the grey fill, the box border and the square shadow, and give
+   the mark a shape-following drop-shadow for depth instead of a tile.
+   ============================================================= */
+.team-card-logo[style*="background-image"],
+.ts-team-logo[style*="background-image"],
+.standings-team-logo[style*="background-image"],
+.standings-table .team-pill .team-logo[style*="background-image"],
+.standings-table.constructors-table .team-logo[style*="background-image"],
+.f1-matrix .f1-matrix-team .team-logo[style*="background-image"],
+.team-logo.small[style*="background-image"],
+.lineup-logo-img[style*="background-image"],
+.stat-leader-team-mark[style*="background-image"],
+.record-portrait-team[style*="background-image"],
+.record-mini-portrait-team[style*="background-image"],
+.dash-leader-portrait.is-team-logo[style*="background-image"],
+.standings-portrait.is-team-logo[style*="background-image"] {
+  background-color: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.55));
+}
+/* Logos read best fully shown, not cropped to a square/circle */
+.team-card-logo[style*="background-image"],
+.ts-team-logo[style*="background-image"],
+.stat-leader-team-mark[style*="background-image"],
+.record-portrait-team[style*="background-image"],
+.record-mini-portrait-team[style*="background-image"],
+.dash-leader-portrait.is-team-logo[style*="background-image"],
+.standings-portrait.is-team-logo[style*="background-image"] {
+  background-size: contain !important;
+  background-repeat: no-repeat !important;
+  background-position: center !important;
+}
+
+/* =============================================================
    MOTION KILL-SWITCH  (must stay LAST in the stylesheet)
    All animations and transitions are forced to run instantly.
    Why instant instead of `animation:none`: several elements start
@@ -8586,3 +8778,189 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
   transform: none !important;
   clip-path: none !important;
 }
+
+/* ============================================================
+   F1.com IDENTITY PASS (dark)
+   Titillium type + official F1 red + uppercase headings with a
+   red "speed-bar", and flatter, crisper cards. Appended last so
+   it overrides the base theme without touching existing rules.
+   ============================================================ */
+
+/* Section / panel headings: bold UPPERCASE with a red speed-bar on the left. */
+.dash-block-head,
+.section-head,
+.f1-results-head,
+.home-saves-head,
+.stat-leader-head,
+.charts-section-head,
+.latest-result-head,
+.rc-list-head {
+  position: relative;
+  padding-left: 14px;
+}
+.dash-block-head::before,
+.section-head::before,
+.f1-results-head::before,
+.home-saves-head::before,
+.stat-leader-head::before,
+.charts-section-head::before,
+.latest-result-head::before,
+.rc-list-head::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 50%;
+  transform: translateY(-50%);
+  width: 4px; height: 1.05em;
+  background: var(--red);
+  border-radius: 1px;
+}
+
+/* Headings render bold + uppercase (Titillium needs the weight bumped vs Bebas). */
+.dash-block-title,
+.section-title, .section-head h2,
+.stat-leader-title,
+.f1-page-title,
+.public-title, .public-section-title,
+.latest-result-head,
+.modal-title,
+.race-header,
+.team-card-head,
+.signin-title {
+  font-family: var(--f-display);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.015em;
+}
+
+/* Flatter, crisper cards — F1.com uses sharp rectangles, not pills. */
+.card,
+.dash-block,
+.stat-leader-card,
+.race-card,
+.f1-table,
+.record-tile,
+.team-card,
+.driver-card {
+  border-radius: 4px;
+}
+
+/* Tabs / active states use the exact F1 red underline. */
+.tab.active,
+.race-session-tab.active {
+  border-bottom-color: var(--red) !important;
+}
+
+/* ============================================================
+   COMBINED LINEUP PAGE — F1.com "driver lineup" style
+   ============================================================ */
+.lineup-list { display: flex; flex-direction: column; gap: 14px; }
+.lineup-row {
+  position: relative;
+  background: var(--bg-1);
+  border: 1px solid var(--border-dim);
+  border-top: 3px solid var(--team-color);
+  border-radius: 6px;
+  padding: 16px 20px;
+}
+.lineup-row.champ-dsq { opacity: 0.5; }
+.lineup-grid {
+  display: grid;
+  grid-template-columns: 64px 1fr 120px 1fr 64px;
+  align-items: center;
+  gap: 8px;
+}
+.lineup-num {
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: 46px;
+  line-height: 1;
+  color: var(--text-dim);
+}
+.lineup-num-left { text-align: left; }
+.lineup-num-right { text-align: right; }
+.lineup-driver { display: flex; align-items: center; gap: 14px; cursor: pointer; min-width: 0; }
+.lineup-driver-left { justify-content: flex-end; text-align: right; }
+.lineup-driver-right { justify-content: flex-start; text-align: left; }
+.lineup-driver:hover .lineup-photo { box-shadow: 0 0 0 2px var(--team-color); }
+.lineup-driver-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.lineup-first { font-size: 13px; color: var(--text-soft); font-weight: 600; line-height: 1.1; }
+.lineup-last {
+  font-family: var(--f-display); font-weight: 700; font-size: 24px;
+  text-transform: uppercase; color: var(--team-color); line-height: 1; letter-spacing: 0.01em;
+}
+.lineup-team { font-size: 12px; color: var(--text-muted); display: inline-flex; align-items: center; gap: 6px; }
+.lineup-driver-left .lineup-team { justify-content: flex-end; }
+.lineup-photo {
+  width: 70px; height: 70px; border-radius: 50%;
+  background-size: cover; background-position: center top;
+  background-color: var(--bg-3); border: 2px solid var(--team-color); flex: none;
+}
+.lineup-photo-empty { background: radial-gradient(circle at 50% 32%, var(--bg-4), var(--bg-2)); }
+.lineup-logo { display: flex; align-items: center; justify-content: center; cursor: pointer; height: 64px; }
+.lineup-logo-img { width: 100%; height: 58px; background-size: contain; background-repeat: no-repeat; background-position: center; }
+.lineup-logo-fallback {
+  font-family: var(--f-display); font-weight: 700; font-size: 20px;
+  border: 2px solid; border-radius: 8px; padding: 8px 12px;
+}
+.lineup-empty { justify-content: center; opacity: 0.65; }
+.lineup-add {
+  font-family: var(--f-mono); font-size: 11px; letter-spacing: 0.1em;
+  color: var(--text-muted); border: 1px dashed var(--border); border-radius: 6px; padding: 10px 16px;
+}
+.lineup-empty:hover .lineup-add { color: var(--red); border-color: var(--red); }
+.lineup-row-actions {
+  display: flex; gap: 6px; justify-content: flex-end;
+  margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border-dim);
+  opacity: 0;
+}
+.lineup-row:hover .lineup-row-actions { opacity: 1; }
+.lineup-free { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+.lineup-free-card {
+  display: flex; align-items: center; gap: 12px;
+  background: var(--bg-1); border: 1px solid var(--border-dim); border-radius: 6px; padding: 10px 14px; cursor: pointer;
+}
+.lineup-free-num { font-family: var(--f-display); font-weight: 700; font-size: 26px; color: var(--text-dim); }
+.lineup-free-card .lineup-photo { width: 48px; height: 48px; border-color: var(--border); }
+@media (max-width: 720px) {
+  .lineup-grid { grid-template-columns: 40px 1fr 40px; row-gap: 14px; }
+  .lineup-logo { grid-column: 1 / -1; order: 2; }
+  .lineup-num-right, .lineup-driver-right { order: 3; }
+  .lineup-last { font-size: 20px; }
+  .lineup-num { font-size: 34px; }
+}
+
+/* ===== Calendar race-card PODIUM (stepped: P1 tallest/centre, P2 & P3 lower) ===== */
+.race-podium {
+  display: grid;
+  grid-template-columns: 1fr 1.15fr 1fr;
+  align-items: end;
+  gap: 6px;
+  margin-top: 12px;
+}
+.podium-spot { display: flex; flex-direction: column; align-items: center; gap: 5px; text-align: center; min-width: 0; }
+.podium-photo {
+  width: 46px; height: 46px; border-radius: 50%;
+  background: var(--bg-3) center top / cover no-repeat;
+  border: 2px solid var(--team-color);
+  flex: none;
+}
+.podium-spot.p1 .podium-photo { width: 56px; height: 56px; box-shadow: 0 0 0 2px var(--team-color); }
+.podium-name {
+  font-family: var(--f-display); font-weight: 700; font-size: 12px;
+  text-transform: uppercase; letter-spacing: 0.01em; color: var(--text);
+  line-height: 1; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.podium-step {
+  width: 100%;
+  border-radius: 4px 4px 0 0;
+  background: var(--team-color);
+  box-shadow: inset 0 -3px 0 rgba(0,0,0,0.28), inset 0 1px 0 rgba(255,255,255,0.15);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding-top: 4px;
+}
+.podium-spot.p1 .podium-step { height: 50px; }
+.podium-spot.p2 .podium-step { height: 34px; }
+.podium-spot.p3 .podium-step { height: 24px; }
+.podium-pos { font-family: var(--f-display); font-weight: 700; font-size: 15px; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,0.45); }
+.podium-spot.empty .podium-photo { display: none; }
+.podium-spot.empty .podium-step { opacity: 0.4; }
