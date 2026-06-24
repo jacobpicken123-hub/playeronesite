@@ -10092,18 +10092,51 @@ function cloudSubscribeRealtime() {
 }
 // On any incoming change, re-pull everything and re-render. Cheap because there are at most a handful of saves.
 let realtimeMergeTimer = null;
+let cloudMergePending = false;
+
+// True while the user has the race editor open with positions that live only in
+// the DOM / in-memory working state (not yet saved). A realtime renderAll() here
+// would rebuild the editor from saved data — wiping the in-progress entry and
+// bouncing the user off the page ("kicks me off"). We also treat any focused
+// text input the same way so a stray sync never eats a keystroke mid-entry.
+function userIsMidEntry() {
+  if (state && state.view === 'race' && state.raceId) {
+    const s = activeSeason();
+    const race = s && (s.races || []).find(r => r.id === state.raceId);
+    // The editor (not the read-only result) shows when the race isn't yet
+    // complete, or the user explicitly opted into editing a completed race.
+    if (race && (!race.completed || _raceEditingResults === race.id)) return true;
+  }
+  const ae = document.activeElement;
+  if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.tagName === 'SELECT')) return true;
+  return false;
+}
+
 function onCloudChange(payload) {
   // Ignore changes we just pushed (avoids feedback loops). We skip while either
   // a write is pending OR we're still inside the post-push echo window — the
   // latter covers big imports whose row inserts echo back over several seconds.
   if (pendingCloudWrites > 0 || Date.now() < cloudEchoSuppressUntil) return;
+  cloudMergePending = true;
+  scheduleCloudMerge();
+}
+
+// Run (or re-arm) the debounced realtime merge. While the user is mid-entry we
+// keep deferring — re-checking on a gentle interval — so the merge lands the
+// moment they save or leave the editor instead of yanking the page out from
+// under them.
+function scheduleCloudMerge() {
   clearTimeout(realtimeMergeTimer);
+  const delay = userIsMidEntry() ? 1200 : 300;
   realtimeMergeTimer = setTimeout(async () => {
+    if (!cloudMergePending) return;
+    if (userIsMidEntry()) { scheduleCloudMerge(); return; }
+    cloudMergePending = false;
     try {
       await cloudPullAllSaves();
       renderAll();
     } catch (e) { console.warn('[P1] realtime merge failed', e); }
-  }, 300);
+  }, delay);
 }
 
 // FEATURE #3 — Presence: show who else is currently viewing the active save.
