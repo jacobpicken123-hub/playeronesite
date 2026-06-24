@@ -8975,6 +8975,10 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
 .career-champ-seasons-lbl { font-family:var(--f-mono); font-size:9px; letter-spacing:0.16em; text-transform:uppercase; opacity:0.85; margin-right:4px; }
 .career-champ-yr { font-family:var(--f-mono); font-size:10px; opacity:0.7; }
 
+/* Driver-bundle "loaded" badge + disabled action button */
+.rc-loaded-badge { font-family:var(--f-mono); font-size:8px; letter-spacing:0.12em; color:var(--gold, #ffd76b); border:1px solid var(--gold, #ffd76b); border-radius:4px; padding:1px 5px; margin-left:8px; vertical-align:1px; }
+.btn:disabled { opacity:0.4; cursor:not-allowed; }
+
 /* =============================================================
    MOTION KILL-SWITCH  (must stay LAST in the stylesheet)
    All animations and transitions are forced to run instantly.
@@ -11757,10 +11761,11 @@ function createSeason({
           number: d.number,
           country: d.country || '',
           photo: d.photo || '',
-          teamId: null, // bundle has no team mapping
+          teamId: resolveBundleTeamId(season, d.team), // re-create/match the driver's team
           dsq: false,
         });
       });
+      season.driverBundleId = bundle.id; // one bundle per season
     }
   }
 
@@ -12278,8 +12283,9 @@ function calcDriverCareer(nameKey) {
       });
       if (best != null && (out.bestFinish == null || best < out.bestFinish)) out.bestFinish = best;
       const finished = (season.races || []).length > 0 && season.races.every(r => r.completed);
-      const championId = standings.find(d => !d.championshipDsq)?.driverId;
-      const isChamp = finished && championId === row.driverId;
+      // Title counts once mathematically clinched (matches the records + crown).
+      const tr = calcTitleRace(season);
+      const isChamp = tr.secured && tr.champion === row.driverId;
       if (isChamp) out.titles++;
       out.seasons.push({
         saveName: save.name, seasonName: season.name || `${season.year} Season`,
@@ -12478,28 +12484,20 @@ function calcAllTimeRecords() {
         if (tm.logo) agg.logo = tm.logo;
         if (tm.country) agg.latestCountry = tm.country;
       });
-      // A world champion is only crowned when the season is FULLY finished — every
-      // round completed. Mid-season leaders are not recorded as champions.
-      const seasonFinished = (season.races || []).length > 0 && season.races.every(r => r.completed);
-      if (seasonFinished) {
-        if (dStandings.length) {
-          // skip champ-DSQd
-          const winner = dStandings.find(d => !d.championshipDsq);
-          if (winner) {
-            const champD = season.drivers.find(x => x.id === winner.driverId);
-            if (champD) {
-              const champKey = normalizeDriverName(champD.name) || champD.name.toLowerCase().trim();
-              ensureD(champKey, champD.name).championships++;
-            }
-          }
+      // A title is recorded once it's mathematically clinched (uncatchable over the
+      // remaining races) — not only when every round has been run. A fully-finished
+      // season is always "secured", so this also covers completed seasons.
+      const champs = seasonChampions(season);
+      if (champs.driverChampion) {
+        const champD = season.drivers.find(x => x.id === champs.driverChampion);
+        if (champD) {
+          const champKey = normalizeDriverName(champD.name) || champD.name.toLowerCase().trim();
+          ensureD(champKey, champD.name).championships++;
         }
-        if (tStandings.length) {
-          const winner = tStandings.find(t => !t.championshipDsq);
-          if (winner) {
-            const champT = season.teams.find(x => x.id === winner.teamId);
-            if (champT) ensureT(champT.name.toLowerCase().trim(), champT.name).championships++;
-          }
-        }
+      }
+      if (champs.teamChampion) {
+        const champT = season.teams.find(x => x.id === champs.teamChampion);
+        if (champT) ensureT(champT.name.toLowerCase().trim(), champT.name).championships++;
       }
     });
   });
@@ -17084,7 +17082,7 @@ function openNewSeasonModal() {
           <option value="">— None — empty grid</option>
           ${driverBundles.length ? `<optgroup label="Your saved bundles">${driverBundles.map(b => `<option value="${esc(b.id)}">${esc(b.name)} · ${b.drivers.length} driver${b.drivers.length === 1 ? '' : 's'}</option>`).join('')}</optgroup>` : ''}
         </select>
-        <span class="field-help">${driverBundles.length ? `${driverBundles.length} saved bundle${driverBundles.length === 1 ? '' : 's'} available. Saved drivers come without team assignments — sign them after.` : 'Save a driver bundle from the Drivers tab to reuse it here.'}</span>
+        <span class="field-help">${driverBundles.length ? `${driverBundles.length} saved bundle${driverBundles.length === 1 ? '' : 's'} available. Drivers arrive already signed to their teams.` : 'Save a driver bundle from the Drivers tab to reuse it here.'}</span>
       </div>
 
       <div class="field" id="ns-driver-count-field">
@@ -17889,14 +17887,9 @@ function buildSeasonFromImport(parsed, opts) {
     });
   }
 
-  // Drop trailing empty rounds — a full-calendar CSV often has more flag columns
-  // than rounds actually contested, leaving empty "future" races. Those phantom
-  // rounds keep the title mathematically open forever, so a clear champion never
-  // gets crowned. Trimming the unraced tail lets the season conclude at its last
-  // contested round. (Only the trailing block is removed; mid-season gaps stay.)
-  while (season.races.length && !season.races[season.races.length - 1].completed) {
-    season.races.pop();
-  }
+  // Empty trailing rounds are kept on purpose — an imported season may be
+  // unfinished by design (the user will keep racing it), and the championship
+  // logic already treats those unraced rounds as still-winnable.
 
   save.seasons[seasonId] = season;
   state.activeSeasonId = seasonId;
@@ -19911,17 +19904,50 @@ function openTrackPresetSearch() {
    Each bundle stores a snapshot of drivers OR teams. Load
    it back into any season to recreate the roster.
    ===================================================== */
+// Find a team in `season` matching the bundle's saved team (by name, case-
+// insensitive) or create it from the snapshot. Returns the team id, or null when
+// the bundle driver carried no team. Lets a driver bundle re-sign its drivers to
+// their teams on load instead of dropping them onto the grid team-less.
+function resolveBundleTeamId(season, teamSnap) {
+  if (!teamSnap || !teamSnap.name) return null;
+  season.teams = season.teams || [];
+  const key = teamSnap.name.toLowerCase().trim();
+  const existing = season.teams.find(t => (t.name || '').toLowerCase().trim() === key);
+  if (existing) return existing.id;
+  const team = {
+    id: uid(),
+    name: teamSnap.name,
+    short: teamSnap.short || teamSnap.name.slice(0, 3).toUpperCase(),
+    country: teamSnap.country || '',
+    color: teamSnap.color || '#666',
+    logo: teamSnap.logo || '',
+    dsq: false,
+  };
+  season.teams.push(team);
+  return team.id;
+}
+
 function saveDriverClass(name, note = '') {
   const s = activeSeason();
   if (!s) return null;
-  const snapshot = (s.drivers || []).map(d => ({
-    name: d.name,
-    number: d.number,
-    country: d.country,
-    photo: d.photo || '',
-    era: d.era || 'Current',
-    // We can't preserve teamId — teams aren't part of this bundle — so we drop it
-  }));
+  const snapshot = (s.drivers || []).map(d => {
+    const team = (s.teams || []).find(t => t.id === d.teamId);
+    return {
+      name: d.name,
+      number: d.number,
+      country: d.country,
+      photo: d.photo || '',
+      era: d.era || 'Current',
+      // Preserve the driver's team so the bundle can re-sign them on load.
+      team: team ? {
+        name: team.name,
+        short: team.short || '',
+        country: team.country || '',
+        color: team.color || '#666',
+        logo: team.logo || '',
+      } : null,
+    };
+  });
   const cls = {
     id: uid(),
     name: (name || '').trim() || `Class · ${new Date().toLocaleDateString()}`,
@@ -19966,33 +19992,50 @@ function deleteRosterClass(kind, id) {
 }
 
 function loadDriverClass(cls, mode = 'add') {
-  const s = activeSeason(); if (!s) return 0;
+  const s = activeSeason(); if (!s) return { added: 0, skipped: 0, blocked: false };
   if (mode === 'replace') {
-    // Remove all existing drivers but keep team rooster intact
+    // Remove all existing drivers but keep team roster intact
     s.drivers = [];
+    s.driverBundleId = null;
     // Also strip the drivers from any race results
     (s.races || []).forEach(r => {
-      r.results = (r.results || []).filter(() => false); // wipe — they all referenced old IDs
-      r.sprintResults = (r.sprintResults || []).filter(() => false);
+      r.results = [];
+      r.sprintResults = [];
       r.fastestLapDriverId = null;
       r.poleDriverId = null;
     });
   }
-  let added = 0;
+  // One bundle per season. Adding a bundle on top of one already loaded would
+  // create duplicate drivers (same name/number), which breaks quick entry's
+  // resolver. Block the second add — the user can "Replace all" to swap instead.
+  if (mode === 'add' && s.driverBundleId && (s.drivers || []).length) {
+    return { added: 0, skipped: 0, blocked: true };
+  }
+  // Safety net: never add a driver that duplicates an existing name or number,
+  // so re-loading the same bundle can't pile up duplicates (even if the bundle
+  // marker was lost, e.g. across a cloud sync).
+  const names = new Set((s.drivers || []).map(d => (d.name || '').toLowerCase().trim()));
+  const nums  = new Set((s.drivers || []).map(d => d.number).filter(n => n != null));
+  let added = 0, skipped = 0;
   cls.drivers.forEach(d => {
+    const nameKey = (d.name || '').toLowerCase().trim();
+    if ((nameKey && names.has(nameKey)) || (d.number != null && nums.has(d.number))) { skipped++; return; }
     s.drivers.push({
       id: uid(),
       name: d.name,
       number: d.number,
       country: d.country || '',
       photo: d.photo || '',
-      teamId: null,
+      teamId: resolveBundleTeamId(s, d.team),
       dsq: false,
     });
+    if (nameKey) names.add(nameKey);
+    if (d.number != null) nums.add(d.number);
     added++;
   });
+  s.driverBundleId = cls.id;
   saveState();
-  return added;
+  return { added, skipped, blocked: false };
 }
 
 function loadTeamClass(cls, mode = 'add') {
@@ -20721,7 +20764,10 @@ function openRosterClasses(kind) {
           listEl.innerHTML = `<div class="empty" style="padding:36px 20px"><div class="empty-headline">NO BUNDLES YET</div><div class="empty-sub">Save the current ${nounPlural} above to create your first one.</div></div>`;
           return;
         }
+        const s0 = activeSeason();
+        const activeBundleId = (isDriver && s0 && s0.driverBundleId && (s0.drivers || []).length) ? s0.driverBundleId : null;
         listEl.innerHTML = all.map(c => {
+          const isLoaded = isDriver && c.id === activeBundleId;
           const count = isDriver ? c.drivers.length : c.teams.length;
           const dateStr = new Date(c.savedAt).toLocaleDateString();
           // Tiny preview chips
@@ -20741,13 +20787,13 @@ function openRosterClasses(kind) {
           return `
             <div class="rc-row" data-id="${c.id}">
               <div class="rc-head">
-                <div class="rc-name">${esc(c.name)}</div>
+                <div class="rc-name">${esc(c.name)}${isLoaded ? ' <span class="rc-loaded-badge">✓ IN THIS SEASON</span>' : ''}</div>
                 <div class="rc-meta">${count} ${nounPlural} · saved ${esc(dateStr)}</div>
               </div>
               ${c.note ? `<div class="rc-note">${esc(c.note)}</div>` : ''}
               <div class="rc-chips">${previewChips}${overflow}</div>
               <div class="rc-actions">
-                <button class="btn btn-ghost" data-act="load">+ ADD TO SEASON</button>
+                <button class="btn btn-ghost" data-act="load"${(isDriver && activeBundleId) ? ' disabled title="One bundle per season — use Replace all to swap"' : ''}>+ ADD TO SEASON</button>
                 <button class="btn btn-ghost" data-act="replace" style="color:var(--sec-yellow)">↻ REPLACE ALL</button>
                 <button class="btn btn-ghost" data-act="delete" style="color:var(--red)">× DELETE</button>
               </div>
@@ -20759,13 +20805,20 @@ function openRosterClasses(kind) {
           const cls = list().find(x => x.id === id);
           if (!cls) return;
           $('[data-act="load"]', row).onclick = () => {
-            const n = isDriver ? loadDriverClass(cls, 'add') : loadTeamClass(cls, 'add');
-            toast(`Added ${n} ${nounPlural} from "${cls.name}"`, 'success');
+            if (isDriver) {
+              const res = loadDriverClass(cls, 'add');
+              if (res.blocked) { toast('This season already uses a driver bundle — use "Replace all" to swap it', 'warn'); return; }
+              if (res.added === 0) toast(`"${cls.name}" is already in this season`, 'warn');
+              else toast(`Added ${res.added} drivers from "${cls.name}"${res.skipped ? ` · skipped ${res.skipped} duplicate${res.skipped === 1 ? '' : 's'}` : ''}`, 'success');
+            } else {
+              const n = loadTeamClass(cls, 'add');
+              toast(`Added ${n} ${nounPlural} from "${cls.name}"`, 'success');
+            }
             close(); renderMain();
           };
           $('[data-act="replace"]', row).onclick = () => {
             if (!confirm(`Replace ALL current ${nounPlural} with "${cls.name}"?\n\nThis will remove your existing ${currentCount} ${nounPlural}${isDriver ? ' AND wipe every race result' : ' and clear team assignments from all drivers'}. This cannot be undone.`)) return;
-            const n = isDriver ? loadDriverClass(cls, 'replace') : loadTeamClass(cls, 'replace');
+            const n = isDriver ? loadDriverClass(cls, 'replace').added : loadTeamClass(cls, 'replace');
             toast(`Replaced with ${n} ${nounPlural} from "${cls.name}"`, 'success');
             close(); renderMain();
           };
