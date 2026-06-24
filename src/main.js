@@ -4027,6 +4027,8 @@ function renderLineup() {
           <div class="lineup-num lineup-num-right">${d2 ? (d2.number || '–') : ''}</div>
         </div>
         <div class="lineup-row-actions">
+          ${[d1, d2].filter(Boolean).map(d => `<button class="btn btn-sm btn-ghost" data-release-driver="${d.id}" title="Remove ${esc(d.name)} from the season">✕ ${esc(splitName(d.name).last)}</button>`).join('')}
+          <span style="flex:1"></span>
           <button class="btn btn-sm btn-ghost" data-edit-team="${t.id}">✎ EDIT TEAM</button>
           <button class="btn btn-sm btn-ghost" data-dsq-team="${t.id}">${t.dsq ? '✓ REINSTATE' : '⊘ DSQ'}</button>
           <button class="btn btn-sm btn-danger" data-del-team="${t.id}" title="Delete team">✕</button>
@@ -4080,6 +4082,7 @@ function renderLineup() {
               <span class="lineup-last" style="color:var(--text)">${esc(splitName(d.name).last)}</span>
               <span class="lineup-team">No team${d.country ? ' ' + flagImg(d.country, 14) : ''}</span>
             </div>
+            <button class="btn btn-sm btn-ghost lineup-free-release" data-release-driver="${d.id}" title="Remove ${esc(d.name)} from the season" style="margin-left:auto">✕</button>
           </div>`).join('')}
       </div>` : ''}
   `;
@@ -4103,6 +4106,16 @@ function renderLineup() {
     // row interactions
     $$('[data-edit-driver]', wrap).forEach(b => b.onclick = (e) => { e.stopPropagation(); openDriverModal(b.dataset.editDriver); });
     $$('[data-edit-team]', wrap).forEach(b => b.onclick = (e) => { e.stopPropagation(); openTeamModal(b.dataset.editTeam); });
+    $$('[data-release-driver]', wrap).forEach(b => b.onclick = (e) => {
+      e.stopPropagation();
+      const d = season.drivers.find(x => x.id === b.dataset.releaseDriver); if (!d) return;
+      confirmModal({
+        title: 'Release driver?',
+        message: `Permanently remove <b>${esc(d.name)}</b> from this season? Their race results will be wiped. (Their driver preset in the library is untouched.)`,
+        danger: true,
+        onConfirm: () => { deleteDriver(d.id); toast('Driver released', 'warn'); renderMain(); }
+      });
+    });
     $$('[data-add-driver]', wrap).forEach(b => b.onclick = (e) => { e.stopPropagation(); openDriverModal(null, b.dataset.addDriver); });
     $$('[data-dsq-team]', wrap).forEach(b => b.onclick = (e) => {
       e.stopPropagation();
@@ -4173,7 +4186,7 @@ function openDriverModal(driverId, presetTeamId) {
           </select>
         </div>
       </div>`,
-    footer: `<button class="btn btn-ghost" data-act="cancel">Cancel</button><button class="btn btn-primary" data-act="ok">${editing ? 'Save' : 'Sign'}</button>`,
+    footer: `${editing ? '<button class="btn btn-danger" data-act="delete" style="margin-right:auto">🗑 Release driver</button>' : ''}<button class="btn btn-ghost" data-act="cancel">Cancel</button><button class="btn btn-primary" data-act="ok">${editing ? 'Save' : 'Sign'}</button>`,
     onMount: (root, close) => {
       const placeholder = '';
       const photoWidget = mountPhotoUpload($('#d-photo-mount', root), {
@@ -4230,6 +4243,14 @@ function openDriverModal(driverId, presetTeamId) {
         flagEl.textContent = flag(ctryInput.value.trim().toUpperCase());
       });
       $('[data-act="cancel"]', root).onclick = close;
+      $('[data-act="delete"]', root)?.addEventListener('click', () => {
+        confirmModal({
+          title: 'Release driver?',
+          message: `Permanently remove <b>${esc(editing.name)}</b> from this season? Their race results will be wiped. (Their driver preset in the library is untouched.)`,
+          danger: true,
+          onConfirm: () => { deleteDriver(editing.id); close(); renderMain(); toast('Driver released', 'warn'); }
+        });
+      });
       $('[data-act="ok"]', root).onclick = () => {
         const name = $('#d-name', root).value.trim();
         if (!name) return toast('Driver name required', 'error');
