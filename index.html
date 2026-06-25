@@ -12422,6 +12422,7 @@ function calcAllTimeRecords() {
       points: 0, championships: 0, starts: 0,
       sprintWins: 0, dnfs: 0, dsqs: 0, dnss: 0,
       bestSeasonWins: 0, bestSeasonPoles: 0,
+      bestSeasonWinsAt: '', bestSeasonPolesAt: '', // which season each single-season best was set in
       countries: new Set(), latestCountry: '',
       photo: '', latestTeamColor: '#666',
     });
@@ -12441,6 +12442,7 @@ function calcAllTimeRecords() {
     Object.values(save.seasons).forEach(season => {
       const dStandings = calcDriverStandings(season);
       const tStandings = calcTeamStandings(season);
+      const sznLabel = season.name || (season.year ? String(season.year) : 'Season');
       // aggregate per driver — key by normalised name so accent/punctuation/
       // whitespace variants ("Sergio Pérez" vs "Sergio Perez") all roll up to
       // the same career bucket. A driver who raced for Mercedes one season
@@ -12460,9 +12462,10 @@ function calcAllTimeRecords() {
         agg.dnfs += d.dnfs || 0;
         agg.dsqs += d.dsqs || 0;
         agg.dnss += d.dnss || 0;
-        // single-season bests (most wins / poles a driver took in one season)
-        if (d.wins > agg.bestSeasonWins) agg.bestSeasonWins = d.wins;
-        if (d.polePositions > agg.bestSeasonPoles) agg.bestSeasonPoles = d.polePositions;
+        // single-season bests (most wins / poles a driver took in one season),
+        // remembering which season each was set in for the record detail view
+        if (d.wins > agg.bestSeasonWins) { agg.bestSeasonWins = d.wins; agg.bestSeasonWinsAt = sznLabel; }
+        if (d.polePositions > agg.bestSeasonPoles) { agg.bestSeasonPoles = d.polePositions; agg.bestSeasonPolesAt = sznLabel; }
         if (drv.country) { agg.countries.add(drv.country); agg.latestCountry = drv.country; }
         if (drv.photo) agg.photo = drv.photo;
         const drvTeam = season.teams.find(t => t.id === drv.teamId);
@@ -14110,10 +14113,19 @@ function openRaceModal(raceId) {
   const season = activeSeason();
   const editing = raceId ? season.races.find(r => r.id === raceId) : null;
   let flagImage = editing?.flagImage || '';
+  const trackPresets = (typeof getEffectiveTrackPresets === 'function' ? getEffectiveTrackPresets() : [])
+    .slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
   modal({
     title: editing ? 'Edit Round' : `<span class="accent">New</span> Round`,
     body: `
+      ${trackPresets.length ? `<div class="field">
+        <label>${editing ? 'Swap track' : 'Pick from library'} <span style="font-weight:400;color:var(--text-muted);font-family:var(--f-body);text-transform:none;letter-spacing:0">— fills the fields below${editing ? ', results stay untouched' : ''}</span></label>
+        <select id="r-track-preset">
+          <option value="">— Choose a track preset —</option>
+          ${trackPresets.map((p, i) => `<option value="${i}">${esc(p.name)}${p.circuit ? ' · ' + esc(p.circuit) : ''}${p.country ? ' (' + esc(p.country) + ')' : ''}</option>`).join('')}
+        </select>
+      </div>` : ''}
       <div class="field"><label>Race Name</label><input type="text" id="r-name" placeholder="e.g. British Grand Prix" value="${esc(editing?.name || '')}"></div>
       <div class="field-row">
         <div class="field"><label>Circuit</label><input type="text" id="r-circ" placeholder="e.g. Silverstone" value="${esc(editing?.circuit || '')}"></div>
@@ -14166,6 +14178,20 @@ function openRaceModal(raceId) {
       };
       renderFlagWidget();
       $('#r-ctry', root).oninput = () => renderFlagWidget();
+
+      // Track picker — choosing a preset refills the round's track fields (name,
+      // circuit, country, flag, sprint) without touching the race results.
+      const tpSel = $('#r-track-preset', root);
+      if (tpSel) tpSel.onchange = () => {
+        const p = trackPresets[Number(tpSel.value)];
+        if (!p) return;
+        $('#r-name', root).value = p.name || '';
+        $('#r-circ', root).value = p.circuit || '';
+        $('#r-ctry', root).value = (p.country || '').toUpperCase();
+        flagImage = p.flagImage || '';
+        const sp = $('#r-sprint', root); if (sp) sp.checked = !!p.sprint;
+        renderFlagWidget();
+      };
 
       $('[data-act="cancel"]', root).onclick = close;
       $('[data-act="ok"]', root).onclick = () => {
@@ -16308,8 +16334,8 @@ const RECORD_CATEGORIES = [
   { id: 'team_wins',           label: 'Most Race Wins · Teams', scope: 'teams',   key: 'wins',          unit: 'WINS' },
   { id: 'team_champs',         label: "Constructors' Titles",   scope: 'teams',   key: 'championships', unit: 'TITLES' },
   { id: 'driver_poles',        label: 'Most Pole Positions',    scope: 'drivers', key: 'poles',         unit: 'POLES' },
-  { id: 'driver_season_wins',  label: 'Most Wins in a Season',  scope: 'drivers', key: 'bestSeasonWins',  unit: 'WINS' },
-  { id: 'driver_season_poles', label: 'Most Poles in a Season', scope: 'drivers', key: 'bestSeasonPoles', unit: 'POLES' },
+  { id: 'driver_season_wins',  label: 'Most Wins in a Season',  scope: 'drivers', key: 'bestSeasonWins',  unit: 'WINS',  perSeason: true },
+  { id: 'driver_season_poles', label: 'Most Poles in a Season', scope: 'drivers', key: 'bestSeasonPoles', unit: 'POLES', perSeason: true },
   { id: 'driver_fl',           label: 'Most Fastest Laps',      scope: 'drivers', key: 'fastestLaps',   unit: 'FLs' },
   { id: 'driver_dnfs',         label: 'Most DNFs',              scope: 'drivers', key: 'dnfs',          unit: 'DNFs' },
   { id: 'driver_points',       label: 'Most Career Points',     scope: 'drivers', key: 'points',        unit: 'PTS' },
@@ -16588,7 +16614,7 @@ function openRecordDetail(catId, recs) {
             ${portraitHTML}
             <div>
               <div class="record-detail-name">${esc(r.name)}${cat.scope === 'drivers' ? '<span class="record-detail-cta">VIEW CAREER →</span>' : ''}</div>
-              <div class="record-detail-meta">${esc(meta || '—')}</div>
+              <div class="record-detail-meta">${cat.perSeason && r[cat.key + 'At'] ? `📅 set in <b style="color:var(--text)">${esc(r[cat.key + 'At'])}</b>` : esc(meta || '—')}</div>
             </div>
             <div class="record-detail-value">${r[cat.key]}</div>
           </div>`;
@@ -17194,6 +17220,7 @@ const F1_RACE_CODE_MAP = {
   CAN: { name: 'Canadian Grand Prix',        circuit: 'Gilles Villeneuve',     country: 'CAN' },
   AUT: { name: 'Austrian Grand Prix',        circuit: 'Red Bull Ring',         country: 'AUT' },
   GBR: { name: 'British Grand Prix',         circuit: 'Silverstone',           country: 'GBR' },
+  '70A': { name: '70th Anniversary Grand Prix', circuit: 'Silverstone',        country: 'GBR' },
   HUN: { name: 'Hungarian Grand Prix',       circuit: 'Hungaroring',           country: 'HUN' },
   BEL: { name: 'Belgian Grand Prix',         circuit: 'Spa-Francorchamps',     country: 'BEL' },
   NED: { name: 'Dutch Grand Prix',           circuit: 'Zandvoort',             country: 'NED' },
@@ -17309,8 +17336,15 @@ function matchTrackPresetForCode(code) {
         || pool[0];
   };
 
-  // Step 1: DIRECT match — preset country equals pasted code exactly
-  const directCandidates = effective.filter(p => (p.country || '').toUpperCase().trim() === codeKey);
+  // Step 1: DIRECT match. A preset with an explicit IMPORT CODE (abbr) matches
+  // only that code — its country is purely the flag, so e.g. a reverse-grid
+  // British GP can fly the GB flag (country GBR) while matching code GBRR without
+  // hijacking the real British Grand Prix. Presets with no abbr match by country.
+  const directCandidates = effective.filter(p => {
+    const ab = (p.abbr || '').toUpperCase().trim();
+    if (ab) return ab === codeKey;
+    return (p.country || '').toUpperCase().trim() === codeKey;
+  });
   const direct = pickBest(directCandidates);
   if (direct) {
     const source = direct.isCustom
@@ -17324,6 +17358,7 @@ function matchTrackPresetForCode(code) {
   if (!hint) return null;
 
   const aliasCandidates = effective.filter(p => {
+    if ((p.abbr || '').trim()) return false; // abbr presets only match their explicit import code
     if ((p.country || '').toUpperCase() !== hint.country) return false;
     if (hint.circuitContains) {
       return (p.circuit || '').toLowerCase().includes(hint.circuitContains.toLowerCase());
@@ -17794,23 +17829,28 @@ function buildSeasonFromImport(parsed, opts) {
   // Selected preset wins on conflicts.
   const presetById = id => (state.calendarPresets || []).find(p => p.id === id);
   const codeIndex = {}; // 'BHR' -> { name, circuit, country, flagImage, sprint }
-  const indexCalPreset = (preset) => {
+  const indexCalPreset = (preset, allowCanonicalOverride) => {
     if (!preset) return;
     preset.races.forEach(r => {
       const key = (r.country || '').toUpperCase().trim();
-      if (key && !codeIndex[key]) {
-        codeIndex[key] = {
-          name: r.name,
-          circuit: r.circuit,
-          country: r.country,
-          flagImage: r.flagImage || '',
-          sprint: !!r.sprint,
-        };
-      }
+      if (!key || codeIndex[key]) return;
+      // Don't let an UNRELATED saved calendar hijack a canonical F1 race code.
+      // e.g. a fantasy reverse-grid British GP saved under country "GBR" would
+      // otherwise rename EVERY real British Grand Prix on import, splitting the
+      // track records. Only the explicitly-selected calendar preset may override
+      // a canonical code; other saved calendars still fill in custom/fantasy codes.
+      if (!allowCanonicalOverride && F1_RACE_CODE_MAP[key]) return;
+      codeIndex[key] = {
+        name: r.name,
+        circuit: r.circuit,
+        country: r.country,
+        flagImage: r.flagImage || '',
+        sprint: !!r.sprint,
+      };
     });
   };
-  if (opts.calendarPresetId) indexCalPreset(presetById(opts.calendarPresetId));
-  (state.calendarPresets || []).forEach(p => indexCalPreset(p));
+  if (opts.calendarPresetId) indexCalPreset(presetById(opts.calendarPresetId), true);
+  (state.calendarPresets || []).forEach(p => indexCalPreset(p, false));
 
   // Detect which races had sprints — any race where ANY driver has sprintPoints > 0
   const hadSprint = parsed.headers.map((_, ri) =>
@@ -19429,7 +19469,11 @@ function openPresetEditor(kind, existing, onSaved) {
       <div class="field"><label>Circuit</label><input type="text" id="pe-circuit" value="${esc(data.circuit || '')}" placeholder="e.g. Silverstone"></div>
       <div class="field" style="max-width:160px"><label>Length (km)</label><input type="number" id="pe-length" step="0.001" min="0" value="${data.length || ''}" placeholder="5.891"></div>
     </div>
-    <div class="field"><label>Country code</label><input type="text" id="pe-country" value="${esc(data.country)}" placeholder="GBR" maxlength="3" style="text-transform:uppercase"></div>
+    <div class="field-row">
+      <div class="field"><label>Country code <span style="font-weight:400;color:var(--text-muted);font-family:var(--f-body);text-transform:none;letter-spacing:0">— flag</span></label><input type="text" id="pe-country" value="${esc(data.country)}" placeholder="GBR" maxlength="3" style="text-transform:uppercase"></div>
+      <div class="field"><label>Import code <span style="font-weight:400;color:var(--text-muted);font-family:var(--f-body);text-transform:none;letter-spacing:0">— optional</span></label><input type="text" id="pe-abbr" value="${esc(data.abbr || '')}" placeholder="e.g. GBRR" maxlength="5" style="text-transform:uppercase"></div>
+    </div>
+    <span class="field-help">Country sets the <b>flag</b>. Add an <b>import code</b> when CSV headers should match this track by a code other than its country — e.g. a reverse-grid British GP that still flies the GB flag (country <code>GBR</code>, import code <code>GBRR</code>). Leave blank to match by country.</span>
     ${eraChipsHtml}
     <div class="field">
       <label>Flag</label>
@@ -19562,7 +19606,8 @@ function openPresetEditor(kind, existing, onSaved) {
           const circuit = $('#pe-circuit', root).value.trim();
           const length = Number($('#pe-length', root).value) || 0;
           const sprint = $('#pe-sprint', root).checked;
-          const updated = { name, circuit, country, era, eras, length, sprint, flagImage: data.flagImage || '' };
+          const abbr = ($('#pe-abbr', root)?.value || '').trim().toUpperCase().slice(0, 5);
+          const updated = { name, circuit, country, era, eras, length, sprint, abbr, flagImage: data.flagImage || '' };
           if (isEdit) savePresetEdit('track', originalKey, updated, existing);
           else addCustomPreset('track', updated);
         }
