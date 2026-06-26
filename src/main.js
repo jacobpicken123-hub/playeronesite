@@ -260,6 +260,13 @@ async function cloudPullAllSaves(preferLocalIfNewer = false) {
     const local = state.saves[localId];
     const cloud = newSaves[localId];
     if (!cloud) { newSaves[localId] = local; needsRepush = true; continue; } // local-only save
+    // SHARED saves (more than one member) are collaborative — the cloud is the
+    // single source of truth, so every member converges to the same data and the
+    // same points. The "keep local if it has more results" protection below is for
+    // SOLO saves only; on a shared save it pins each user to their own copy and
+    // re-pushes it, so collaborators never see each other's input.
+    const memberCount = ((cloud && cloud._members) || (local && local._members) || []).length;
+    if (memberCount > 1) continue; // accept the cloud copy as-is
     const localCount = saveResultsCount(local);
     const cloudCount = saveResultsCount(cloud);
     if (cloudCount < localCount) {
@@ -274,13 +281,23 @@ async function cloudPullAllSaves(preferLocalIfNewer = false) {
   if (state.activeSaveId && !newSaves[state.activeSaveId]) state.activeSaveId = null;
   if (state.activeSeasonId && state.activeSaveId && newSaves[state.activeSaveId] && !newSaves[state.activeSaveId].seasons[state.activeSeasonId]) state.activeSeasonId = null;
 
+  // Load collaborators' shared preset libraries first, so a blank logo/photo on a
+  // SHARED save can be back-filled from the save owner's presets below.
+  await cloudPullCollaboratorPresets();
+
   // The cloud round-trip can lose a team's logo (e.g. large image payloads). Re-fill
   // any blank team logo from its matching preset in the local library so preset
   // images survive a reload / cloud sync.
   backfillTeamLogosFromPresets(); backfillDriverPhotosFromPresets();
 
-  // Reset the push-hash cache: whatever we just pulled is now our up-to-date baseline.
-  cloudLastPushHashes = {};
+  // Only reset the push-hash cache when we KEPT local data the cloud is missing —
+  // those rows must be re-pushed to heal the cloud (see needsRepush below). After a
+  // CLEAN pull we KEEP the cache. Clearing it on every realtime event was a disaster:
+  // it made the very next save re-upload the ENTIRE dataset (the cache said "nothing
+  // pushed yet"), every row re-broadcast as a realtime message, which re-triggered
+  // the pull, which cleared the cache again — a feedback loop that burned millions of
+  // realtime messages and tens of GB of egress with only a couple of active users.
+  if (needsRepush) cloudLastPushHashes = {};
 
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(stateForStorage())); } catch {}
 
@@ -723,6 +740,29 @@ async function cloudPullPresets() {
   }
 }
 
+// Collaborator-shared presets. When you share a save with someone, you also see
+// each other's CUSTOM preset library (driver photos, team logos/era liveries,
+// track import codes) so the entities in a shared save render with the owner's
+// images. Requires the cross-user SELECT policy on user_presets (one-time SQL) —
+// without it the query returns only your own row, so this is a harmless no-op.
+async function cloudPullCollaboratorPresets() {
+  if (!CLOUD.enabled || !currentUser || presetsTableAvailable === false) return;
+  try {
+    const { data, error } = await CLOUD.client.from('user_presets').select('user_id, data');
+    if (error) { presetsTableAvailable = false; return; }
+    presetsTableAvailable = true;
+    const shared = { drivers: [], teams: [], tracks: [] };
+    for (const row of (data || [])) {
+      if (!row || row.user_id === currentUser.id || !row.data) continue; // skip our own library
+      const d = row.data;
+      (d.customDriverPresets || []).forEach(p => p && shared.drivers.push({ ...p, isShared: true }));
+      (d.customTeamPresets   || []).forEach(p => p && shared.teams.push({ ...p, isShared: true }));
+      (d.customTrackPresets  || []).forEach(p => p && shared.tracks.push({ ...p, isShared: true }));
+    }
+    state._sharedPresets = shared;
+  } catch (e) { /* optional feature — ignore */ }
+}
+
 function scheduleCloudSync() {
   if (!CLOUD.enabled || !currentUser) return;
   pendingCloudWrites++;
@@ -965,6 +1005,45 @@ function onCloudChange(payload) {
   scheduleCloudMerge();
 }
 
+// A stable, metadata-free signature of everything that affects what's on screen.
+// Deliberately EXCLUDES _cloud / _updatedAt / _lastEditedBy (which change on our
+// OWN push echo) and uses photo/logo LENGTHS instead of the full base64 so it
+// stays compact. Used to tell "our own write echoing back" (identical content →
+// no re-render) apart from a genuine remote change (different content).
+function cloudStateSignature() {
+  try {
+    const out = [];
+    const saves = state.saves || {};
+    for (const sid of Object.keys(saves).sort()) {
+      const save = saves[sid];
+      out.push('S', sid, save.name || '');
+      const seasons = save.seasons || {};
+      for (const seId of Object.keys(seasons).sort()) {
+        const se = seasons[seId];
+        out.push('Y', seId, se.name || '', se.year, se.pointsSystemId || '', se.flPointEnabled, se.flPointValue, se.polePointEnabled, se.polePointValue);
+        (se.teams || []).forEach(t => out.push('T', t.id, t.name, t.short, t.color, t.country, t.dsq, t.logo ? t.logo.length : 0));
+        (se.drivers || []).forEach(d => out.push('D', d.id, d.name, d.number, d.country, d.teamId, d.dsq, d.photo ? d.photo.length : 0));
+        (se.races || []).forEach(r => {
+          out.push('R', r.id, r.round, r.name, r.circuit, r.country, r.sprint, r.completed, r.poleDriverId, r.fastestLapDriverId, r.flagImage ? r.flagImage.length : 0);
+          (r.results || []).forEach(x => out.push(x.driverId, x.position, x.dnf, x.dsq, x.dns));
+          (r.sprintResults || []).forEach(x => out.push('s', x.driverId, x.position, x.dnf, x.dsq, x.dns));
+        });
+      }
+    }
+    const mults = state.racePointsMultipliers || {};
+    Object.keys(mults).sort().forEach(k => out.push('M', k, mults[k]));
+    // Shared (collaborator) presets affect how a shared save renders, so a change
+    // to them should re-render too. Use image LENGTHS to stay compact.
+    const imgLen = (arr, single) => (Array.isArray(arr) && arr.length) ? arr.reduce((a, x) => a + ((x && x.url) ? x.url.length : 0), 0) : (single ? single.length : 0);
+    const sp = state._sharedPresets || {};
+    (sp.drivers || []).forEach(p => out.push('SPd', p.name, p.number, imgLen(p.photos, p.photo)));
+    (sp.teams   || []).forEach(p => out.push('SPt', p.name, p.short, p.color, imgLen(p.logos, p.logo)));
+    (sp.tracks  || []).forEach(p => out.push('SPr', p.name, p.country, p.abbr));
+    out.push('A', state.activeSaveId, state.activeSeasonId);
+    return out.join('~');
+  } catch (e) { return 'sig-err-' + Date.now(); }
+}
+
 // Run (or re-arm) the debounced realtime merge. While the user is mid-entry we
 // keep deferring — re-checking on a gentle interval — so the merge lands the
 // moment they save or leave the editor instead of yanking the page out from
@@ -977,8 +1056,13 @@ function scheduleCloudMerge() {
     if (userIsMidEntry()) { scheduleCloudMerge(); return; }
     cloudMergePending = false;
     try {
+      const before = cloudStateSignature();
       await cloudPullAllSaves();
-      renderAll();
+      // Only re-render when the pull actually changed something the UI shows. Our
+      // own write echoing back (after the suppress window) pulls identical data →
+      // signature unchanged → NO re-render → no flicker. A genuine collaborator
+      // edit changes the content and still re-renders as before.
+      if (cloudStateSignature() !== before) renderAll();
     } catch (e) { console.warn('[P1] realtime merge failed', e); }
   }, delay);
 }
@@ -1863,6 +1947,10 @@ let state = loadState();
 if (!state.customDriverPresets) state.customDriverPresets = [];
 if (!state.customTeamPresets)   state.customTeamPresets   = [];
 if (!state.customTrackPresets)  state.customTrackPresets  = [];
+// Presets shared by collaborators (people you co-own a save with). Pulled from
+// the cloud, kept in memory only (never persisted) — feeds the effective preset
+// lists so a shared save renders with the owner's photos / logos / import codes.
+state._sharedPresets = state._sharedPresets || { drivers: [], teams: [], tracks: [] };
 if (!state.presetOverrides)     state.presetOverrides     = { drivers: {}, teams: {}, tracks: {} };
 if (!state.presetOverrides.tracks) state.presetOverrides.tracks = {};
 // Keys of built-in presets the user has deleted (hidden) from the library.
@@ -2290,6 +2378,62 @@ function pickPresetPhoto(preset, onPick) {
       $$('.photo-picker-card', root).forEach(b => {
         b.onclick = () => { onPick(b.dataset.url); close(); };
       });
+    }
+  });
+}
+
+/* ---- Team LOGO presets — the exact parallel of the driver photo helpers above.
+   A team preset can carry several labelled logos (e.g. era liveries); each season
+   team uses a single one, matched by season year/name on import. ---- */
+function presetLogosList(preset) {
+  if (!preset) return [];
+  if (Array.isArray(preset.logos) && preset.logos.length) return preset.logos.filter(p => p && p.url);
+  if (preset.logo) return [{ id: 'main', url: preset.logo, label: '', isDefault: true }];
+  return [];
+}
+function defaultPresetLogo(preset) {
+  const all = presetLogosList(preset);
+  if (!all.length) return '';
+  return (all.find(p => p.isDefault) || all[0]).url || '';
+}
+function pickPresetLogoForSeason(preset, opts) {
+  const logos = presetLogosList(preset);
+  if (!logos.length) return '';
+  const year = String((opts && opts.year) || '').trim();
+  const name = String((opts && opts.name) || '');
+  if (/^\d{4}$/.test(year)) {
+    const re = new RegExp('\\b' + year + '\\b');
+    const byYear = logos.find(p => p.label && re.test(p.label));
+    if (byYear) return byYear.url;
+  }
+  if (name.trim()) {
+    const lname = name.toLowerCase();
+    const byName = logos.find(p => { const l = (p.label || '').toLowerCase().trim(); return l && lname.includes(l); });
+    if (byName) return byName.url;
+  }
+  return (logos.find(p => p.isDefault) || logos[0]).url || '';
+}
+function pickPresetLogo(preset, onPick) {
+  const logos = presetLogosList(preset);
+  if (logos.length <= 1) { onPick(logos[0]?.url || ''); return; }
+  modal({
+    title: `<span class="accent">Pick</span> a Logo`,
+    body: `
+      <div class="field-help" style="margin-bottom:14px">
+        <b>${esc(preset.name)}</b> has ${logos.length} logos saved. Choose which one to use for this team — you can change it later.
+      </div>
+      <div class="photo-picker-grid">
+        ${logos.map(p => `
+          <button type="button" class="photo-picker-card ${p.isDefault ? 'is-default' : ''}" data-url="${esc(p.url)}">
+            <div class="photo-picker-thumb logo" style="background-image:url('${esc(p.url)}')">${p.isDefault ? '<span class="photo-picker-default-badge">DEFAULT</span>' : ''}</div>
+            <div class="photo-picker-label">${esc(p.label || 'Untitled')}</div>
+          </button>
+        `).join('')}
+      </div>`,
+    footer: `<button class="btn btn-ghost" data-act="cancel">Cancel</button>`,
+    onMount: (root, close) => {
+      $('[data-act="cancel"]', root).onclick = close;
+      $$('.photo-picker-card', root).forEach(b => { b.onclick = () => { onPick(b.dataset.url); close(); }; });
     }
   });
 }
@@ -3180,8 +3324,10 @@ function calcAllTimeRecords() {
       wins: 0, podiums: 0, poles: 0, fastestLaps: 0,
       points: 0, championships: 0, starts: 0,
       sprintWins: 0, dnfs: 0, dsqs: 0, dnss: 0,
-      bestSeasonWins: 0, bestSeasonPoles: 0,
-      bestSeasonWinsAt: '', bestSeasonPolesAt: '', // which season each single-season best was set in
+      bestSeasonWins: 0, bestSeasonPoles: 0, bestSeasonPoints: 0,
+      bestSeasonWinsAt: '', bestSeasonPolesAt: '', bestSeasonPointsAt: '', // which season each single-season best was set in
+      mostWinsAtOneTrack: 0, mostWinsAtOneTrackAt: '', // most wins at a single circuit
+      winStreak: 0,                                    // longest run of consecutive race wins
       countries: new Set(), latestCountry: '',
       photo: '', latestTeamColor: '#666',
     });
@@ -3225,6 +3371,7 @@ function calcAllTimeRecords() {
         // remembering which season each was set in for the record detail view
         if (d.wins > agg.bestSeasonWins) { agg.bestSeasonWins = d.wins; agg.bestSeasonWinsAt = sznLabel; }
         if (d.polePositions > agg.bestSeasonPoles) { agg.bestSeasonPoles = d.polePositions; agg.bestSeasonPolesAt = sznLabel; }
+        if (d.points > agg.bestSeasonPoints) { agg.bestSeasonPoints = d.points; agg.bestSeasonPointsAt = sznLabel; }
         if (drv.country) { agg.countries.add(drv.country); agg.latestCountry = drv.country; }
         if (drv.photo) agg.photo = drv.photo;
         const drvTeam = season.teams.find(t => t.id === drv.teamId);
@@ -3264,8 +3411,46 @@ function calcAllTimeRecords() {
     });
   });
 
-  // convert sets to arrays
-  driverByName.forEach(d => { d.countries = Array.from(d.countries); });
+  // Per-race pass: most wins at a single circuit + longest win streak. Done in
+  // its own walk so we can order races chronologically (seasons by year, races by
+  // round) within each save. A skipped race (driver didn't enter) doesn't break a
+  // streak; a race they contested but didn't win resets it.
+  Object.values(state.saves).forEach(save => {
+    const seasons = Object.values(save.seasons || {}).slice().sort((a, b) => (a.year || 0) - (b.year || 0));
+    const streak = {}; // nameKey -> current consecutive wins within this save's timeline
+    seasons.forEach(season => {
+      const races = (season.races || []).filter(r => r.completed)
+        .slice().sort((a, b) => (a.round || 0) - (b.round || 0));
+      races.forEach(race => {
+        const trackKey = (shortGrandPrixName(race) || '').toLowerCase().trim()
+          || (race.circuit || '').toLowerCase().trim()
+          || (race.country || '').toUpperCase().trim();
+        const trackName = race.name || shortGrandPrixName(race) || trackKey;
+        (race.results || []).forEach(res => {
+          const drv = season.drivers.find(d => d.id === res.driverId);
+          if (!drv) return;
+          const key = normalizeDriverName(drv.name) || drv.name.toLowerCase().trim();
+          const agg = ensureD(key, drv.name);
+          const won = res.position === 1 && !res.dnf && !res.dsq && !res.dns;
+          if (won) {
+            if (!agg._trackWins) agg._trackWins = {};
+            agg._trackWins[trackKey] = (agg._trackWins[trackKey] || 0) + 1;
+            if (agg._trackWins[trackKey] > agg.mostWinsAtOneTrack) {
+              agg.mostWinsAtOneTrack = agg._trackWins[trackKey];
+              agg.mostWinsAtOneTrackAt = trackName;
+            }
+            streak[key] = (streak[key] || 0) + 1;
+            if (streak[key] > agg.winStreak) agg.winStreak = streak[key];
+          } else {
+            streak[key] = 0;
+          }
+        });
+      });
+    });
+  });
+
+  // convert sets to arrays + drop internal scratch maps
+  driverByName.forEach(d => { d.countries = Array.from(d.countries); delete d._trackWins; });
 
   return {
     drivers: Array.from(driverByName.values()),
@@ -4396,12 +4581,15 @@ function openTeamModal(teamId) {
   const season = activeSeason();
   const editing = teamId ? season.teams.find(t => t.id === teamId) : null;
   let logoValue = editing?.logo || '';
+  const matchedPreset = editing ? matchTeamPresetForName(editing.name) : null;
+  const presetLogos = matchedPreset ? presetLogosList(matchedPreset) : [];
   modal({
     title: editing ? 'Edit Constructor' : `<span class="accent">New</span> Constructor`,
     body: `
       <div class="field">
-        <label>Team Logo</label>
+        <label>Team Logo${presetLogos.length ? ` <span style="font-weight:400;color:var(--text-muted);font-family:var(--f-body);text-transform:none;letter-spacing:0">— matched to <b>${esc(matchedPreset.name)}</b> preset (${presetLogos.length} ${presetLogos.length === 1 ? 'logo' : 'logos'})</span>` : ''}</label>
         <div id="t-logo-mount"></div>
+        ${presetLogos.length ? `<button type="button" class="btn btn-ghost btn-sm" id="t-pick-logo" style="margin-top:10px">📸 ${presetLogos.length > 1 ? `PICK FROM ${presetLogos.length} PRESET LOGOS` : 'USE PRESET LOGO'}</button>` : ''}
       </div>
       <div class="field"><label>Team Name</label><input type="text" id="t-name" placeholder="e.g. Crimson Velocity" value="${esc(editing?.name || '')}"></div>
       <div class="field-row field-row-3">
@@ -4418,12 +4606,21 @@ function openTeamModal(teamId) {
     footer: `<button class="btn btn-ghost" data-act="cancel">Cancel</button><button class="btn btn-primary" data-act="ok">${editing ? 'Save' : 'Create'}</button>`,
     onMount: (root, close) => {
       const placeholder = editing?.short || '?';
-      mountPhotoUpload($('#t-logo-mount', root), {
+      const logoWidget = mountPhotoUpload($('#t-logo-mount', root), {
         initial: logoValue,
         shape: 'square',
         placeholder,
         onChange: (v) => { logoValue = v; }
       });
+      // "Pick from preset logos" — when the team matches a preset that carries
+      // several logos, choose which one (or apply the single one directly).
+      const pickLogoBtn = $('#t-pick-logo', root);
+      if (pickLogoBtn) pickLogoBtn.onclick = () => {
+        const latest = matchTeamPresetForName($('#t-name', root)?.value || editing?.name || '');
+        const lgs = latest ? presetLogosList(latest) : presetLogos;
+        if (lgs.length <= 1) { logoValue = lgs[0]?.url || ''; logoWidget.setValue(logoValue); toast('Applied preset logo', 'success'); }
+        else pickPresetLogo(latest || matchedPreset, (url) => { logoValue = url || ''; logoWidget.setValue(logoValue); });
+      };
       // Live country flag preview
       const ctryInput = $('#t-ctry', root);
       const flagEl = $('#t-ctry-flag', root);
@@ -5180,7 +5377,33 @@ function buildQuickEntryHTML(workingArr, kind, drivers, season) {
         `}
       </div>`;
   }
+  // Status section — DNF / DSQ / DNS toggles for drivers without a finishing
+  // position. Quick entry only places finishers; this lets you mark retirements
+  // without switching to detailed mode. (Qualifying has no DNF, so skip it.)
+  let statusSection = '';
+  if (kind !== 'quali') {
+    const placedIds = new Set([...posDriver.values()]);
+    const unplaced = workingArr.filter(w => !placedIds.has(w.driverId));
+    if (unplaced.length) {
+      const statusRows = unplaced.map(w => {
+        const drv = drivers.find(d => d.id === w.driverId);
+        if (!drv) return '';
+        const team = season.teams.find(t => t.id === drv.teamId);
+        const color = team?.color || '#6b7280';
+        const mk = (s, lbl) => `<button class="qe-status-btn ${s} ${w[s] ? 'on' : ''}" data-qe-status="${s}" data-kind="${kind}" data-driver-id="${esc(w.driverId)}">${lbl}</button>`;
+        return `<div class="qe-status-row" style="--team-color:${color}">
+          <span class="qe-status-name"><span class="qe-status-num" style="color:${color}">#${drv.number || '–'}</span> ${esc(drv.name)}</span>
+          <div class="qe-status-btns">${mk('dnf', 'DNF')}${mk('dsq', 'DSQ')}${mk('dns', 'DNS')}</div>
+        </div>`;
+      }).join('');
+      statusSection = `<div class="qe-status">
+        <div class="qe-status-head">Not classified — tap to mark DNF / DSQ / DNS</div>
+        ${statusRows}
+      </div>`;
+    }
+  }
   return `<div class="quick-entry" data-kind="${kind}">${rows}</div>
+    ${statusSection}
     <div class="quick-entry-help">
       <span><b>3-letter code</b> (VER, HAM) · <b>last name</b> (lec…) · <b>race number</b> (1, 44) — auto-advances on unique match</span>
     </div>`;
@@ -5678,6 +5901,22 @@ function renderRaceEditor(container, race) {
           const inp = $(`.quick-entry[data-kind="${kind}"] .qe-input[data-pos="${pos}"]`, container);
           if (inp) inp.focus();
         }, 0);
+      };
+    });
+
+    // DNF / DSQ / DNS toggles for unplaced drivers (mutually exclusive; marking
+    // one clears the others and any finishing position).
+    $$(`[data-qe-status][data-kind="${kind}"]`, container).forEach(btn => {
+      btn.onclick = () => {
+        const did = btn.dataset.driverId;
+        const status = btn.dataset.qeStatus;
+        const target = workingArr.find(w => w.driverId === did);
+        if (!target) return;
+        const wasOn = target[status];
+        target.dnf = false; target.dsq = false; target.dns = false;
+        target.position = '';
+        target[status] = !wasOn;
+        refreshPanel(kind);
       };
     });
   }
@@ -7034,12 +7273,16 @@ function openHeadToHead() {
 /* ---------- view: RECORDS ---------- */
 const RECORD_CATEGORIES = [
   { id: 'driver_wins',         label: 'Most Race Wins',         scope: 'drivers', key: 'wins',          unit: 'WINS' },
+  { id: 'driver_podiums',      label: 'Most Podiums',           scope: 'drivers', key: 'podiums',       unit: 'PODIUMS' },
   { id: 'driver_champs',       label: "Drivers' Championships", scope: 'drivers', key: 'championships', unit: 'TITLES' },
   { id: 'team_wins',           label: 'Most Race Wins · Teams', scope: 'teams',   key: 'wins',          unit: 'WINS' },
   { id: 'team_champs',         label: "Constructors' Titles",   scope: 'teams',   key: 'championships', unit: 'TITLES' },
   { id: 'driver_poles',        label: 'Most Pole Positions',    scope: 'drivers', key: 'poles',         unit: 'POLES' },
-  { id: 'driver_season_wins',  label: 'Most Wins in a Season',  scope: 'drivers', key: 'bestSeasonWins',  unit: 'WINS',  perSeason: true },
-  { id: 'driver_season_poles', label: 'Most Poles in a Season', scope: 'drivers', key: 'bestSeasonPoles', unit: 'POLES', perSeason: true },
+  { id: 'driver_track_wins',   label: 'Most Wins at One Track', scope: 'drivers', key: 'mostWinsAtOneTrack', unit: 'WINS', atPrefix: '🏁 at' },
+  { id: 'driver_win_streak',   label: 'Most Wins in a Row',     scope: 'drivers', key: 'winStreak',     unit: 'WINS' },
+  { id: 'driver_season_wins',  label: 'Most Wins in a Season',  scope: 'drivers', key: 'bestSeasonWins',  unit: 'WINS',  atPrefix: '📅 set in' },
+  { id: 'driver_season_poles', label: 'Most Poles in a Season', scope: 'drivers', key: 'bestSeasonPoles', unit: 'POLES', atPrefix: '📅 set in' },
+  { id: 'driver_season_points',label: 'Most Points in a Season',scope: 'drivers', key: 'bestSeasonPoints',unit: 'PTS',   atPrefix: '📅 set in' },
   { id: 'driver_fl',           label: 'Most Fastest Laps',      scope: 'drivers', key: 'fastestLaps',   unit: 'FLs' },
   { id: 'driver_dnfs',         label: 'Most DNFs',              scope: 'drivers', key: 'dnfs',          unit: 'DNFs' },
   { id: 'driver_points',       label: 'Most Career Points',     scope: 'drivers', key: 'points',        unit: 'PTS' },
@@ -7316,7 +7559,7 @@ function openRecordDetail(catId, recs) {
             ${portraitHTML}
             <div>
               <div class="record-detail-name">${esc(r.name)}${cat.scope === 'drivers' ? '<span class="record-detail-cta">VIEW CAREER →</span>' : ''}</div>
-              <div class="record-detail-meta">${cat.perSeason && r[cat.key + 'At'] ? `📅 set in <b style="color:var(--text)">${esc(r[cat.key + 'At'])}</b>` : esc(meta || '—')}</div>
+              <div class="record-detail-meta">${cat.atPrefix && r[cat.key + 'At'] ? `${cat.atPrefix} <b style="color:var(--text)">${esc(r[cat.key + 'At'])}</b>` : esc(meta || '—')}</div>
             </div>
             <div class="record-detail-value">${r[cat.key]}</div>
           </div>`;
@@ -8437,7 +8680,7 @@ function buildSeasonFromImport(parsed, opts) {
         short: preset.short || canonical?.short || d.team.slice(0,3).toUpperCase(),
         color: preset.color || canonical?.color || '#666666',
         country: preset.country || '',
-        logo: preset.logo || '',
+        logo: pickPresetLogoForSeason(preset, { year: opts.year, name: opts.name }),
       };
       teamByKey[key] = teamObj;
       season.teams.push(teamObj);
@@ -9784,7 +10027,8 @@ function getEffectiveDriverPresets() {
     return ov ? { ...p, ...ov, presetKey: k, isBuiltin: true } : { ...p, presetKey: k, isBuiltin: true };
   });
   const customs = (state.customDriverPresets || []).map(p => ({ ...p, presetKey: presetKey(p), isCustom: true }));
-  const result = dedupePresetsByName([...customs, ...merged]);
+  const shared = (state._sharedPresets?.drivers || []).map(p => ({ ...p, presetKey: presetKey(p), isShared: true }));
+  const result = dedupePresetsByName([...customs, ...shared, ...merged]);
   // Fallback: if a preset has no photo, borrow it from a signed season driver of
   // the same name — so re-importing code that lacks the photo doesn't blank the
   // preset library while the image still exists on the seasons.
@@ -9808,7 +10052,8 @@ function getEffectiveTeamPresets() {
     return ov ? { ...p, ...ov, presetKey: k, isBuiltin: true } : { ...p, presetKey: k, isBuiltin: true };
   });
   const customs = (state.customTeamPresets || []).map(p => ({ ...p, presetKey: presetKey(p), isCustom: true }));
-  return dedupePresetsByName([...customs, ...merged]);
+  const shared = (state._sharedPresets?.teams || []).map(p => ({ ...p, presetKey: presetKey(p), isShared: true }));
+  return dedupePresetsByName([...customs, ...shared, ...merged]);
 }
 
 function getEffectiveTrackPresets() {
@@ -9820,7 +10065,8 @@ function getEffectiveTrackPresets() {
     return ov ? { ...p, ...ov, presetKey: k, isBuiltin: true } : { ...p, presetKey: k, isBuiltin: true };
   });
   const customs = (state.customTrackPresets || []).map(p => ({ ...p, presetKey: presetKey(p), isCustom: true }));
-  return dedupePresetsByName([...customs, ...merged]);
+  const shared = (state._sharedPresets?.tracks || []).map(p => ({ ...p, presetKey: presetKey(p), isShared: true }));
+  return dedupePresetsByName([...customs, ...shared, ...merged]);
 }
 
 /* Save an edit to a preset. For built-ins, write to overrides. For customs, replace in array. */
@@ -9882,7 +10128,8 @@ function backfillTeamLogosFromPresets() {
         (season.teams || []).forEach(t => {
           if (t.logo) return;
           const preset = matchTeamPresetForName(t.name);
-          if (preset && preset.logo) t.logo = preset.logo;
+          const lg = preset ? defaultPresetLogo(preset) : '';
+          if (lg) t.logo = lg;
         });
       });
     });
@@ -10049,9 +10296,9 @@ function openPresetEditor(kind, existing, onSaved) {
       <div class="field"><label>Hex</label><input type="text" id="pe-color-hex" value="${esc(data.color || '#e10600')}" placeholder="#e10600"></div>
     </div>
     <div class="field">
-      <label>Team Logo (optional)</label>
-      <div id="pe-logo-mount"></div>
-      <span class="field-help">Colour and logo are saved with the preset.</span>
+      <label>Team Logos <span style="font-weight:400;color:var(--text-muted);font-family:var(--f-body);text-transform:none;letter-spacing:0">— add as many as you like (era liveries, etc.)</span></label>
+      <div id="pe-logo-mount" class="is-logo-gallery"></div>
+      <span class="field-help">Each team signed from this preset can pick which logo to use. Mark one as <b>default</b> for auto-import (matched by season year/name from the label).</span>
     </div>`;
 
   const trackFields = `
@@ -10118,7 +10365,15 @@ function openPresetEditor(kind, existing, onSaved) {
           data.photo = (next.find(p => p.isDefault) || next[0])?.url || '';
         });
       } else if (isTeam) {
-        mountUpload('pe-logo-mount', data.logo || '', (v) => { data.logo = v; });
+        // Multi-logo gallery — accepts the preset's `logos` array, normalising
+        // legacy single-logo presets so existing saves Just Work.
+        data.logos = presetLogosList(data);
+        mountPhotoGallery($('#pe-logo-mount', root), data.logos, (next) => {
+          data.logos = next;
+          // Keep `logo` in sync with the default for back-compat (standings, cloud,
+          // backfill, etc. all still read `logo`).
+          data.logo = (next.find(p => p.isDefault) || next[0])?.url || '';
+        });
         const cp = $('#pe-color', root);
         const hex = $('#pe-color-hex', root);
         cp.oninput = () => { hex.value = cp.value; data.color = cp.value; };
@@ -10186,7 +10441,7 @@ function openPresetEditor(kind, existing, onSaved) {
         } else if (isTeam) {
           const short = $('#pe-short', root).value.trim().toUpperCase() || name.slice(0, 3).toUpperCase();
           const color = $('#pe-color-hex', root).value.trim() || '#e10600';
-          const updated = { name, short, color, country, era, eras, logo: data.logo || '' };
+          const updated = { name, short, color, country, era, eras, logo: data.logo || '', logos: data.logos || [] };
           if (isEdit) savePresetEdit('team', originalKey, updated, existing);
           else addCustomPreset('team', updated);
         } else { // track
@@ -10415,7 +10670,7 @@ function openTeamPresetSearch() {
             const p = items[Number(row.dataset.idx)];
             // Logo and color copied onto the new team; presetKey links it back to
             // the preset so later image edits flow through automatically.
-            addTeam({ name: p.name, short: p.short, color: p.color, country: p.country, logo: p.logo || '', presetKey: p.presetKey });
+            addTeam({ name: p.name, short: p.short, color: p.color, country: p.country, logo: defaultPresetLogo(p), presetKey: p.presetKey });
             toast(`${p.name} added`, 'success');
             renderList();
             renderMain();
