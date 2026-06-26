@@ -9906,6 +9906,28 @@ async function cloudDeleteRace(raceId) {
   }
 }
 
+// Delete specific result/sprint rows (used by a results-only reimport to remove
+// entries the new import dropped — upsert-only sync can't remove them). `pairs` is
+// an array of { raceId, driverId }. Grouped per race so it's one DELETE per race.
+async function cloudDeleteResultRows(table, pairs) {
+  if (!CLOUD.enabled || !currentUser || !pairs || !pairs.length) return;
+  const byRace = {};
+  for (const { raceId, driverId } of pairs) {
+    byRace[raceId] = byRace[raceId] || [];
+    byRace[raceId].push(driverId);
+  }
+  pendingCloudWrites++;
+  try {
+    for (const raceId of Object.keys(byRace)) {
+      const { error } = await CLOUD.client.from(table)
+        .delete().eq('race_id', raceId).in('driver_id', byRace[raceId]);
+      if (error) { console.warn('[P1] cloudDeleteResultRows failed', error); break; }
+    }
+  } finally {
+    setTimeout(() => { pendingCloudWrites = Math.max(0, pendingCloudWrites - 1); }, 700);
+  }
+}
+
 // Debounced sync — called from saveState; coalesces a flurry of edits into one push
 // ---------- cloud sync status badge ----------
 // Shows the user whether their changes are still uploading. While it says
@@ -17480,9 +17502,9 @@ function openReimportSeasonModal() {
     title: `<span class="accent">Reimport</span> Season`,
     body: `
       <div style="font-family:var(--f-mono);font-size:11px;line-height:1.65;color:var(--text-muted);letter-spacing:0.02em;margin-bottom:16px">
-        Rebuilds <strong style="color:var(--text)">${esc(season.name)}</strong> from a fresh import. This
-        <strong style="color:var(--red)">replaces its drivers, teams, races and results</strong> — but the season
-        keeps its name and its place in your list. Leave the import's name field blank to keep this name. Pick a source:
+        Refreshes the results of <strong style="color:var(--text)">${esc(season.name)}</strong> from a new import.
+        Its name, year, drivers, teams and calendar stay exactly as they are — <strong style="color:var(--text)">only the
+        race results, poles and fastest laps change</strong>. Imported drivers are matched to this season by name. Pick a source:
       </div>
       ${btn('ri-import-real', '⇡ IMPORT REAL SEASON FROM F1.COM PASTE', "Paste the full standings table and we'll rebuild the season.")}
       ${btn('ri-import-shot', '📷 IMPORT FROM SCREENSHOT (MATRIX MODE)', 'Upload a season-matrix screenshot and fill in the cell grid.')}
@@ -18018,8 +18040,110 @@ function parseImportSeasonPasteTSV(text) {
 }
 
 // Build a season from a parsed preview. Returns the new season's id.
+// Reimport in RESULTS-ONLY mode: refresh an existing season's race results from a
+// freshly parsed import, WITHOUT changing the season's name, year, points system,
+// drivers, teams or calendar. Imported drivers are matched to the season's existing
+// drivers by name; imported race columns map onto existing rounds by order. Only the
+// rounds the import actually covers are touched.
+function applyImportResultsToSeason(parsed, season) {
+  const norm = s => (s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+
+  // Match each imported driver to an EXISTING season driver (by name, then via the
+  // preset canonical name so "Verstappen" ↔ "Max Verstappen" still line up).
+  const driverIdByImportIdx = parsed.drivers.map(d => {
+    const target = norm(d.name);
+    let dr = season.drivers.find(x => norm(x.name) === target);
+    if (!dr) {
+      const canon = matchDriverPresetForName(d.name)?.name;
+      if (canon) {
+        const ct = norm(canon);
+        dr = season.drivers.find(x =>
+          norm(x.name) === ct || norm(matchDriverPresetForName(x.name)?.name || '') === ct);
+      }
+    }
+    return dr ? dr.id : null;
+  });
+
+  // Safety net: if NOTHING matched, the import is for a different grid — bail out
+  // rather than wiping every result.
+  if (!driverIdByImportIdx.some(Boolean)) {
+    toast('Reimport cancelled — none of the imported drivers matched this season', 'warn');
+    return season.id;
+  }
+
+  // Sprint POINTS → finishing position, from THIS season's points system.
+  const sprintPS = POINTS_SYSTEMS.find(p => p.id === season.pointsSystemId) || POINTS_SYSTEMS[0];
+  const SPRINT_POINT_TO_POS = {};
+  (sprintPS.sprintPoints || []).forEach((pts, i) => { if (SPRINT_POINT_TO_POS[pts] == null) SPRINT_POINT_TO_POS[pts] = i + 1; });
+
+  const removedResults = [];  // cloud {raceId, driverId} rows the import dropped
+  const removedSprints = [];
+  const n = Math.min(parsed.headers.length, season.races.length);
+  for (let ri = 0; ri < n; ri++) {
+    const race = season.races[ri];
+    const oldResultIds = new Set((race.results || []).map(r => r.driverId));
+    const oldSprintIds = new Set((race.sprintResults || []).map(r => r.driverId));
+    race.results = [];
+    race.sprintResults = [];
+    let anyResults = false, poleDrvId = null, flDrvId = null;
+    parsed.drivers.forEach((d, di) => {
+      const drvId = driverIdByImportIdx[di];
+      const cell = d.cells[ri];
+      if (!drvId || !cell) return;
+      anyResults = true;
+      race.results.push({
+        driverId: drvId, position: cell.position || null,
+        dnf: !!cell.dnf, dsq: !!cell.dsq, dns: !!cell.dns,
+      });
+      if (cell.pole && !poleDrvId) poleDrvId = drvId;
+      if (cell.fastestLap && !flDrvId) flDrvId = drvId;
+      if (cell.sprintPoints > 0) {
+        race.sprintResults.push({
+          driverId: drvId, position: SPRINT_POINT_TO_POS[cell.sprintPoints] || null,
+          dnf: false, dsq: false, dns: false,
+        });
+      }
+    });
+    race.completed = anyResults;
+    race.poleDriverId = poleDrvId;
+    race.fastestLapDriverId = flDrvId;
+    // Per-race points multiplier from the import (e.g. BEL*0.5, ABU*2)
+    if (Array.isArray(parsed.raceMultipliers)) {
+      const m = Number(parsed.raceMultipliers[ri]);
+      if (m === 0.5 || m === 2) setRacePointsMultiplier(race.id, m);
+    }
+    // Note which cloud result rows are no longer present so they can be removed.
+    const newResultIds = new Set(race.results.map(r => r.driverId));
+    const newSprintIds = new Set(race.sprintResults.map(r => r.driverId));
+    oldResultIds.forEach(id => { if (!newResultIds.has(id)) removedResults.push({ raceId: race.id, driverId: id }); });
+    oldSprintIds.forEach(id => { if (!newSprintIds.has(id)) removedSprints.push({ raceId: race.id, driverId: id }); });
+  }
+
+  state.activeSeasonId = season.id;
+  state.view = 'dashboard';
+  saveState();
+
+  // Changed results re-push automatically (their per-race hash changes). Rows the
+  // import dropped must be deleted explicitly or they'd resurrect on the next pull.
+  cloudDeleteResultRows('race_results', removedResults);
+  cloudDeleteResultRows('sprint_results', removedSprints);
+
+  toast(`Reimported results for ${season.name}`, 'success');
+  return season.id;
+}
+
 function buildSeasonFromImport(parsed, opts) {
   const save = activeSave(); if (!save) throw new Error('No active save');
+
+  // REIMPORT (results-only): refresh an existing season's results from this import
+  // without disturbing its name, year, points, drivers, teams or calendar.
+  if (reimportTargetSeasonId) {
+    const target = save.seasons[reimportTargetSeasonId];
+    reimportTargetSeasonId = null;
+    if (target) return applyImportResultsToSeason(parsed, target);
+    // stale target (season was deleted) → fall through to a normal new-season build
+  }
+
   const seasonId = uid();
   const season = {
     id: seasonId,
@@ -18259,20 +18383,6 @@ function buildSeasonFromImport(parsed, opts) {
   save.seasons[seasonId] = season;
   state.activeSeasonId = seasonId;
   state.view = 'dashboard';
-
-  // REIMPORT: this import was launched to refresh an existing season. Carry over
-  // its name (unless a new one was typed) and its place in the list (createdAt),
-  // then remove the old copy. cloudDeleteSeason cascades to the old season's
-  // teams/drivers/races/results so they don't resurrect on the next cloud pull.
-  if (reimportTargetSeasonId && reimportTargetSeasonId !== seasonId && save.seasons[reimportTargetSeasonId]) {
-    const old = save.seasons[reimportTargetSeasonId];
-    season.createdAt = old.createdAt || season.createdAt;
-    if (!(opts.name || '').trim()) season.name = old.name;
-    delete save.seasons[reimportTargetSeasonId];
-    cloudDeleteSeason(reimportTargetSeasonId);
-  }
-  reimportTargetSeasonId = null;
-
   saveState();
   return seasonId;
 }
