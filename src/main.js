@@ -9044,9 +9044,13 @@ function buildSeasonFromImport(parsed, opts) {
 function openImportRealSeasonModal() {
   if (!state.activeSaveId) return toast('Open a save first', 'warn');
   let parsed = null;
+  const reimport = !!(reimportTargetSeasonId && activeSave()?.seasons?.[reimportTargetSeasonId]);
+  const reimportName = reimport ? activeSave().seasons[reimportTargetSeasonId].name : '';
 
   modal({
-    title: `<span class="accent">Import</span> F1 Season`,
+    title: reimport
+      ? `<span class="accent">Reimport Results</span> — ${esc(reimportName)}`
+      : `<span class="accent">Import</span> F1 Season`,
     size: 'wide',
     body: `
       <div class="field-help" style="margin-bottom:14px">
@@ -9078,6 +9082,8 @@ Red Bull
           • 👑 emoji or just a number indicates the championship position.
         </div>
       </details>
+      ${reimport ? `<div class="field-help" style="margin-bottom:14px;padding:10px 12px;background:var(--bg-elev);border-radius:6px;border:1px solid var(--border-dim)">Refreshing results for <b style="color:var(--text)">${esc(reimportName)}</b> — its name, year, points, drivers, teams and calendar stay exactly as they are. Just paste the updated standings; drivers are matched by name.</div>` : ''}
+      <div ${reimport ? 'style="display:none"' : ''}>
       <div class="field-row">
         <div class="field"><label>Year</label><input type="number" id="imp-year" value="${new Date().getFullYear()}"></div>
         <div class="field"><label>Season Name</label><input type="text" id="imp-name" placeholder="e.g. 2023 F1 World Championship"></div>
@@ -9088,10 +9094,12 @@ Red Bull
           ${POINTS_SYSTEMS.map(p => `<option value="${p.id}" ${p.id === DEFAULT_POINTS_SYSTEM_ID ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
         </select>
       </div>
+      </div>
       <div class="field">
         <label>Paste the driver standings here</label>
         <textarea id="imp-text" rows="12" placeholder="Paste the F1.com standings table here..." style="font-family:var(--f-mono);font-size:11px;width:100%;min-height:200px"></textarea>
       </div>
+      <div ${reimport ? 'style="display:none"' : ''}>
       <div class="field">
         <label>Match races to one of your saved calendar presets <span style="font-weight:400;color:var(--text-muted);font-family:var(--f-body)">(optional)</span></label>
         <div style="display:flex;gap:8px;align-items:flex-end">
@@ -9108,8 +9116,9 @@ Red Bull
         <input type="text" id="imp-races" placeholder="e.g. BHR SAU AUS AZE MIA MON ESP CAN AUT GBR HUN BEL NED ITA SIN JPN QAT USA MXC SAP LVG ABU" style="font-family:var(--f-mono);font-size:11px">
         <span class="field-help">Each code is matched in this order: (1) selected calendar preset's race country codes, (2) your <b>track preset library</b> (built-in circuits + your customs, with alias handling for SAU↔KSA, MON↔MCO, SIN↔SGP, etc.), (3) F1 built-in map, (4) generic "Grand Prix" fallback. A match pulls in the track's name, circuit, sprint flag, and uploaded flag image.</span>
       </div>
+      </div>
       <div id="imp-preview"></div>`,
-    footer: `<button class="btn btn-ghost" data-act="cancel">Cancel</button><button class="btn btn-ghost" data-act="parse">⚙ PARSE</button><button class="btn btn-primary" data-act="ok" disabled>Build Season</button>`,
+    footer: `<button class="btn btn-ghost" data-act="cancel">Cancel</button><button class="btn btn-ghost" data-act="parse">⚙ PARSE</button><button class="btn btn-primary" data-act="ok" disabled>${reimport ? 'Refresh Results' : 'Build Season'}</button>`,
     onMount: (root, close) => {
       const ta = $('#imp-text', root);
       const racesInp = $('#imp-races', root);
@@ -9320,10 +9329,12 @@ Red Bull
           buildSeasonFromImport(parsed, { year, name, pointsSystemId, raceCodes, calendarPresetId });
           close();
           renderAll();
-          await cloudPushNowBlocking('Uploading the imported season — this can take a few seconds.');
-          toast(`Imported ${parsed.drivers.length} driver${parsed.drivers.length === 1 ? '' : 's'} across ${parsed.headers.length} race${parsed.headers.length === 1 ? '' : 's'}`, 'success');
+          await cloudPushNowBlocking(reimport ? 'Uploading the refreshed results — this can take a few seconds.' : 'Uploading the imported season — this can take a few seconds.');
+          toast(reimport
+            ? `Reimported results · ${parsed.drivers.length} driver${parsed.drivers.length === 1 ? '' : 's'} · ${parsed.headers.length} race${parsed.headers.length === 1 ? '' : 's'}`
+            : `Imported ${parsed.drivers.length} driver${parsed.drivers.length === 1 ? '' : 's'} across ${parsed.headers.length} race${parsed.headers.length === 1 ? '' : 's'}`, 'success');
         } catch (e) {
-          toast('Import failed: ' + e.message, 'error');
+          toast((reimport ? 'Reimport failed: ' : 'Import failed: ') + e.message, 'error');
         }
       };
     }
@@ -9449,6 +9460,8 @@ async function ocrScreenshotMatrix(imageDataUrl, expectedRaceCount, onProgress) 
    ====================================================== */
 function openImportScreenshotModal() {
   if (!state.activeSaveId) return toast('Open a save first', 'warn');
+  const reimport = !!(reimportTargetSeasonId && activeSave()?.seasons?.[reimportTargetSeasonId]);
+  const reimportName = reimport ? activeSave().seasons[reimportTargetSeasonId].name : '';
 
   let imageDataUrl = '';
   let raceCodes = [];
@@ -9465,13 +9478,17 @@ function openImportScreenshotModal() {
   };
 
   modal({
-    title: `<span class="accent">Import</span> from Screenshot`,
+    title: reimport
+      ? `<span class="accent">Reimport Results</span> — ${esc(reimportName)}`
+      : `<span class="accent">Import</span> from Screenshot`,
     size: 'wide',
     body: `
       <div class="field-help" style="margin-bottom:14px">
         Upload a screenshot of any season matrix for visual reference, then fill in the grid below. Each cell uses the same shorthand as the F1 text paste — type <code>1</code>, <code>1P</code>, <code>26</code> (P2 + 6 sprint pts), <code>1P8</code> (P1 + pole + 8 sprint), <code>DNF</code>, <code>DSQ</code>, <code>DNS</code>.
       </div>
 
+      ${reimport ? `<div class="field-help" style="margin-bottom:14px;padding:10px 12px;background:var(--bg-elev);border-radius:6px;border:1px solid var(--border-dim)">Refreshing results for <b style="color:var(--text)">${esc(reimportName)}</b> — its name, year, points, drivers, teams and calendar stay as they are. Fill the grid with the updated results; drivers are matched by name.</div>` : ''}
+      <div ${reimport ? 'style="display:none"' : ''}>
       <div class="field-row">
         <div class="field"><label>Year</label><input type="number" id="imp2-year" value="${new Date().getFullYear()}"></div>
         <div class="field"><label>Season Name</label><input type="text" id="imp2-name" placeholder="e.g. 2024 F1 World Championship"></div>
@@ -9481,6 +9498,7 @@ function openImportScreenshotModal() {
         <select id="imp2-points">
           ${POINTS_SYSTEMS.map(p => `<option value="${p.id}" ${p.id === DEFAULT_POINTS_SYSTEM_ID ? 'selected' : ''}>${esc(p.name)}</option>`).join('')}
         </select>
+      </div>
       </div>
 
       <div class="field">
@@ -9510,7 +9528,7 @@ function openImportScreenshotModal() {
       </div>
 
       <div id="imp2-preview-status"></div>`,
-    footer: `<button class="btn btn-ghost" data-act="cancel">Cancel</button><button class="btn btn-primary" data-act="ok">Build Season</button>`,
+    footer: `<button class="btn btn-ghost" data-act="cancel">Cancel</button><button class="btn btn-primary" data-act="ok">${reimport ? 'Refresh Results' : 'Build Season'}</button>`,
     onMount: (root, close) => {
       const shotMount = $('#imp2-shot-mount', root);
       const renderShot = () => {
@@ -9754,10 +9772,12 @@ function openImportScreenshotModal() {
           buildSeasonFromImport(parsed, opts);
           close();
           renderAll();
-          await cloudPushNowBlocking('Uploading the imported season — this can take a few seconds.');
-          toast(`Built season · ${parsedDrivers.length} drivers · ${raceCodes.length} races`, 'success');
+          await cloudPushNowBlocking(reimport ? 'Uploading the refreshed results — this can take a few seconds.' : 'Uploading the imported season — this can take a few seconds.');
+          toast(reimport
+            ? `Reimported results · ${parsedDrivers.length} drivers · ${raceCodes.length} races`
+            : `Built season · ${parsedDrivers.length} drivers · ${raceCodes.length} races`, 'success');
         } catch (e) {
-          toast('Build failed: ' + e.message, 'error');
+          toast((reimport ? 'Reimport failed: ' : 'Build failed: ') + e.message, 'error');
         }
       };
     }
@@ -9907,9 +9927,16 @@ function parseSeasonCSV(csvText) {
 function openImportCSVModal() {
   if (!state.activeSaveId) return toast('Open a save first', 'warn');
   let parsedCSV = null;
+  // Reimport mode: launched from a season's REIMPORT button. The season's name,
+  // year, points, drivers, teams and calendar are kept — only results refresh — so
+  // hide all of those fields and just take the new CSV.
+  const reimport = !!(reimportTargetSeasonId && activeSave()?.seasons?.[reimportTargetSeasonId]);
+  const reimportName = reimport ? activeSave().seasons[reimportTargetSeasonId].name : '';
 
   modal({
-    title: `<span class="accent">CSV Import</span> — Full Season`,
+    title: reimport
+      ? `<span class="accent">Reimport Results</span> — ${esc(reimportName)}`
+      : `<span class="accent">CSV Import</span> — Full Season`,
     size: 'wide',
     body: `
       <div class="field-help" style="margin-bottom:14px">
@@ -9939,6 +9966,10 @@ function openImportCSVModal() {
         </div>
       </details>
 
+      ${reimport ? `
+      <div class="field-help" style="margin-bottom:14px;padding:10px 12px;background:var(--bg-elev);border-radius:6px;border:1px solid var(--border-dim)">
+        Refreshing results for <b style="color:var(--text)">${esc(reimportName)}</b> — its name, year, points system, drivers, teams and calendar stay exactly as they are. Just drop in the updated CSV; drivers are matched by name.
+      </div>` : `
       <div class="field-row">
         <div class="field"><label>Year</label><input type="number" id="csv-year" value="${new Date().getFullYear()}"></div>
         <div class="field"><label>Season Name</label><input type="text" id="csv-name" placeholder="e.g. 2024 F1 World Championship"></div>
@@ -9955,7 +9986,7 @@ function openImportCSVModal() {
           <option value="">— Use the CSV's race codes verbatim —</option>
           ${(state.calendarPresets || []).map(p => `<option value="${esc(p.id)}">${esc(p.name)} · ${p.races.length} round${p.races.length === 1 ? '' : 's'}</option>`).join('')}
         </select>
-      </div>
+      </div>`}
 
       <div class="field">
         <label>CSV file</label>
@@ -9969,7 +10000,7 @@ function openImportCSVModal() {
       </div>
 
       <div id="csv-preview"></div>`,
-    footer: `<button class="btn btn-ghost" data-act="cancel">Cancel</button><button class="btn btn-ghost" data-act="parse">⚙ VALIDATE</button><button class="btn btn-primary" data-act="ok" disabled>Build Season</button>`,
+    footer: `<button class="btn btn-ghost" data-act="cancel">Cancel</button><button class="btn btn-ghost" data-act="parse">⚙ VALIDATE</button><button class="btn btn-primary" data-act="ok" disabled>${reimport ? 'Refresh Results' : 'Build Season'}</button>`,
     onMount: (root, close) => {
       const ta = $('#csv-text', root);
       const preview = $('#csv-preview', root);
@@ -10088,19 +10119,21 @@ function openImportCSVModal() {
       okBtn.onclick = async () => {
         if (!parsedCSV) return validate();
         try {
-          buildSeasonFromImport(parsedCSV, {
+          buildSeasonFromImport(parsedCSV, reimport ? { raceCodes: parsedCSV.headers } : {
             year: $('#csv-year', root).value,
             name: $('#csv-name', root).value,
             pointsSystemId: $('#csv-points', root).value,
             raceCodes: parsedCSV.headers,
-            calendarPresetId: calSel.value || null,
+            calendarPresetId: calSel ? (calSel.value || null) : null,
           });
           close();
           renderAll();
-          await cloudPushNowBlocking('Uploading the imported season — this can take a few seconds.');
-          toast(`Built season · ${parsedCSV.drivers.length} drivers · ${parsedCSV.headers.length} races`, 'success');
+          await cloudPushNowBlocking(reimport ? 'Uploading the refreshed results — this can take a few seconds.' : 'Uploading the imported season — this can take a few seconds.');
+          toast(reimport
+            ? `Reimported results · ${parsedCSV.drivers.length} drivers · ${parsedCSV.headers.length} races`
+            : `Built season · ${parsedCSV.drivers.length} drivers · ${parsedCSV.headers.length} races`, 'success');
         } catch (e) {
-          toast('Build failed: ' + e.message, 'error');
+          toast((reimport ? 'Reimport failed: ' : 'Build failed: ') + e.message, 'error');
         }
       };
     }
