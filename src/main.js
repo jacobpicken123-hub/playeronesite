@@ -101,29 +101,38 @@ function saveResultsCount(save) {
    Cloud rows live in normalized tables; we re-assemble them into the same shape your
    render code already expects (state.saves[id] = { id, name, seasons: { [seasonId]: {...} } }).
 */
-async function cloudPullAllSaves(preferLocalIfNewer = false, cloudAuthoritative = false) {
+// Fetch ALL rows from a table, paging past Supabase's 1000-row-per-request cap.
+// CRITICAL for correctness AND cost: an un-paged select('*') silently returns at
+// most 1000 rows. Once a user accumulates >1000 race_results, the pull is truncated,
+// so the cloud copy looks permanently "smaller" than the full local copy. The merge
+// then re-pushes the ENTIRE dataset on every single sync, and that feedback loop
+// burns millions of realtime messages and tens of GB of egress. Paging fixes it at
+// the source: the cloud read is complete, the counts match, and the loop never arms.
+async function cloudFetchAllRows(table, columns = '*') {
+  const PAGE = 1000;
+  const all = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await CLOUD.client.from(table).select(columns).range(from, from + PAGE - 1);
+    if (error) throw error;
+    if (data && data.length) all.push(...data);
+    if (!data || data.length < PAGE) break;
+  }
+  return all;
+}
+
+async function cloudPullAllSaves(preferLocalIfNewer = false) {
   if (!CLOUD.enabled || !currentUser) return;
 
-  // 1. Saves the user can access (via RLS — only owned/shared)
-  const { data: saves, error: e1 } = await CLOUD.client
-    .from('saves').select('*');
-  if (e1) throw e1;
-
-  const { data: seasons, error: e2 } = await CLOUD.client.from('seasons').select('*');
-  if (e2) throw e2;
-  const { data: teams, error: e3 } = await CLOUD.client.from('teams').select('*');
-  if (e3) throw e3;
-  const { data: drivers, error: e4 } = await CLOUD.client.from('drivers').select('*');
-  if (e4) throw e4;
-  const { data: races, error: e5 } = await CLOUD.client.from('races').select('*');
-  if (e5) throw e5;
-  const { data: rresults, error: e6 } = await CLOUD.client.from('race_results').select('*');
-  if (e6) throw e6;
-  const { data: sresults, error: e7 } = await CLOUD.client.from('sprint_results').select('*');
-  if (e7) throw e7;
-  const { data: members, error: e8 } = await CLOUD.client
-    .from('save_members').select('save_id, user_id, role');
-  if (e8) throw e8;
+  // Read every table FULLY (paged — an un-paged select caps at 1000 rows and would
+  // truncate race_results, which silently re-arms the re-push storm; see above).
+  const saves    = await cloudFetchAllRows('saves');
+  const seasons  = await cloudFetchAllRows('seasons');
+  const teams    = await cloudFetchAllRows('teams');
+  const drivers  = await cloudFetchAllRows('drivers');
+  const races    = await cloudFetchAllRows('races');
+  const rresults = await cloudFetchAllRows('race_results');
+  const sresults = await cloudFetchAllRows('sprint_results');
+  const members  = await cloudFetchAllRows('save_members', 'save_id, user_id, role');
 
   // Build the in-memory tree
   const newSaves = {};
@@ -261,39 +270,32 @@ async function cloudPullAllSaves(preferLocalIfNewer = false, cloudAuthoritative 
     const cloud = newSaves[localId];
     if (!cloud) { newSaves[localId] = local; needsRepush = true; continue; } // local-only save → keep & push up
 
-    // CLOUD-AUTHORITATIVE — used on initial load and on sign-in. Supabase is the
-    // single source of truth: for any save that ALSO exists in the cloud, the cloud
-    // copy wins outright. This is what makes a fully-shared save consistent across
-    // devices/people and stops a stale or corrupted localStorage copy from
-    // resurrecting itself or overwriting the real shared data. (Saves that exist
-    // ONLY locally are still kept + pushed up by the line above, so genuinely
-    // unsynced local work is never lost — only already-synced saves defer to cloud.)
-    if (cloudAuthoritative) {
-      // Cloud wins — UNLESS the cloud copy came back EMPTY while local has real
-      // data. That's almost always a partial/blocked read (RLS) or a transient
-      // glitch, not a genuine empty save, so we keep local rather than wipe it.
-      if (saveResultsCount(cloud) === 0 && saveResultsCount(local) > 0) {
-        newSaves[localId] = local; needsRepush = true;
-      }
-      continue;
-    }
-
-    // REALTIME path (mid-session merges only). Here the HARD RULE applies: a cloud
-    // copy with FEWER race results than local must NEVER overwrite local. Right
-    // after an import the upload is still in flight (or some rows were rejected), so
-    // a pull that lands in that window sees a cloud copy missing results — we keep
-    // local and re-push to heal the cloud instead of flashing the results off the
-    // screen. Collaboration still converges: a collaborator's edits ADD results, so
-    // the cloud ends up with >= results and is accepted below.
-    const localCount = saveResultsCount(local);
-    const cloudCount = saveResultsCount(cloud);
-    if (cloudCount < localCount) {
-      newSaves[localId] = local;            // cloud is missing data → keep local, heal cloud
+    // THE HARD RULE — applies to EVERY pull (load AND realtime): a cloud copy with
+    // FEWER race results than local must NEVER overwrite local. This is what keeps a
+    // freshly-imported season from reverting/vanishing: right after an import the
+    // upload is still in flight (or some result rows were rejected by RLS), so a
+    // pull that lands in that window — including a page reload — sees a cloud copy
+    // missing results. We keep local and re-push to heal the cloud instead of
+    // wiping good data. Everything still saves to Supabase (the push runs on every
+    // edit); we just never let an INCOMPLETE cloud copy clobber a fuller local one.
+    // Collaboration still converges: a collaborator's edits ADD results, so the
+    // cloud ends up with >= results and is accepted below.
+    // Compare on THREE dimensions, not just race results: a freshly created season
+    // has its teams/drivers/CALENDAR but ZERO results yet, so a results-only check
+    // would treat the cloud (which hasn't received the new season) as "complete" and
+    // silently DROP the new season on the next sync or reload. Counting seasons and
+    // races too means a brand-new (still empty) season is protected until it syncs.
+    const sumRaces = sv => Object.values(sv.seasons || {}).reduce((n, se) => n + ((se.races && se.races.length) || 0), 0);
+    const localCount = saveResultsCount(local), cloudCount = saveResultsCount(cloud);
+    const localSeasons = Object.keys(local.seasons || {}).length, cloudSeasons = Object.keys(cloud.seasons || {}).length;
+    const localRaces = sumRaces(local), cloudRaces = sumRaces(cloud);
+    if (cloudCount < localCount || cloudSeasons < localSeasons || cloudRaces < localRaces) {
+      newSaves[localId] = local;            // cloud is missing data (results, a season, or races) → keep local, heal cloud
       needsRepush = true;
     } else if (preferLocalIfNewer && cloudCount === localCount && (local.updatedAt || 0) > (cloud.updatedAt || 0)) {
       newSaves[localId] = local;            // equal data, local has newer unflushed edits
     }
-    // else: cloud has at least as many results → accept cloud
+    // else: cloud has at least as much data → accept cloud (additive edits converge)
   }
   state.saves = newSaves;
   if (state.activeSaveId && !newSaves[state.activeSaveId]) state.activeSaveId = null;
@@ -1200,7 +1202,7 @@ async function cloudInit() {
             const url = new URL(location.href); url.searchParams.delete('invite');
             history.replaceState({}, '', url.toString());
           }
-          await cloudPullAllSaves(false, true); // sign-in: Supabase is the source of truth
+          await cloudPullAllSaves();
           await cloudPullPresets(); // restore the preset library (+ photos) from cloud
           cloudSubscribeRealtime();
           renderAll();
@@ -1227,11 +1229,11 @@ async function cloudInit() {
         history.replaceState({}, '', url.toString());
       } catch (e) { console.warn('Could not accept invite:', e.message); }
     }
-    // Initial reload while already signed in: Supabase is the source of truth. The
-    // cloud copy wins for every save that exists in the cloud, so a stale/corrupted
-    // local copy can't resurrect itself. Saves that exist ONLY locally (genuinely
-    // unsynced) are still kept and pushed up, so nothing unsynced is lost.
-    await cloudPullAllSaves(false, true);
+    // Initial reload while already signed in: keep any local edits the cloud doesn't
+    // yet reflect (a refresh right after an import must not revert it). The push runs
+    // on every edit, so Supabase still gets everything — we just never let a cloud
+    // copy that's missing rows overwrite a fuller local one.
+    await cloudPullAllSaves(true);
     await cloudPullPresets(); // restore the preset library (+ photos) from cloud
     cloudSubscribeRealtime();
     return true;
