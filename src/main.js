@@ -1246,9 +1246,20 @@ async function cloudInit() {
     // yet reflect (a refresh right after an import must not revert it). The push runs
     // on every edit, so Supabase still gets everything — we just never let a cloud
     // copy that's missing rows overwrite a fuller local one.
-    await cloudPullAllSaves(true);
-    await cloudPullPresets(); // restore the preset library (+ photos) from cloud
-    cloudSubscribeRealtime();
+    // DON'T block first paint on the cloud pull — it can take several seconds to page
+    // through a large dataset, leaving the user staring at a blank screen. Return NOW
+    // so the boot renders the LOCAL (localStorage) state instantly, then hydrate from
+    // the cloud in the BACKGROUND and re-render when it lands. The keep-local merge
+    // means the cloud pull only ever ADDS data the screen was missing, never wipes it.
+    (async () => {
+      try {
+        await cloudPullAllSaves(true);
+        await cloudPullPresets(); // restore the preset library (+ photos) from cloud
+        cloudSubscribeRealtime();
+        backfillTeamLogosFromPresets(); backfillDriverPhotosFromPresets();
+        renderAll();
+      } catch (e) { console.warn('[P1] background cloud hydrate failed', e); }
+    })();
     return true;
   }
   return false; // not signed in
@@ -2091,12 +2102,19 @@ function stateForStorage() {
 // everywhere — on load AND after every cloud pull — so the bloat can't persist.
 function dedupeResultArr(arr) {
   if (!Array.isArray(arr) || arr.length < 2) return Array.isArray(arr) ? arr : [];
+  // Keep the LAST row per driver. When the cloud holds duplicates (a collaborator's
+  // edit that got INSERTED instead of updated, because race_results lacks a unique
+  // key), the newest write comes last — so keeping the last row surfaces the latest
+  // edit instead of a stale copy. Once the dedupe SQL adds the unique constraint there
+  // are no duplicates at all and this is just a pass-through.
+  const lastByDriver = new Map();
+  for (const r of arr) { const k = r && r.driverId; if (k != null) lastByDriver.set(k, r); }
   const seen = new Set(); const out = [];
   for (const r of arr) {
     const k = r && r.driverId;
     if (k == null) { out.push(r); continue; }   // keep odd rows without a driver id
-    if (seen.has(k)) continue;                   // drop the duplicate
-    seen.add(k); out.push(r);
+    if (seen.has(k)) continue;                   // already emitted this driver
+    seen.add(k); out.push(lastByDriver.get(k));  // emit the LATEST row for this driver
   }
   return out;
 }
