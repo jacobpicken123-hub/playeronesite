@@ -111,9 +111,20 @@ function saveResultsCount(save) {
 async function cloudFetchAllRows(table, columns = '*') {
   const PAGE = 1000;
   const all = [];
-  for (let from = 0; ; from += PAGE) {
-    const { data, error } = await CLOUD.client.from(table).select(columns).range(from, from + PAGE - 1);
-    if (error) throw error;
+  // Hard cap (200 pages) so a runaway/huge table can never loop forever.
+  for (let from = 0; from < 200000; from += PAGE) {
+    let data, error;
+    try {
+      ({ data, error } = await CLOUD.client.from(table).select(columns).range(from, from + PAGE - 1));
+    } catch (e) { error = e; }
+    if (error) {
+      // A statement timeout on a deep page (a huge/duplicated table) used to throw
+      // and fail the ENTIRE sync ("realtime merge failed"). Instead, stop paging and
+      // use what we got: the merge's keep-local rule then protects the screen, and
+      // the dedupe SQL shrinks the table so the next read completes cleanly.
+      console.warn(`[P1] paged read of ${table} stopped at offset ${from}:`, (error && error.message) || error);
+      break;
+    }
     if (data && data.length) all.push(...data);
     if (!data || data.length < PAGE) break;
   }
@@ -251,6 +262,10 @@ async function cloudPullAllSaves(preferLocalIfNewer = false) {
     }
   }
 
+  // Collapse any duplicate result rows the cloud returned (same driver twice in one
+  // race) BEFORE comparing/merging, so duplicates never reach the in-memory state.
+  dedupeAllResults(newSaves);
+
   // Merge cloud saves into state on the initial reload. localStorage is written
   // atomically and completely by saveState(), while the cloud copy is assembled
   // from many separate writes that can PARTIALLY fail (a push that uploaded the
@@ -310,14 +325,12 @@ async function cloudPullAllSaves(preferLocalIfNewer = false) {
   // images survive a reload / cloud sync.
   backfillTeamLogosFromPresets(); backfillDriverPhotosFromPresets();
 
-  // Only reset the push-hash cache when we KEPT local data the cloud is missing —
-  // those rows must be re-pushed to heal the cloud (see needsRepush below). After a
-  // CLEAN pull we KEEP the cache. Clearing it on every realtime event was a disaster:
-  // it made the very next save re-upload the ENTIRE dataset (the cache said "nothing
-  // pushed yet"), every row re-broadcast as a realtime message, which re-triggered
-  // the pull, which cleared the cache again — a feedback loop that burned millions of
-  // realtime messages and tens of GB of egress with only a couple of active users.
-  if (needsRepush) cloudLastPushHashes = {};
+  // We KEEP the push-hash cache across pulls — we never blow it away. We used to
+  // clear it on needsRepush, which forced the next push to re-upload the ENTIRE
+  // dataset; and because race_results had no unique (race_id,driver_id) key, every
+  // one of those re-uploads INSERTED duplicate rows, ballooning the table (and
+  // burning realtime/egress). Keeping the cache means the heal re-push below only
+  // sends entities that genuinely changed since we last pushed them.
 
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(stateForStorage())); } catch {}
 
@@ -1987,6 +2000,7 @@ function shortGrandPrixName(race) {
 
 /* ---------- state ---------- */
 let state = loadState();
+dedupeAllResults(state.saves); // collapse any duplicate result rows the cloud bloat created
 // Initialize preset extension fields if missing (forwards-compatible)
 if (!state.customDriverPresets) state.customDriverPresets = [];
 if (!state.customTeamPresets)   state.customTeamPresets   = [];
@@ -2067,6 +2081,36 @@ function stateForStorage() {
     saves[sid] = { ...save, seasons };
   }
   return { ...state, saves };
+}
+
+// Collapse duplicate result rows (the SAME driver appearing more than once in one
+// race). The cloud accumulated these because race_results had no unique
+// (race_id, driver_id) constraint, so every push INSERTED the results again instead
+// of updating them. Pulling thousands of duplicates bloats the in-memory state and
+// overflows localStorage (QuotaExceededError). We collapse to one row per driver
+// everywhere — on load AND after every cloud pull — so the bloat can't persist.
+function dedupeResultArr(arr) {
+  if (!Array.isArray(arr) || arr.length < 2) return Array.isArray(arr) ? arr : [];
+  const seen = new Set(); const out = [];
+  for (const r of arr) {
+    const k = r && r.driverId;
+    if (k == null) { out.push(r); continue; }   // keep odd rows without a driver id
+    if (seen.has(k)) continue;                   // drop the duplicate
+    seen.add(k); out.push(r);
+  }
+  return out;
+}
+function dedupeSaveResults(save) {
+  if (!save) return;
+  for (const season of Object.values(save.seasons || {})) {
+    for (const race of (season.races || [])) {
+      race.results = dedupeResultArr(race.results);
+      race.sprintResults = dedupeResultArr(race.sprintResults);
+    }
+  }
+}
+function dedupeAllResults(saves) {
+  for (const sid in (saves || {})) dedupeSaveResults(saves[sid]);
 }
 
 function saveState() {
