@@ -8748,6 +8748,100 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
 }
 
 /* =============================================================
+   TITLE RACE PANEL + CAREER PROFILE
+   ============================================================= */
+.title-race { border:1px solid var(--border); border-radius:12px; padding:16px 20px; margin-bottom:18px; background:linear-gradient(180deg, rgba(255,255,255,0.025), transparent); position:relative; overflow:hidden; }
+.title-race::before { content:""; position:absolute; left:0; top:0; bottom:0; width:3px; background:var(--accent, #e10600); }
+.title-race-head { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:8px; }
+.title-race-eyebrow { font-family:var(--f-mono); font-size:10px; letter-spacing:0.2em; color:var(--text-dim); text-transform:uppercase; }
+.title-race-pool { font-family:var(--f-mono); font-size:10px; letter-spacing:0.1em; color:var(--accent, #e10600); font-weight:700; }
+.title-race-stat { font-family:var(--f-display); font-weight:700; font-size:15px; margin-bottom:6px; }
+.title-race-clinch { font-size:13px; color:var(--text-muted); margin-bottom:12px; line-height:1.45; }
+.title-race-clinch b { color:var(--text); }
+.title-race-clinch.dim { color:var(--text-dim); }
+.contender-strip { display:flex; gap:8px; flex-wrap:wrap; }
+.contender-chip { display:inline-flex; align-items:center; gap:8px; padding:6px 11px 6px 13px; border-radius:8px; border:1px solid var(--border); background:var(--bg-1); position:relative; }
+.contender-chip::before { content:""; position:absolute; left:0; top:0; bottom:0; width:3px; border-radius:8px 0 0 8px; background:var(--team-color, #666); }
+.contender-chip.leader { border-color:var(--team-color, #666); }
+.contender-pos { font-family:var(--f-mono); font-size:10px; color:var(--text-dim); font-weight:700; }
+.contender-name { font-family:var(--f-display); font-weight:700; font-size:13px; }
+.contender-pts { font-family:var(--f-mono); font-size:12px; font-weight:700; }
+.contender-gap { font-family:var(--f-mono); font-size:10px; color:var(--text-dim); }
+.title-race.champ { display:flex; align-items:center; gap:16px; }
+.title-race.champ::before { background:var(--gold, #ffd76b); }
+.title-race-crown { font-size:34px; line-height:1; }
+.title-race-leader { font-family:var(--f-display); font-weight:900; font-size:24px; line-height:1; }
+.title-race-sub { font-family:var(--f-mono); font-size:11px; color:var(--text-muted); margin-top:5px; }
+
+.clickable-driver { cursor:pointer; }
+.clickable-driver:hover { text-decoration:underline; text-decoration-color:var(--team-color, #e10600); text-underline-offset:3px; }
+
+.career-head { display:flex; align-items:center; gap:16px; padding:20px 22px; border-bottom:1px solid var(--border); }
+.career-portrait { width:72px; height:72px; border-radius:50%; background:var(--bg-2) center/cover no-repeat; border:2px solid var(--team-color, #666); flex:none; }
+.career-head-text { flex:1; }
+.career-name { font-family:var(--f-display); font-weight:900; font-size:24px; line-height:1.1; }
+.career-teams { font-family:var(--f-mono); font-size:11px; color:var(--text-muted); margin-top:5px; letter-spacing:0.04em; }
+.career-titles { text-align:center; padding:6px 16px; border:1px solid var(--gold, #ffd76b); border-radius:10px; flex:none; }
+.career-titles-num { font-family:var(--f-display); font-weight:900; font-size:30px; color:var(--gold, #ffd76b); line-height:1; }
+.career-titles-lbl { font-family:var(--f-mono); font-size:9px; letter-spacing:0.16em; color:var(--text-muted); }
+.career-stats-row { display:grid; grid-template-columns:repeat(8, 1fr); padding:16px 22px; border-bottom:1px solid var(--border); }
+.career-stat { text-align:center; border-right:1px solid var(--border); }
+.career-stat:last-child { border-right:none; }
+.career-stat-num { font-family:var(--f-display); font-weight:900; font-size:22px; }
+.career-stat-lbl { font-family:var(--f-mono); font-size:8px; letter-spacing:0.13em; color:var(--text-muted); margin-top:3px; }
+.career-szn-wrap { padding:18px 22px; }
+.career-szn-title { font-family:var(--f-mono); font-size:10px; letter-spacing:0.2em; color:var(--text-dim); margin-bottom:12px; }
+.career-szn-name { font-weight:700; }
+.career-champ-pill { font-family:var(--f-mono); font-size:8px; color:var(--gold, #ffd76b); border:1px solid var(--gold, #ffd76b); border-radius:4px; padding:1px 5px; margin-left:6px; letter-spacing:0.1em; }
+.career-live-pill { font-family:var(--f-mono); font-size:8px; color:var(--text-dim); border:1px solid var(--border); border-radius:4px; padding:1px 5px; margin-left:6px; letter-spacing:0.1em; }
+.career-szn-table td { padding:8px 10px; }
+@media (max-width:720px) {
+  .career-stats-row { grid-template-columns:repeat(4, 1fr); gap:12px 0; }
+  .career-stat:nth-child(4) { border-right:none; }
+}
+
+/* Champion crown indicators (standings rows, dashboard, season cards) */
+.champ-crown { display:inline-block; margin-left:6px; font-size:0.95em; line-height:1; vertical-align:-1px; filter:drop-shadow(0 0 4px rgba(255,215,107,0.55)); }
+.pos-cell .champ-crown { margin-left:0; font-size:1.1em; }
+.champ-tag { display:inline-block; margin-left:6px; font-family:var(--f-mono); font-size:8px; letter-spacing:0.12em; color:var(--gold, #ffd76b); border:1px solid var(--gold, #ffd76b); border-radius:4px; padding:1px 5px; vertical-align:1px; }
+.standings-row.is-champion { background:linear-gradient(90deg, rgba(255,215,107,0.10), transparent 70%); }
+.standings-row.is-champion .points-cell { color:var(--gold, #ffd76b); }
+.dash-stat-card.is-champion { border-color:var(--gold, #ffd76b); }
+.dash-stat-card.is-champion .dash-stat-context { color:var(--gold, #ffd76b); }
+
+/* Clickable record entries → driver career drill-down */
+.clickable-record { cursor:pointer; }
+.clickable-record:hover { color:var(--gold, #ffd76b); }
+.record-detail-row.clickable-record:hover { background:rgba(255,255,255,0.03); }
+.record-detail-cta { margin-left:8px; font-family:var(--f-mono); font-size:8px; letter-spacing:0.12em; color:var(--text-dim); opacity:0; }
+.record-detail-row:hover .record-detail-cta { opacity:1; color:var(--gold, #ffd76b); }
+.career-champ-seasons { padding:12px 22px; border-bottom:1px solid var(--border); font-family:var(--f-serif, var(--f-display)); font-size:13px; color:var(--gold, #ffd76b); background:rgba(255,215,107,0.04); }
+.career-champ-seasons-lbl { font-family:var(--f-mono); font-size:9px; letter-spacing:0.16em; text-transform:uppercase; opacity:0.85; margin-right:4px; }
+.career-champ-yr { font-family:var(--f-mono); font-size:10px; opacity:0.7; }
+
+/* Driver-bundle "loaded" badge + disabled action button */
+.rc-loaded-badge { font-family:var(--f-mono); font-size:8px; letter-spacing:0.12em; color:var(--gold, #ffd76b); border:1px solid var(--gold, #ffd76b); border-radius:4px; padding:1px 5px; margin-left:8px; vertical-align:1px; }
+.btn:disabled { opacity:0.4; cursor:not-allowed; }
+
+/* Quick-entry DNF / DSQ / DNS status section */
+.qe-status { margin-top:14px; border-top:1px solid var(--border); padding-top:12px; }
+.qe-status-head { font-family:var(--f-mono); font-size:10px; letter-spacing:0.16em; text-transform:uppercase; color:var(--text-dim); margin-bottom:10px; }
+.qe-status-row { display:flex; align-items:center; justify-content:space-between; gap:10px; padding:6px 8px 6px 12px; border-radius:8px; border:1px solid var(--border); background:var(--bg-1); margin-bottom:6px; position:relative; }
+.qe-status-row::before { content:""; position:absolute; left:0; top:0; bottom:0; width:3px; border-radius:8px 0 0 8px; background:var(--team-color, #666); opacity:0.7; }
+.qe-status-name { font-family:var(--f-display); font-weight:700; font-size:13px; display:flex; align-items:center; gap:8px; min-width:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.qe-status-num { font-family:var(--f-mono); font-size:11px; font-weight:700; }
+.qe-status-btns { display:flex; gap:6px; flex:none; }
+.qe-status-btn { font-family:var(--f-mono); font-size:10px; font-weight:700; letter-spacing:0.06em; padding:5px 9px; border-radius:6px; border:1px solid var(--border); background:transparent; color:var(--text-dim); cursor:pointer; }
+.qe-status-btn:hover { color:var(--text); border-color:var(--text-muted); }
+.qe-status-btn.dnf.on { background:rgba(225,6,0,0.16); border-color:var(--red); color:#ff8a84; }
+.qe-status-btn.dsq.on { background:rgba(225,6,0,0.28); border-color:var(--red); color:#fff; }
+.qe-status-btn.dns.on { background:rgba(125,128,136,0.20); border-color:var(--text-muted); color:var(--text); }
+
+/* Team logo galleries — logos use `contain` so they aren't cropped like portraits */
+.is-logo-gallery .photo-gallery-thumb { background-size: contain; background-color: var(--bg-2); }
+.photo-picker-thumb.logo { background-size: contain; }
+
+/* =============================================================
    MOTION KILL-SWITCH  (must stay LAST in the stylesheet)
    All animations and transitions are forced to run instantly.
    Why instant instead of `animation:none`: several elements start
