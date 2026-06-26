@@ -101,7 +101,7 @@ function saveResultsCount(save) {
    Cloud rows live in normalized tables; we re-assemble them into the same shape your
    render code already expects (state.saves[id] = { id, name, seasons: { [seasonId]: {...} } }).
 */
-async function cloudPullAllSaves(preferLocalIfNewer = false) {
+async function cloudPullAllSaves(preferLocalIfNewer = false, cloudAuthoritative = false) {
   if (!CLOUD.enabled || !currentUser) return;
 
   // 1. Saves the user can access (via RLS — only owned/shared)
@@ -259,14 +259,32 @@ async function cloudPullAllSaves(preferLocalIfNewer = false) {
   for (const localId in (state.saves || {})) {
     const local = state.saves[localId];
     const cloud = newSaves[localId];
-    if (!cloud) { newSaves[localId] = local; needsRepush = true; continue; } // local-only save
-    // SHARED saves (more than one member) are collaborative — the cloud is the
-    // single source of truth, so every member converges to the same data and the
-    // same points. The "keep local if it has more results" protection below is for
-    // SOLO saves only; on a shared save it pins each user to their own copy and
-    // re-pushes it, so collaborators never see each other's input.
-    const memberCount = ((cloud && cloud._members) || (local && local._members) || []).length;
-    if (memberCount > 1) continue; // accept the cloud copy as-is
+    if (!cloud) { newSaves[localId] = local; needsRepush = true; continue; } // local-only save → keep & push up
+
+    // CLOUD-AUTHORITATIVE — used on initial load and on sign-in. Supabase is the
+    // single source of truth: for any save that ALSO exists in the cloud, the cloud
+    // copy wins outright. This is what makes a fully-shared save consistent across
+    // devices/people and stops a stale or corrupted localStorage copy from
+    // resurrecting itself or overwriting the real shared data. (Saves that exist
+    // ONLY locally are still kept + pushed up by the line above, so genuinely
+    // unsynced local work is never lost — only already-synced saves defer to cloud.)
+    if (cloudAuthoritative) {
+      // Cloud wins — UNLESS the cloud copy came back EMPTY while local has real
+      // data. That's almost always a partial/blocked read (RLS) or a transient
+      // glitch, not a genuine empty save, so we keep local rather than wipe it.
+      if (saveResultsCount(cloud) === 0 && saveResultsCount(local) > 0) {
+        newSaves[localId] = local; needsRepush = true;
+      }
+      continue;
+    }
+
+    // REALTIME path (mid-session merges only). Here the HARD RULE applies: a cloud
+    // copy with FEWER race results than local must NEVER overwrite local. Right
+    // after an import the upload is still in flight (or some rows were rejected), so
+    // a pull that lands in that window sees a cloud copy missing results — we keep
+    // local and re-push to heal the cloud instead of flashing the results off the
+    // screen. Collaboration still converges: a collaborator's edits ADD results, so
+    // the cloud ends up with >= results and is accepted below.
     const localCount = saveResultsCount(local);
     const cloudCount = saveResultsCount(cloud);
     if (cloudCount < localCount) {
@@ -1182,7 +1200,7 @@ async function cloudInit() {
             const url = new URL(location.href); url.searchParams.delete('invite');
             history.replaceState({}, '', url.toString());
           }
-          await cloudPullAllSaves();
+          await cloudPullAllSaves(false, true); // sign-in: Supabase is the source of truth
           await cloudPullPresets(); // restore the preset library (+ photos) from cloud
           cloudSubscribeRealtime();
           renderAll();
@@ -1209,9 +1227,11 @@ async function cloudInit() {
         history.replaceState({}, '', url.toString());
       } catch (e) { console.warn('Could not accept invite:', e.message); }
     }
-    // Initial reload while already signed in: keep any local edits newer than the
-    // cloud copy so a refresh doesn't revert work the debounced push hadn't flushed.
-    await cloudPullAllSaves(true);
+    // Initial reload while already signed in: Supabase is the source of truth. The
+    // cloud copy wins for every save that exists in the cloud, so a stale/corrupted
+    // local copy can't resurrect itself. Saves that exist ONLY locally (genuinely
+    // unsynced) are still kept and pushed up, so nothing unsynced is lost.
+    await cloudPullAllSaves(false, true);
     await cloudPullPresets(); // restore the preset library (+ photos) from cloud
     cloudSubscribeRealtime();
     return true;
