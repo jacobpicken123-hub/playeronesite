@@ -13142,6 +13142,7 @@ function renderDashboard() {
             <div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div>
           </div>
           <button class="btn btn-ghost btn-sm" id="dash-template">★ TEMPLATES</button>
+          <button class="btn btn-ghost btn-sm" id="dash-reimport">⟳ REIMPORT</button>
           <button class="btn btn-ghost btn-sm" id="dash-settings">⚙ SETTINGS</button>
         </div>
       </div>
@@ -13309,6 +13310,7 @@ function renderDashboard() {
     $$('[data-race]', wrap).forEach(a => a.onclick = () => { state.view = 'race'; state.raceId = a.dataset.race; renderAll(); });
     $('#dash-settings', wrap)?.addEventListener('click', openSeasonSettings);
     $('#dash-template', wrap)?.addEventListener('click', openSeasonTemplatesModal);
+    $('#dash-reimport', wrap)?.addEventListener('click', openReimportSeasonModal);
   }, 0);
   return wrap;
 }
@@ -17348,10 +17350,17 @@ function openRenameSaveModal() {
   });
 }
 
+// When set, the next buildSeasonFromImport REPLACES this existing season instead
+// of creating a new one: the freshly-built season inherits its name + place in the
+// list, and the old copy (plus its cloud rows) is deleted. Consumed once, then
+// cleared. Reset here too so a cancelled reimport can't bleed into a normal import.
+let reimportTargetSeasonId = null;
+
 function openNewSeasonModal() {
   if (!state.activeSaveId) {
     return toast('Open a save first', 'warn');
   }
+  reimportTargetSeasonId = null;
   const teamBundles = state.teamClasses || [];
   const driverBundles = state.driverClasses || [];
   const calPresets = state.calendarPresets || [];
@@ -17452,6 +17461,40 @@ function openNewSeasonModal() {
       $('#ns-import-shot', root).onclick = () => { close(); openImportScreenshotModal(); };
       $('#ns-import-csv', root).onclick = () => { close(); openImportCSVModal(); };
       setTimeout(() => $('#ns-name', root).focus(), 50);
+    }
+  });
+}
+
+// Reimport: rebuild the CURRENT season from a fresh import (CSV / paste / screenshot)
+// without recreating it by hand. Offers the same three sources as a new season, then
+// flags the chosen import to replace this season instead of adding a new one.
+function openReimportSeasonModal() {
+  const season = activeSeason();
+  if (!season) return toast('Open a season first', 'warn');
+  const btn = (id, title, desc, extra = '') =>
+    `<button class="btn btn-ghost" id="${id}" style="width:100%;display:flex;flex-direction:column;gap:2px;padding:14px;align-items:flex-start;text-align:left;margin-bottom:8px;${extra}">
+       <div style="font-weight:700;font-family:var(--f-display);font-size:14px;letter-spacing:0.02em">${title}</div>
+       <div style="font-family:var(--f-mono);font-size:10px;color:var(--text-muted);letter-spacing:0.04em;text-transform:none">${desc}</div>
+     </button>`;
+  modal({
+    title: `<span class="accent">Reimport</span> Season`,
+    body: `
+      <div style="font-family:var(--f-mono);font-size:11px;line-height:1.65;color:var(--text-muted);letter-spacing:0.02em;margin-bottom:16px">
+        Rebuilds <strong style="color:var(--text)">${esc(season.name)}</strong> from a fresh import. This
+        <strong style="color:var(--red)">replaces its drivers, teams, races and results</strong> — but the season
+        keeps its name and its place in your list. Leave the import's name field blank to keep this name. Pick a source:
+      </div>
+      ${btn('ri-import-real', '⇡ IMPORT REAL SEASON FROM F1.COM PASTE', "Paste the full standings table and we'll rebuild the season.")}
+      ${btn('ri-import-shot', '📷 IMPORT FROM SCREENSHOT (MATRIX MODE)', 'Upload a season-matrix screenshot and fill in the cell grid.')}
+      ${btn('ri-import-csv', '📊 IMPORT FROM CSV FILE', 'Upload a .csv: Position, Driver, Team, Points, then race columns.', 'border-color:var(--sec-cyan)')}
+    `,
+    footer: `<button class="btn btn-ghost" data-act="cancel">Cancel</button>`,
+    onMount: (root, close) => {
+      $('[data-act="cancel"]', root).onclick = close;
+      const go = (open) => { reimportTargetSeasonId = season.id; close(); open(); };
+      $('#ri-import-real', root).onclick = () => go(openImportRealSeasonModal);
+      $('#ri-import-shot', root).onclick = () => go(openImportScreenshotModal);
+      $('#ri-import-csv', root).onclick  = () => go(openImportCSVModal);
     }
   });
 }
@@ -18216,6 +18259,20 @@ function buildSeasonFromImport(parsed, opts) {
   save.seasons[seasonId] = season;
   state.activeSeasonId = seasonId;
   state.view = 'dashboard';
+
+  // REIMPORT: this import was launched to refresh an existing season. Carry over
+  // its name (unless a new one was typed) and its place in the list (createdAt),
+  // then remove the old copy. cloudDeleteSeason cascades to the old season's
+  // teams/drivers/races/results so they don't resurrect on the next cloud pull.
+  if (reimportTargetSeasonId && reimportTargetSeasonId !== seasonId && save.seasons[reimportTargetSeasonId]) {
+    const old = save.seasons[reimportTargetSeasonId];
+    season.createdAt = old.createdAt || season.createdAt;
+    if (!(opts.name || '').trim()) season.name = old.name;
+    delete save.seasons[reimportTargetSeasonId];
+    cloudDeleteSeason(reimportTargetSeasonId);
+  }
+  reimportTargetSeasonId = null;
+
   saveState();
   return seasonId;
 }
