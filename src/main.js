@@ -1012,11 +1012,14 @@ async function cloudAcceptInvite(token) {
 
 /* ---------- REALTIME: subscribe to changes on saves the user has access to ---------- */
 let cloudRealtimeChannel = null;
+let cloudRealtimeOk = false;   // true once the channel reports SUBSCRIBED
+let lastRealtimeEventAt = 0;   // bumped on every incoming change (idle detector for the poll)
 function cloudSubscribeRealtime() {
   if (!CLOUD.enabled || !currentUser) return;
   if (cloudRealtimeChannel) {
     CLOUD.client.removeChannel(cloudRealtimeChannel);
   }
+  startCollabSafetyPoll(); // backstop in case realtime isn't broadcasting (see below)
   // Listen to changes on all relevant tables; RLS makes sure we only get events for accessible rows.
   cloudRealtimeChannel = CLOUD.client.channel('p1-changes')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'saves' }, onCloudChange)
@@ -1029,10 +1032,33 @@ function cloudSubscribeRealtime() {
     .on('postgres_changes', { event: '*', schema: 'public', table: 'save_members' }, onCloudChange)
     .subscribe((status, err) => {
       // 'SUBSCRIBED' = realtime is live. 'CHANNEL_ERROR' / 'TIMED_OUT' = realtime is
-      // NOT enabled for these tables in Supabase (Dashboard → Database → Replication),
-      // so collaborator changes will never stream in. Logged so it's easy to verify.
+      // NOT enabled for these tables in Supabase (Dashboard → Database → Replication).
+      // Either way the safety poll below keeps collaborators in sync; this just lets
+      // us skip the poll's network cost when realtime is genuinely flowing.
+      cloudRealtimeOk = (status === 'SUBSCRIBED');
       console.log('[P1] realtime channel:', status, err || '');
     });
+}
+
+// SAFETY POLL — guarantees collaborators stay in sync even when Supabase realtime
+// isn't broadcasting (publication not enabled, RLS, channel error). It re-pulls on a
+// gentle interval, but ONLY when it's actually useful: the active save is shared, the
+// tab is focused, we're not mid-push/mid-entry, and realtime hasn't just delivered an
+// event (so when realtime IS working we add no extra network traffic).
+let _collabPollTimer = null;
+function startCollabSafetyPoll() {
+  if (_collabPollTimer) return;
+  _collabPollTimer = setInterval(() => {
+    if (!CLOUD.enabled || !currentUser) return;
+    if (typeof document !== 'undefined' && document.hidden) return;           // tab not visible
+    const save = state.saves[state.activeSaveId];
+    if (!save || (save._members || []).length < 2) return;                    // solo save — nothing to sync
+    if (pendingCloudWrites > 0 || Date.now() < cloudEchoSuppressUntil) return; // our own write in flight
+    if (userIsMidEntry()) return;                                             // don't disturb the user
+    if (cloudRealtimeOk && (Date.now() - lastRealtimeEventAt < 12000)) return; // realtime is live → no need
+    cloudMergePending = true;
+    scheduleCloudMerge();
+  }, 5000);
 }
 // On any incoming change, re-pull everything and re-render. Cheap because there are at most a handful of saves.
 let realtimeMergeTimer = null;
@@ -1109,6 +1135,7 @@ function applyRealtimeResultChange(payload) {
 }
 
 function onCloudChange(payload) {
+  lastRealtimeEventAt = Date.now(); // any event (even our own echo) proves realtime is flowing
   // Ignore changes we just pushed (avoids feedback loops). We skip while either
   // a write is pending OR we're still inside the post-push echo window — the
   // latter covers big imports whose row inserts echo back over several seconds.
@@ -1275,9 +1302,9 @@ async function cloudInit() {
             const url = new URL(location.href); url.searchParams.delete('invite');
             history.replaceState({}, '', url.toString());
           }
+          cloudSubscribeRealtime(); // subscribe FIRST so live events flow immediately, not after a slow pull
           await cloudPullAllSaves();
           await cloudPullPresets(); // restore the preset library (+ photos) from cloud
-          cloudSubscribeRealtime();
           renderAll();
         } catch (e) { console.warn('[P1] post-signin hydrate failed', e); }
       })();
@@ -1313,9 +1340,9 @@ async function cloudInit() {
     // means the cloud pull only ever ADDS data the screen was missing, never wipes it.
     (async () => {
       try {
+        cloudSubscribeRealtime(); // subscribe FIRST so live events flow immediately, not after a slow pull
         await cloudPullAllSaves(true);
         await cloudPullPresets(); // restore the preset library (+ photos) from cloud
-        cloudSubscribeRealtime();
         backfillTeamLogosFromPresets(); backfillDriverPhotosFromPresets();
         renderAll();
       } catch (e) { console.warn('[P1] background cloud hydrate failed', e); }
