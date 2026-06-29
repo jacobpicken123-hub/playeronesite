@@ -12564,6 +12564,51 @@ function importData() {
 }
 
 /* ---------- top-level render ---------- */
+/* ---------- URL ROUTING ----------
+   Give each section its own #/path so Back/Forward, bookmarking, and refresh-in-place
+   all behave like a real multi-page site. Hash routing (not the History API) so it
+   needs zero server config — the app is served as static files. */
+const ROUTE_VIEWS = ['dashboard', 'drivers', 'teams', 'calendar', 'standings', 'stats', 'records'];
+let _lastRoute = null;
+
+// The canonical #/path for whatever is actually on screen right now.
+function computeRouteHash() {
+  if (!state.activeSaveId || !state.activeSeasonId) return '#/';
+  if (state.view === 'race' && state.raceId) return '#/race/' + state.raceId;
+  return '#/' + (ROUTE_VIEWS.includes(state.view) ? state.view : 'dashboard');
+}
+// Push the current view into the URL (adds a Back/Forward history entry on a real
+// navigation; a no-op when only data changed).
+function syncUrlFromState() {
+  const want = computeRouteHash();
+  if (want === _lastRoute) return;
+  _lastRoute = want;
+  if (location.hash !== want) location.hash = want; // fires hashchange; ignored below since it matches state
+}
+// Drive state.view (+ raceId) from a #/path.
+function applyRouteString(hash) {
+  const parts = String(hash || '').replace(/^#\/?/, '').split('/').filter(Boolean);
+  if (parts[0] === 'race' && parts[1]) { state.view = 'race'; state.raceId = parts[1]; return; }
+  if (ROUTE_VIEWS.includes(parts[0])) { state.view = parts[0]; return; }
+  if (state.activeSaveId && state.activeSeasonId) state.view = 'dashboard'; // root path → dashboard
+}
+// Back/Forward (or a manual URL edit) → re-render the matching view. We ignore the
+// event when the URL already matches state (that's just our own syncUrlFromState
+// echo); a mismatch means the user actually navigated.
+function onHashChange() {
+  if (isPublicView) return;
+  if (location.hash === computeRouteHash()) return;
+  applyRouteString(location.hash || '#/');
+  _lastRoute = computeRouteHash();
+  renderAll();
+}
+function initRouting() {
+  applyRouteString(location.hash || '#/'); // honour a bookmarked / refreshed URL on first load
+  _lastRoute = computeRouteHash();
+  if (location.hash !== _lastRoute) { try { history.replaceState(null, '', _lastRoute); } catch {} }
+  window.addEventListener('hashchange', onHashChange);
+}
+
 function renderAll() {
   renderTopbar();
   renderTabs();
@@ -12582,6 +12627,7 @@ function renderAll() {
     }
     renderPresenceDots();
   }
+  syncUrlFromState(); // keep the URL in step with the section on screen
 }
 
 /* ---------- init ---------- */
@@ -12593,11 +12639,12 @@ function renderAll() {
       // Build the shell first so signin screen can target #app
       renderTopbar(); renderTabs();
       // Guest mode persists across reloads — skip the sign-in wall.
-      if (isGuest()) { backfillTeamLogosFromPresets(); backfillDriverPhotosFromPresets(); renderAll(); }
+      if (isGuest()) { initRouting(); backfillTeamLogosFromPresets(); backfillDriverPhotosFromPresets(); renderAll(); }
       else { renderSignInScreen(); }
       return;
     }
   }
+  initRouting(); // wire up #/section URLs before the first paint
   backfillTeamLogosFromPresets(); backfillDriverPhotosFromPresets();
   renderAll();
 })();
