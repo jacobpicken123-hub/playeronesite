@@ -1027,7 +1027,12 @@ function cloudSubscribeRealtime() {
     .on('postgres_changes', { event: '*', schema: 'public', table: 'race_results' }, onCloudChange)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'sprint_results' }, onCloudChange)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'save_members' }, onCloudChange)
-    .subscribe();
+    .subscribe((status, err) => {
+      // 'SUBSCRIBED' = realtime is live. 'CHANNEL_ERROR' / 'TIMED_OUT' = realtime is
+      // NOT enabled for these tables in Supabase (Dashboard → Database → Replication),
+      // so collaborator changes will never stream in. Logged so it's easy to verify.
+      console.log('[P1] realtime channel:', status, err || '');
+    });
 }
 // On any incoming change, re-pull everything and re-render. Cheap because there are at most a handful of saves.
 let realtimeMergeTimer = null;
@@ -1051,11 +1056,66 @@ function userIsMidEntry() {
   return false;
 }
 
+// Find a race anywhere in the loaded saves by its id — lets us apply a realtime
+// result change without scanning/pulling everything.
+function findRaceById(raceId) {
+  for (const sid in (state.saves || {})) {
+    const seasons = state.saves[sid].seasons || {};
+    for (const seid in seasons) {
+      const race = (seasons[seid].races || []).find(r => r.id === raceId);
+      if (race) return race;
+    }
+  }
+  return null;
+}
+
+// Coalesce rapid realtime applies into one save + one render (~150ms) so a burst of
+// result rows from a collaborator entering a whole race lands as a single repaint.
+let fastRenderTimer = null;
+function scheduleFastRender() {
+  clearTimeout(fastRenderTimer);
+  fastRenderTimer = setTimeout(() => {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(stateForStorage())); } catch {}
+    if (!userIsMidEntry()) renderAll();
+  }, 150);
+}
+
+// TRUE REAL-TIME FAST PATH: apply a single race_results / sprint_results change
+// straight from the realtime payload into local state — NO full-table pull (which is
+// slow, especially on a large DB). Returns true if it fully handled the event; any
+// other change (new season/team/driver/race, members) still goes via the merge.
+function applyRealtimeResultChange(payload) {
+  const table = payload && payload.table;
+  if (table !== 'race_results' && table !== 'sprint_results') return false;
+  if (userIsMidEntry()) return false; // never disturb the user's own in-progress entry
+  const row = (payload.new && Object.keys(payload.new).length) ? payload.new : payload.old;
+  if (!row || !row.race_id || !row.driver_id) return false; // need full row (replica identity)
+  const race = findRaceById(row.race_id);
+  if (!race) return false; // race not loaded locally → let the full merge fetch it
+  const key = table === 'sprint_results' ? 'sprintResults' : 'results';
+  const arr = race[key] = race[key] || [];
+  const idx = arr.findIndex(r => r.driverId === row.driver_id);
+  if (payload.eventType === 'DELETE') {
+    if (idx >= 0) arr.splice(idx, 1);
+  } else {
+    const next = { driverId: row.driver_id, position: (row.position != null ? row.position : null), dnf: !!row.dnf, dsq: !!row.dsq, dns: !!row.dns };
+    if (idx >= 0) arr[idx] = next; else arr.push(next);
+  }
+  if (table === 'race_results') race.completed = arr.length > 0;
+  // Persist locally but do NOT push it back — it's already in the cloud (the other
+  // person's write); re-pushing would just echo. Render is debounced above.
+  scheduleFastRender();
+  return true;
+}
+
 function onCloudChange(payload) {
   // Ignore changes we just pushed (avoids feedback loops). We skip while either
   // a write is pending OR we're still inside the post-push echo window — the
   // latter covers big imports whose row inserts echo back over several seconds.
   if (pendingCloudWrites > 0 || Date.now() < cloudEchoSuppressUntil) return;
+  // Apply a collaborator's single result edit INSTANTLY (no pull). Structural changes
+  // (new seasons/teams/drivers/races, membership) fall through to the debounced merge.
+  if (applyRealtimeResultChange(payload)) return;
   cloudMergePending = true;
   scheduleCloudMerge();
 }
