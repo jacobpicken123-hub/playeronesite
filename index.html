@@ -9096,7 +9096,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
 .record-tile,
 .team-card,
 .driver-card {
-  border-radius: 4px;
+  border-radius: 10px;
 }
 .tab.active,
 .race-session-tab.active {
@@ -9382,7 +9382,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
 }
 .rr-table-head, .rr-row {
   display: grid;
-  grid-template-columns: 52px 1fr 1fr 108px 56px;
+  grid-template-columns: 46px 1.25fr 0.75fr 232px 48px;
   align-items: center;
   gap: 8px;
 }
@@ -9457,6 +9457,36 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
 .rr-mini.clr { color: var(--text-dim); }
 .rr-mini.on.pole { background: #1e63d8; border-color: #1e63d8; color: #fff; }
 .rr-mini.on.fl { background: #7b2fd8; border-color: #7b2fd8; color: #fff; }
+.rr-mini.st.dnf:hover, .rr-mini.st.dsq:hover { background: var(--red); border-color: var(--red); color: #fff; }
+.rr-mini.st.dns:hover { background: var(--text-muted); border-color: var(--text-muted); color: #11110a; }
+
+/* Top-5 mini-leaderboard inside stat / record cards */
+.sl-top5 { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border-dim); display: flex; flex-direction: column; gap: 2px; }
+.sl-top5-row { display: grid; grid-template-columns: 18px 22px 1fr auto; align-items: center; gap: 8px; padding: 3px 0; }
+.sl-top5-rank { font-family: var(--f-display); font-weight: 700; font-size: 11px; color: var(--text-dim); text-align: center; }
+.sl-top5-photo { width: 22px; height: 22px; border-radius: 50%; background: var(--bg-3) center/cover no-repeat; border: 1px solid var(--border-hi); }
+.sl-top5-name { font-family: var(--f-display); font-size: 12px; text-transform: uppercase; letter-spacing: 0.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sl-top5-name .first { color: var(--text-soft); font-weight: 500; }
+.sl-top5-name .last { font-weight: 700; }
+.sl-top5-val { font-family: var(--f-display); font-weight: 700; font-size: 12px; color: var(--text); font-variant-numeric: tabular-nums; }
+
+/* Compact calendar podium list (replaces the stepped-platform graphic) */
+.rc-podium { display: flex; flex-direction: column; gap: 5px; margin: 10px 0 2px; }
+.rc-pod-row { display: grid; grid-template-columns: 38px 28px 1fr 22px; align-items: center; gap: 9px; padding: 5px 8px; border-radius: 8px; background: rgba(255,255,255,0.025); border-left: 3px solid var(--team-color, transparent); }
+.rc-pod-row.empty { background: transparent; border: 1px dashed var(--border-dim); opacity: 0.55; }
+.rc-pod-rank { font-family: var(--f-display); font-weight: 800; font-size: 11px; letter-spacing: 0.04em; }
+.rc-pod-rank.r1 { color: var(--gold); }
+.rc-pod-rank.r2 { color: var(--silver); }
+.rc-pod-rank.r3 { color: var(--bronze); }
+.rc-pod-photo { width: 28px; height: 28px; border-radius: 50%; background: var(--bg-3) center/cover no-repeat; border: 2px solid var(--team-color, var(--border-hi)); }
+.rc-pod-row.empty .rc-pod-photo { border: 1px dashed var(--border-hi); background: transparent; }
+.rc-pod-name { font-family: var(--f-display); font-weight: 700; font-size: 13px; text-transform: uppercase; letter-spacing: 0.02em; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rc-pod-row.empty .rc-pod-name { color: var(--text-dim); font-weight: 500; }
+.rc-pod-team { width: 22px; height: 22px; border-radius: 50%; background: center/contain no-repeat; display: inline-block; }
+.rc-pod-team.no-img { display: inline-flex; align-items: center; justify-content: center; font-family: var(--f-display); font-weight: 700; font-size: 8px; color: var(--team-color, var(--text)); border: 1px solid var(--team-color, var(--border)); }
+.rc-pending { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 20px 0 12px; }
+.rc-pending-flag { filter: drop-shadow(0 2px 6px rgba(0,0,0,0.5)); }
+.rc-pending-country { font-family: var(--f-display); font-weight: 600; font-size: 13px; color: var(--text-soft); text-transform: uppercase; letter-spacing: 0.04em; }
 .rr-status { margin-top: 16px; border-top: 1px dashed var(--border-hi); padding-top: 14px; }
 .rr-status-head { font-family: var(--f-display); font-weight: 700; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 10px; }
 .rr-status-row { display: flex; align-items: center; justify-content: space-between; padding: 7px 6px; border-bottom: 1px solid var(--border-dim); }
@@ -14909,29 +14939,29 @@ function renderCalendar() {
             : (r.id === nextPendingId
                 ? '<span class="race-card-status-tag next">NEXT</span>'
                 : '<span class="race-card-status-tag upcoming">UPCOMING</span>');
-          // Podium — top 3, drawn on stepped platforms (P1 tallest/centre, then P2, P3).
-          // Each driver's step is their team colour, so it works for any number of teams.
-          const podSpot = (pos) => {
+          // Compact podium list (1ST / 2ND / 3RD): rank · photo · driver code · team logo.
+          // Empty slots render as a clean dashed placeholder instead of bare grey steps.
+          const podRow = (pos) => {
             const res = r.completed && r.results?.length ? r.results.find(x => x.position === pos) : null;
             const drv = res ? season.drivers.find(d => d.id === res.driverId) : null;
             const tm = drv ? season.teams.find(t => t.id === drv.teamId) : null;
-            const color = tm?.color || 'var(--text-muted)';
+            const color = tm?.color || '#3a3f4a';
+            const rankLbl = pos === 1 ? '1ST' : pos === 2 ? '2ND' : '3RD';
             if (!drv) {
-              return `<div class="podium-spot p${pos} empty" style="--team-color:${color}">
-                <div class="podium-step"><span class="podium-pos">${pos}</span></div></div>`;
+              return `<div class="rc-pod-row empty"><span class="rc-pod-rank r${pos}">${rankLbl}</span><span class="rc-pod-photo"></span><span class="rc-pod-name">—</span></div>`;
             }
             const ph = drv.photo ? ` style="background-image:url('${esc(drv.photo)}')"` : '';
-            return `<div class="podium-spot p${pos}" style="--team-color:${color}">
-                <div class="podium-photo"${ph}></div>
-                <div class="podium-name">${esc(splitName(drv.name).last || drv.name)}</div>
-                <div class="podium-step"><span class="podium-pos">${pos}</span></div>
-              </div>`;
+            const code = driverMatchAbbr(drv) || (splitName(drv.name).last || drv.name).slice(0, 3).toUpperCase();
+            const logo = tm
+              ? (tm.logo
+                  ? `<span class="rc-pod-team" style="background-image:url('${esc(tm.logo)}')" title="${esc(tm.name)}"></span>`
+                  : `<span class="rc-pod-team no-img" style="--team-color:${color}" title="${esc(tm.name)}">${esc((tm.short || tm.name || '?').slice(0,3).toUpperCase())}</span>`)
+              : '';
+            return `<div class="rc-pod-row" style="--team-color:${color}"><span class="rc-pod-rank r${pos}">${rankLbl}</span><span class="rc-pod-photo"${ph}></span><span class="rc-pod-name">${esc(code)}</span>${logo}</div>`;
           };
-          const winnerBlock = (r.completed && winnerDrv) ? `
-            <div class="race-podium">
-              ${podSpot(2)}${podSpot(1)}${podSpot(3)}
-            </div>` : `
-            <div class="race-card-pending-info">awaiting lights-out</div>`;
+          const winnerBlock = (r.completed && winnerDrv)
+            ? `<div class="rc-podium">${podRow(1)}${podRow(2)}${podRow(3)}</div>`
+            : `<div class="rc-pending"><div class="rc-pending-flag">${raceFlagHTML(r, 44)}</div>${r.country ? `<div class="rc-pending-country">${esc(r.country)}</div>` : ''}</div>`;
           const pm = racePointsMultiplier(r);
           const pmBadge = pm !== 1 ? `<span class="race-card-mult-badge ${pm === 2 ? 'dbl' : 'half'}">${pm === 2 ? '2×' : '½'}</span>` : '';
           const pmToggle = `
@@ -16445,6 +16475,9 @@ function renderRaceEntry(container, race) {
           <div class="rr-entry-tools">
             <button class="rr-mini ${pole===did?'on pole':''}" data-pole="${esc(did)}" title="Set pole">P</button>
             <button class="rr-mini ${fl===did?'on fl':''}" data-fl="${esc(did)}" title="Set fastest lap">FL</button>
+            <button class="rr-mini st dnf" data-status="dnf" data-did="${esc(did)}" title="Did not finish">DNF</button>
+            <button class="rr-mini st dsq" data-status="dsq" data-did="${esc(did)}" title="Disqualified">DSQ</button>
+            <button class="rr-mini st dns" data-status="dns" data-did="${esc(did)}" title="Did not start">DNS</button>
             <button class="rr-mini clr" data-clr="${pos}" title="Clear slot">✕</button>
           </div>
           <div class="rr-pts">${ptsFor(pos,did) ? '+' + ptsFor(pos,did) : ''}</div>
@@ -17137,7 +17170,7 @@ function renderStats() {
     });
     const leader = sorted[0];
     const rank = leader ? (sorted.findIndex(x => x.driverId === leader.driverId) + 1) : null;
-    return { cat, leader, rank };
+    return { cat, leader, rank, top5: sorted.slice(0, 5) };
   });
 
   // Sortable table below
@@ -17161,7 +17194,7 @@ function renderStats() {
     { key: 'avgGrid',   label: 'AVG·G' },
   ];
 
-  const renderLeaderCard = ({ cat, leader, rank }) => {
+  const renderLeaderCard = ({ cat, leader, rank, top5 }) => {
     if (!leader) {
       return `
         <div class="stat-leader-card stat-leader-card-empty" style="--accent-color:#3a3f4a">
@@ -17192,6 +17225,17 @@ function renderStats() {
         : `<div class="stat-leader-team-mark">${esc(team.short || '?')}</div>`)
       : '';
     const val = cat.read(leader);
+    const others = (top5 || []).slice(1);
+    const top5HTML = others.length ? `
+      <div class="sl-top5">
+        ${others.map((s, i) => {
+          const d = s.driver; if (!d) return '';
+          const tc = s.teamColor || '#6b7280';
+          const nm = splitName(d.name);
+          const ph = d.photo ? `style="background-image:url('${esc(d.photo)}')"` : '';
+          return `<div class="sl-top5-row"><span class="sl-top5-rank">${i+2}</span><span class="sl-top5-photo" ${ph}></span><span class="sl-top5-name"><span class="first">${esc(nm.first||'')}</span> <span class="last" style="color:${tc}">${esc(nm.last)}</span></span><span class="sl-top5-val">${fmtStatVal(cat.read(s), cat)}</span></div>`;
+        }).join('')}
+      </div>` : '';
     return `
       <div class="stat-leader-card" data-cat="${cat.id}" style="--accent-color:${accent}">
         <div class="stat-leader-bar"></div>
@@ -17214,6 +17258,7 @@ function renderStats() {
           <span class="stat-leader-bignum-num">${fmtStatVal(val, cat)}</span>
           <span class="stat-leader-bignum-unit">${esc(cat.unit)}</span>
         </div>
+        ${top5HTML}
         <div class="stat-leader-foot">
           <span>POS: <b>${rank}</b></span>
           <span>RACES: <b>${leader.races}</b></span>
@@ -17911,6 +17956,17 @@ function recordBookGridHTML(recs) {
           const at = leader[cat.key + 'At'];
           if (at) context = `${cat.atPrefix} ${at}`;
         }
+        const recOthers = sorted.slice(1, 5);
+        const recTop5 = recOthers.length ? `
+          <div class="sl-top5">
+            ${recOthers.map((h, i) => {
+              const nm = isDriver ? splitName(h.name) : { first: '', last: h.name };
+              const ph = isDriver
+                ? (h.photo ? `style="background-image:url('${esc(h.photo)}')"` : '')
+                : (h.logo ? `style="background-image:url('${esc(h.logo)}');background-size:contain"` : '');
+              return `<div class="sl-top5-row"><span class="sl-top5-rank">${i+2}</span><span class="sl-top5-photo" ${ph}></span><span class="sl-top5-name"><span class="first">${esc(nm.first||'')}</span> <span class="last" style="color:var(--gold)">${esc(nm.last)}</span></span><span class="sl-top5-val">${h[cat.key]}</span></div>`;
+            }).join('')}
+          </div>` : '';
         return `
           <div class="stat-leader-card record-card clickable-record" data-cat="${cat.id}" style="--accent-color:${GOLD}">
             <div class="stat-leader-bar"></div>
@@ -17931,6 +17987,7 @@ function recordBookGridHTML(recs) {
               <span class="stat-leader-bignum-num">${leader[cat.key]}</span>
               <span class="stat-leader-bignum-unit">${esc(cat.unit)}</span>
             </div>
+            ${recTop5}
             <div class="stat-leader-foot">
               <span>${esc(context)}</span>
               ${isDriver
@@ -20835,13 +20892,14 @@ function collectSeasonDriverPhotos() {
 function getEffectiveDriverPresets() {
   const overrides = state.presetOverrides?.drivers || {};
   const hidden = new Set(state.hiddenPresets?.drivers || []);
+  const hiddenNames = presetHiddenNames(hidden); // deleted presets stay deleted across custom + shared sources
   const merged = DRIVER_PRESETS.filter(p => !hidden.has(presetKey(p))).map(p => {
     const k = presetKey(p);
     const ov = findPresetOverride(overrides, p);
     return ov ? { ...p, ...ov, presetKey: k, isBuiltin: true } : { ...p, presetKey: k, isBuiltin: true };
   });
-  const customs = (state.customDriverPresets || []).map(p => ({ ...p, presetKey: presetKey(p), isCustom: true }));
-  const shared = (state._sharedPresets?.drivers || []).map(p => ({ ...p, presetKey: presetKey(p), isShared: true }));
+  const customs = (state.customDriverPresets || []).filter(p => !hiddenNames.has((p.name || '').toLowerCase().trim())).map(p => ({ ...p, presetKey: presetKey(p), isCustom: true }));
+  const shared = (state._sharedPresets?.drivers || []).filter(p => !hiddenNames.has((p.name || '').toLowerCase().trim())).map(p => ({ ...p, presetKey: presetKey(p), isShared: true }));
   const result = dedupePresetsByName([...customs, ...shared, ...merged]);
   // Fallback: if a preset has no photo, borrow it from a signed season driver of
   // the same name — so re-importing code that lacks the photo doesn't blank the
@@ -20860,26 +20918,28 @@ function getEffectiveDriverPresets() {
 function getEffectiveTeamPresets() {
   const overrides = state.presetOverrides?.teams || {};
   const hidden = new Set(state.hiddenPresets?.teams || []);
+  const hiddenNames = presetHiddenNames(hidden);
   const merged = TEAM_PRESETS.filter(p => !hidden.has(presetKey(p))).map(p => {
     const k = presetKey(p);
     const ov = findPresetOverride(overrides, p);
     return ov ? { ...p, ...ov, presetKey: k, isBuiltin: true } : { ...p, presetKey: k, isBuiltin: true };
   });
-  const customs = (state.customTeamPresets || []).map(p => ({ ...p, presetKey: presetKey(p), isCustom: true }));
-  const shared = (state._sharedPresets?.teams || []).map(p => ({ ...p, presetKey: presetKey(p), isShared: true }));
+  const customs = (state.customTeamPresets || []).filter(p => !hiddenNames.has((p.name || '').toLowerCase().trim())).map(p => ({ ...p, presetKey: presetKey(p), isCustom: true }));
+  const shared = (state._sharedPresets?.teams || []).filter(p => !hiddenNames.has((p.name || '').toLowerCase().trim())).map(p => ({ ...p, presetKey: presetKey(p), isShared: true }));
   return dedupePresetsByName([...customs, ...shared, ...merged]);
 }
 
 function getEffectiveTrackPresets() {
   const overrides = state.presetOverrides?.tracks || {};
   const hidden = new Set(state.hiddenPresets?.tracks || []);
+  const hiddenNames = presetHiddenNames(hidden);
   const merged = TRACK_PRESETS.filter(p => !hidden.has(presetKey(p))).map(p => {
     const k = presetKey(p);
     const ov = findPresetOverride(overrides, p);
     return ov ? { ...p, ...ov, presetKey: k, isBuiltin: true } : { ...p, presetKey: k, isBuiltin: true };
   });
-  const customs = (state.customTrackPresets || []).map(p => ({ ...p, presetKey: presetKey(p), isCustom: true }));
-  const shared = (state._sharedPresets?.tracks || []).map(p => ({ ...p, presetKey: presetKey(p), isShared: true }));
+  const customs = (state.customTrackPresets || []).filter(p => !hiddenNames.has((p.name || '').toLowerCase().trim())).map(p => ({ ...p, presetKey: presetKey(p), isCustom: true }));
+  const shared = (state._sharedPresets?.tracks || []).filter(p => !hiddenNames.has((p.name || '').toLowerCase().trim())).map(p => ({ ...p, presetKey: presetKey(p), isShared: true }));
   return dedupePresetsByName([...customs, ...shared, ...merged]);
 }
 
@@ -21008,16 +21068,41 @@ function syncDriverPhotoToSeasons(originalKey, name, photo, prevPhoto) {
   return changed;
 }
 
+// Lowercased name set for every hidden/deleted preset key. Used to keep a deleted
+// preset gone across ALL sources (custom, shared/collaborator, harvested season photo),
+// not just the one array it was removed from.
+function presetHiddenNames(hiddenSet) {
+  const out = new Set();
+  hiddenSet.forEach(k => { const n = (String(k).split('|')[0] || '').trim(); if (n) out.add(n); });
+  return out;
+}
+function presetHiddenField(kind) { return kind === 'driver' ? 'drivers' : kind === 'team' ? 'teams' : 'tracks'; }
+
 function addCustomPreset(kind, data) {
   const field = presetCustomField(kind);
   if (!state[field]) state[field] = [];
   state[field].push(data);
+  // Re-adding a preset un-hides its name (so a previously deleted name can return).
+  const hf = presetHiddenField(kind);
+  const nm = (data.name || '').toLowerCase().trim();
+  if (state.hiddenPresets?.[hf] && nm) {
+    state.hiddenPresets[hf] = state.hiddenPresets[hf].filter(k => (String(k).split('|')[0] || '').trim() !== nm);
+  }
   saveState();
 }
 
 function deleteCustomPreset(kind, key) {
   const field = presetCustomField(kind);
+  const name = (String(key).split('|')[0] || '').trim();
   state[field] = (state[field] || []).filter(p => presetKey(p) !== key);
+  // Also HIDE the name so the same preset can't reappear from the shared pool or a
+  // harvested season-driver photo. (Cleared again if the user re-adds the preset.)
+  if (!state.hiddenPresets) state.hiddenPresets = { drivers: [], teams: [], tracks: [] };
+  const hf = presetHiddenField(kind);
+  if (!state.hiddenPresets[hf]) state.hiddenPresets[hf] = [];
+  if (name && !state.hiddenPresets[hf].some(k => (String(k).split('|')[0] || '').trim() === name)) {
+    state.hiddenPresets[hf].push(key);
+  }
   saveState();
 }
 
