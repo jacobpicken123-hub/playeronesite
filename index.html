@@ -9207,6 +9207,75 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
 .podium-spot.empty .podium-photo { display: none; }
 .podium-spot.empty .podium-step { opacity: 0.4; }
 
+/* ============== VERTICAL LEFT NAVIGATION ============== */
+.body-row {
+  display: flex;
+  align-items: flex-start;
+}
+.tabs {
+  flex: 0 0 212px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  padding: 14px 10px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  background: linear-gradient(180deg, var(--bg-1), var(--bg));
+  border-bottom: none;
+  border-right: 1px solid var(--border);
+  position: sticky;
+  top: 68px;                          /* sits just under the sticky topbar */
+  align-self: flex-start;
+  max-height: calc(100vh - 68px);
+  scrollbar-width: thin;
+}
+.tab {
+  width: 100%;
+  text-align: left;
+  padding: 13px 16px;
+  border-radius: 8px;
+  letter-spacing: 0.05em;
+}
+.tab:hover { background: rgba(255,255,255,0.035); }
+.tab.active { background: rgba(225,6,47,0.08); }
+/* Active indicator: a vertical bar on the LEFT edge instead of a bottom underline */
+.tab::after {
+  left: 0; right: auto; top: 50%; bottom: 50%;
+  width: 3px; height: auto;
+  border-radius: 3px;
+  transition: top 0.26s var(--ease-out), bottom 0.26s var(--ease-out);
+}
+.tab.active::after { left: 0; right: auto; top: 9px; bottom: 9px; }
+#app {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: none;
+  margin: 0;
+}
+/* Narrow screens: fall back to the original horizontal top nav */
+@media (max-width: 820px) {
+  .body-row { flex-direction: column; }
+  .tabs {
+    flex: none;
+    width: auto;
+    flex-direction: row;
+    align-items: stretch;
+    gap: 0;
+    position: static;
+    max-height: none;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    padding: 0 16px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    background: var(--bg-1);
+  }
+  .tab { width: auto; border-radius: 0; padding: 16px 16px; }
+  .tab:hover, .tab.active { background: transparent; }
+  .tab::after { left: 50%; right: 50%; top: auto; bottom: -1px; width: auto; height: 2px; }
+  .tab.active::after { left: 12px; right: 12px; top: auto; bottom: -1px; }
+}
+
 </style>
 </head>
 <body>
@@ -9233,11 +9302,11 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
     <div class="topbar-actions" id="topbar-actions"></div>
   </header>
 
-  <!-- Tabs -->
-  <nav class="tabs" id="tabs"></nav>
-
-  <!-- Main view -->
-  <main id="app"></main>
+  <!-- Body: vertical nav rail (left) + main view -->
+  <div class="body-row">
+    <nav class="tabs" id="tabs"></nav>
+    <main id="app"></main>
+  </div>
 
   <!-- Footer -->
   <footer class="footer">
@@ -9288,19 +9357,45 @@ const CLOUD = (() => {
   const cfg = P1_CONFIG.FIREBASE || {};
   // No config → no-op shim; the app runs locally exactly as before.
   if (!cfg.apiKey || !cfg.databaseURL) return { enabled: false };
+  // `blocked: true` means cloud WAS configured but the Firebase SDK couldn't load
+  // or initialise. The usual culprit is an ad/tracker blocker or VPN (Opera GX,
+  // Brave, uBlock) killing requests to gstatic.com / firebaseio.com / googleapis.com.
+  // We surface a banner so the user knows to disable it rather than seeing a dead app.
   if (typeof firebase === 'undefined') {
-    console.warn('[P1] Firebase SDK not loaded — running in local-only mode');
-    return { enabled: false };
+    console.warn('[P1] Firebase SDK not loaded — likely blocked by an ad blocker/VPN');
+    return { enabled: false, blocked: true };
   }
-  firebase.initializeApp(cfg);
-  const auth = firebase.auth();
-  try { auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL); } catch {}
-  // Storage is optional — it now requires the paid Blaze plan, so we don't depend on
-  // it. Images ride along in the Realtime Database instead. null = not available.
-  let storage = null;
-  try { if (cfg.storageBucket) storage = firebase.storage(); } catch (e) { console.warn('[P1] storage unavailable', e); }
-  return { enabled: true, auth, db: firebase.database(), storage };
+  try {
+    firebase.initializeApp(cfg);
+    const auth = firebase.auth();
+    try { auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL); } catch {}
+    // Storage is optional — it now requires the paid Blaze plan, so we don't depend on
+    // it. Images ride along in the Realtime Database instead. null = not available.
+    let storage = null;
+    try { if (cfg.storageBucket) storage = firebase.storage(); } catch (e) { console.warn('[P1] storage unavailable', e); }
+    return { enabled: true, auth, db: firebase.database(), storage };
+  } catch (e) {
+    console.warn('[P1] Firebase init failed — likely blocked by an ad blocker/VPN', e);
+    return { enabled: false, blocked: true };
+  }
 })();
+
+// Non-blocking banner explaining that cloud features are blocked by the browser.
+function showCloudBlockedBanner(msg) {
+  if (document.getElementById('cloud-blocked-banner')) return;
+  const bar = document.createElement('div');
+  bar.id = 'cloud-blocked-banner';
+  bar.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#c8102e;color:#fff;'
+    + 'font:600 13px/1.4 system-ui,sans-serif;padding:10px 44px 10px 16px;text-align:center;'
+    + 'box-shadow:0 2px 12px rgba(0,0,0,.4)';
+  bar.innerHTML = (msg || 'Cloud sync is blocked by this browser (ad blocker or VPN). '
+    + 'Collaboration and sign-in won’t work here.')
+    + ' Disable the ad blocker/VPN for this site (common in Opera GX & Brave) and reload, or use Chrome.'
+    + '<span id="cloud-blocked-x" style="position:absolute;right:12px;top:8px;cursor:pointer;font-size:18px;padding:0 6px">×</span>';
+  document.body.appendChild(bar);
+  const x = document.getElementById('cloud-blocked-x');
+  if (x) x.onclick = () => bar.remove();
+}
 
 // Current signed-in user (null = signed out). Populated by cloudInit().
 let currentUser = null;
@@ -10692,7 +10787,12 @@ function scheduleCloudSync() {
   clearTimeout(cloudSyncTimer);
   cloudSyncTimer = setTimeout(async () => {
     if (typeof setCloudSyncStatus === 'function') setCloudSyncStatus('syncing');
-    try { await cloudPushActive(); if (typeof setCloudSyncStatus === 'function') setCloudSyncStatus('saved'); }
+    try {
+      await cloudPushActive();
+      await cloudPushPresets();        // per-user backup of the preset library (+ photos)
+      await cloudPushSharedPresets();  // contribute my presets to the active save's shared pool
+      if (typeof setCloudSyncStatus === 'function') setCloudSyncStatus('saved');
+    }
     catch (e) { console.warn('[P1] sync failed', e); if (typeof setCloudSyncStatus === 'function') setCloudSyncStatus('error'); }
   }, 500);
 }
@@ -10807,7 +10907,61 @@ async function cloudPullPresets() {
   try { const snap = await CLOUD.db.ref('userPresets/' + currentUser.uid).get(); if (snap.val()) applyPresetBlob(snap.val()); }
   catch (e) { console.warn('[P1] preset restore failed', e); }
 }
-async function cloudPullCollaboratorPresets() { /* v2 */ }
+async function cloudPullCollaboratorPresets() { /* superseded by the realtime savePresets listener below */ }
+
+/* ---- SHARED PRESETS (save-level, realtime) ----------------------------------
+   Driver photos, team logos and track presets are personal libraries, but on a
+   SHARED save every collaborator should see the same images. Each member mirrors
+   their custom driver/team/track presets to a lean, top-level node:
+       /savePresets/{saveId}/{uid} = { drivers:[…], teams:[…], tracks:[…] }
+   (kept OUT of /saves/{id} so editing a result doesn't re-download preset images.)
+   A realtime listener aggregates every member's presets into state._sharedPresets,
+   which getEffective*Presets() already merges into the pickers and uses to backfill
+   logos/photos. So once this populates, collaborators see each other's images live. */
+let _fbSharedPresetsRef = null;
+let _fbSharedPresetsSaveId = null;
+let _fbSubscribedSaveId = null;
+async function cloudPushSharedPresets() {
+  if (!CLOUD.enabled || !currentUser || !state.activeSaveId) return;
+  try {
+    const blob = {
+      drivers: state.customDriverPresets || [],
+      teams:   state.customTeamPresets   || [],
+      tracks:  state.customTrackPresets  || [],
+    };
+    const key = '_sharedPresets:' + state.activeSaveId;
+    const h = JSON.stringify(blob).length + ':' + (blob.drivers.length + blob.teams.length + blob.tracks.length);
+    if (cloudLastPushHashes[key] === h) return; // unchanged → skip
+    await CLOUD.db.ref('savePresets/' + state.activeSaveId + '/' + currentUser.uid).set(blob);
+    cloudLastPushHashes[key] = h;
+  } catch (e) { console.warn('[P1] shared preset push failed', e); }
+}
+function cloudUnsubscribeSharedPresets() {
+  if (_fbSharedPresetsRef) { try { _fbSharedPresetsRef.off(); } catch (e) {} _fbSharedPresetsRef = null; }
+  _fbSharedPresetsSaveId = null;
+}
+function cloudSubscribeSharedPresets(saveId) {
+  if (!CLOUD.enabled || !currentUser || !saveId) return;
+  if (_fbSharedPresetsSaveId === saveId && _fbSharedPresetsRef) return; // already listening
+  cloudUnsubscribeSharedPresets();
+  _fbSharedPresetsSaveId = saveId;
+  _fbSharedPresetsRef = CLOUD.db.ref('savePresets/' + saveId);
+  _fbSharedPresetsRef.on('value', snap => {
+    const all = snap.val() || {};
+    const shared = { drivers: [], teams: [], tracks: [] };
+    Object.keys(all).forEach(uid => {
+      if (uid === currentUser.uid) return; // my own presets already live in my custom library
+      const d = all[uid] || {};
+      (d.drivers || []).forEach(p => p && shared.drivers.push({ ...p, isShared: true }));
+      (d.teams   || []).forEach(p => p && shared.teams.push({ ...p, isShared: true }));
+      (d.tracks  || []).forEach(p => p && shared.tracks.push({ ...p, isShared: true }));
+    });
+    state._sharedPresets = shared;
+    try { backfillTeamLogosFromPresets(); backfillDriverPhotosFromPresets(); } catch (e) {}
+    try { saveLocal(); } catch (e) {}
+    try { renderAll(); } catch (e) {}
+  }, e => console.warn('[P1] shared presets listen failed', e && e.message));
+}
 
 /* ---- SHARING (invite link → members map) ---- */
 async function cloudInvite(saveId, role = 'editor') {
@@ -10860,12 +11014,18 @@ async function cloudFetchPublicSave(slug) {
     return { save, seasons: Object.values(save.seasons).map(season => ({ season })) };
   } catch { return null; }
 }
+let _fbPresenceRef = null;
+function cloudUnsubscribePresence() {
+  if (_fbPresenceRef) { try { _fbPresenceRef.off(); } catch (e) {} _fbPresenceRef = null; }
+}
 function cloudSubscribePresence(saveId) {
   if (!CLOUD.enabled || !currentUser || !saveId) return;
+  cloudUnsubscribePresence();
   const me = CLOUD.db.ref('presence/' + saveId + '/' + currentUser.uid);
   me.set({ email: currentUser.email || 'guest', at: Date.now() });
   me.onDisconnect().remove();
-  CLOUD.db.ref('presence/' + saveId).on('value', snap => {
+  _fbPresenceRef = CLOUD.db.ref('presence/' + saveId);
+  _fbPresenceRef.on('value', snap => {
     const val = snap.val() || {};
     presenceState = {};
     Object.keys(val).forEach(uid => { presenceState[uid] = { email: val[uid].email || 'guest' }; });
@@ -10879,6 +11039,12 @@ async function cloudInit() {
   const inviteToken = new URLSearchParams(location.search).get('invite');
   return await new Promise(resolve => {
     let settled = false;
+    // Safety net: if Firebase auth never calls back (bad config, blocked network,
+    // offline), don't hang the whole boot on a blank screen — fall through to the
+    // sign-in screen after a few seconds so the user can at least act.
+    const failSafe = setTimeout(() => {
+      if (!settled) { settled = true; console.warn('[P1] cloud auth timed out — showing sign-in'); resolve(false); }
+    }, 6000);
     CLOUD.auth.onAuthStateChanged(async user => {
       const was = !!currentUser;
       currentUser = user || null;
@@ -10895,7 +11061,7 @@ async function cloudInit() {
         }
         cloudSubscribeRealtime(); // listeners = initial load + every live change
       }
-      if (!settled) { settled = true; resolve(!!currentUser); }
+      if (!settled) { settled = true; clearTimeout(failSafe); resolve(!!currentUser); }
       else if (currentUser && !was) renderAll();
       else if (!currentUser && was) { localStorage.removeItem(STORAGE_KEY); location.reload(); }
     });
@@ -13390,7 +13556,9 @@ function renderTopbar() {
     act += `<button class="btn btn-primary btn-sm" id="btn-new-save">+ NEW SAVE</button>`;
   }
   if (CLOUD.enabled && currentUser) {
-    act += `<button class="btn btn-ghost btn-sm" id="btn-account" title="${esc(currentUser.email)}">${esc(currentUser.email.split('@')[0])} ▾</button>`;
+    // Anonymous / guest cloud users have no email — fall back to a safe label.
+    const acctLabel = currentUser.email ? currentUser.email.split('@')[0] : (currentUser.isAnonymous ? 'Guest' : 'Account');
+    act += `<button class="btn btn-ghost btn-sm" id="btn-account" title="${esc(currentUser.email || acctLabel)}">${esc(acctLabel)} ▾</button>`;
   }
   if (!currentUser && isGuest()) {
     act += `<button class="btn btn-ghost btn-sm" id="btn-guest" title="Local-only guest mode — click to sign in instead">GUEST ▾</button>`;
@@ -22389,17 +22557,19 @@ function renderAll() {
   renderTopbar();
   renderTabs();
   renderMain();
-  // Keep presence channel in sync with the active save
+  // Keep per-save realtime channels (presence + shared presets) synced with the active save.
   if (CLOUD.enabled && currentUser) {
-    const desiredKey = state.activeSaveId ? `presence:save:${state.activeSaveId}` : null;
-    const currentKey = presenceChannel?.topic || null;
-    if (desiredKey !== currentKey) {
-      if (presenceChannel) {
-        CLOUD.client.removeChannel(presenceChannel);
-        presenceChannel = null;
-        presenceState = {};
+    if (state.activeSaveId !== _fbSubscribedSaveId) {
+      _fbSubscribedSaveId = state.activeSaveId || null;
+      presenceState = {};
+      if (state.activeSaveId) {
+        cloudSubscribePresence(state.activeSaveId);
+        cloudSubscribeSharedPresets(state.activeSaveId);
+        cloudPushSharedPresets(); // share my presets with this save's members
+      } else {
+        cloudUnsubscribePresence();
+        cloudUnsubscribeSharedPresets();
       }
-      if (state.activeSaveId) cloudSubscribePresence(state.activeSaveId);
     }
     renderPresenceDots();
   }
@@ -22408,7 +22578,19 @@ function renderAll() {
 
 /* ---------- init ---------- */
 (async () => {
+  // Cloud was configured but the SDK was blocked (ad blocker / VPN, e.g. Opera GX).
+  // Tell the user why sync/sign-in is missing, then run the app locally.
+  if (CLOUD.blocked) showCloudBlockedBanner();
   if (CLOUD.enabled) {
+    // Watchdog: the SDK loaded, but if the realtime-database socket never connects
+    // (host blocked by a VPN/ad blocker) warn the user instead of silently failing.
+    try {
+      let everConnected = false;
+      CLOUD.db.ref('.info/connected').on('value', s => { if (s.val()) everConnected = true; });
+      setTimeout(() => {
+        if (!everConnected) showCloudBlockedBanner('Cloud sync can’t reach the database — the connection is being blocked.');
+      }, 9000);
+    } catch (e) {}
     const signedIn = await cloudInit();
     if (isPublicView) return; // Public view took over — skip normal app render
     if (!signedIn) {
