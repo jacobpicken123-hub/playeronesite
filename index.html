@@ -9487,6 +9487,15 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
 .rc-pending { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 20px 0 12px; }
 .rc-pending-flag { filter: drop-shadow(0 2px 6px rgba(0,0,0,0.5)); }
 .rc-pending-country { font-family: var(--f-display); font-weight: 600; font-size: 13px; color: var(--text-soft); text-transform: uppercase; letter-spacing: 0.04em; }
+
+/* Driver-preset disambiguation picker */
+.preset-pick-list { display: flex; flex-direction: column; gap: 8px; }
+.preset-pick-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg-1); cursor: pointer; text-align: left; transition: all 0.15s; }
+.preset-pick-row:hover { border-color: var(--red); background: var(--bg-2); }
+.preset-pick-photo { width: 40px; height: 40px; border-radius: 50%; background: var(--bg-3) center/cover no-repeat; border: 2px solid var(--border-hi); flex-shrink: 0; }
+.preset-pick-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.preset-pick-name { font-family: var(--f-display); font-weight: 700; font-size: 15px; text-transform: uppercase; color: var(--text); }
+.preset-pick-meta { font-family: var(--f-mono); font-size: 10px; letter-spacing: 0.08em; color: var(--text-muted); text-transform: uppercase; }
 .rr-status { margin-top: 16px; border-top: 1px dashed var(--border-hi); padding-top: 14px; }
 .rr-status-head { font-family: var(--f-display); font-weight: 700; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 10px; }
 .rr-status-row { display: flex; align-items: center; justify-content: space-between; padding: 7px 6px; border-bottom: 1px solid var(--border-dim); }
@@ -14611,6 +14620,33 @@ function openDriverModal(driverId, presetTeamId) {
         placeholder,
         onChange: (v) => { photoValue = v; }
       });
+
+      // When a name is entered/changed, pull the driver's details from a matching
+      // preset (photo from the library / Firebase shared pool, country, number,
+      // team). If several presets match the name, ask which one to use.
+      const applyDriverPreset = (p) => {
+        if (!p) return;
+        const nameEl = $('#d-name', root); if (nameEl) nameEl.value = p.name;
+        const numEl = $('#d-num', root); if (numEl && p.number != null && !numEl.value) numEl.value = p.number;
+        if (p.country) { const c = $('#d-ctry', root); if (c) { c.value = p.country; const f = $('#d-ctry-flag', root); if (f) f.textContent = flag(p.country); } }
+        if (p.team) { const tm = season.teams.find(t => normalizeTeamName(t.name) === normalizeTeamName(p.team)); const sel = $('#d-team', root); if (tm && sel && !sel.value) sel.value = tm.id; }
+        const photos = presetPhotosList(p);
+        if (!photoValue && photos.length) {
+          if (photos.length > 1) {
+            pickPresetPhoto(p, (url) => { photoValue = url || ''; photoWidget.setValue(photoValue); });
+          } else {
+            photoValue = photos[0].url || ''; photoWidget.setValue(photoValue);
+          }
+        }
+        toast(`Filled from "${p.name}" preset`, 'success');
+      };
+      const nameEl = $('#d-name', root);
+      if (nameEl) nameEl.addEventListener('change', () => {
+        const matches = allDriverPresetMatches(nameEl.value);
+        if (!matches.length) return;
+        if (matches.length === 1) applyDriverPreset(matches[0]);
+        else pickDriverPreset(matches, applyDriverPreset);
+      });
       // "Pick from preset photos" — opens a chooser when preset has multiple,
       // or applies the single photo directly when there's only one. Reads the
       // LATEST preset state via matchDriverPresetForName, so newly-uploaded
@@ -18992,6 +19028,46 @@ function matchDriverPresetForName(name) {
     }
   }
   return null;
+}
+
+// ALL effective driver presets that match a typed name — exact full-name match(es)
+// first, else every preset sharing the last name. Used to ASK which one to use when
+// a name is ambiguous (e.g. "Pickin" → Logan Pickin / Kai Pickin).
+function allDriverPresetMatches(name) {
+  const target = normalizeDriverName(name);
+  if (!target) return [];
+  const all = getEffectiveDriverPresets();
+  const exact = all.filter(p => normalizeDriverName(p.name) === target);
+  if (exact.length) return exact;
+  const lastName = target.split(' ').pop();
+  if (lastName && lastName.length >= 3) {
+    return all.filter(p => normalizeDriverName(p.name).split(' ').pop() === lastName);
+  }
+  return [];
+}
+
+// Modal to choose between several matching driver presets.
+function pickDriverPreset(matches, cb) {
+  modal({
+    title: 'Which driver preset?',
+    body: `<div class="field-help" style="margin-bottom:12px">More than one preset matches that name — pick which driver to use.</div>
+      <div class="preset-pick-list">
+        ${matches.map((p, i) => {
+          const ph = defaultPresetPhoto(p);
+          const photo = ph ? `style="background-image:url('${esc(ph)}')"` : '';
+          const tags = [p.isCustom ? 'custom' : (p.isShared ? 'shared' : (p.era || 'preset')), p.number ? '#' + p.number : '', p.country || ''].filter(Boolean).join(' · ');
+          return `<button type="button" class="preset-pick-row" data-pick="${i}">
+            <span class="preset-pick-photo" ${photo}></span>
+            <span class="preset-pick-info"><span class="preset-pick-name">${esc(p.name)}</span><span class="preset-pick-meta">${esc(tags)}</span></span>
+          </button>`;
+        }).join('')}
+      </div>`,
+    footer: `<button class="btn btn-ghost" data-act="cancel">Cancel</button>`,
+    onMount: (root, close) => {
+      $('[data-act="cancel"]', root).onclick = close;
+      $$('[data-pick]', root).forEach(b => b.onclick = () => { cb(matches[Number(b.dataset.pick)]); close(); });
+    }
+  });
 }
 
 // Normalise a team name for matching: lowercase, strip diacritics/punctuation,
