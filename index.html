@@ -9249,8 +9249,11 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
   <div id="modal-root"></div>
   <div id="toast-root"></div>
 
-  <!-- Supabase client (loaded from CDN — no build step required) -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <!-- Firebase SDK (compat build — no bundler needed; exposes the global `firebase`) -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-storage-compat.js"></script>
   <script>
 /* =====================================================
    P1 — Player One Season Creator
@@ -9267,23 +9270,36 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
    To enable: set SUPABASE_URL and SUPABASE_ANON_KEY below to your project values.
    ===================================================== */
 const P1_CONFIG = {
-  SUPABASE_URL:      'https://ujrjjxxdwhlmgailrnbw.supabase.co',
-  SUPABASE_ANON_KEY: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVqcmpqeHhkd2hsbWdhaWxybmJ3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg1MTE5NTIsImV4cCI6MjA5NDA4Nzk1Mn0.4-uGvz_o69mgGzf9sjXh7jP5Qgeo_YsR8TQiMxG334o',
+  // ⬇️  PASTE YOUR FIREBASE WEB CONFIG HERE
+  //    (Firebase console → Project settings ⚙ → Your apps → Web app → firebaseConfig).
+  //    `databaseURL` is the Realtime Database and is REQUIRED. Leave apiKey blank to
+  //    run the app in local-only mode (no cloud, no sign-in) exactly as before.
+  FIREBASE: {
+    apiKey:        'AIzaSyB3bchWZ120PkQGLF_gxQ9FN4u9g5--dFk',
+    authDomain:    'newf1stie.firebaseapp.com',
+    databaseURL:   'https://newf1stie-default-rtdb.europe-west1.firebasedatabase.app',
+    projectId:     'newf1stie',
+    storageBucket: 'newf1stie.firebasestorage.app',
+    appId:         '1:353486057689:web:2054dab30ecfae2c950ec8',
+  },
 };
 
 const CLOUD = (() => {
-  // If config is empty, return a no-op shim — the app continues to work locally exactly as before.
-  if (!P1_CONFIG.SUPABASE_URL || !P1_CONFIG.SUPABASE_ANON_KEY) {
+  const cfg = P1_CONFIG.FIREBASE || {};
+  // No config → no-op shim; the app runs locally exactly as before.
+  if (!cfg.apiKey || !cfg.databaseURL) return { enabled: false };
+  if (typeof firebase === 'undefined') {
+    console.warn('[P1] Firebase SDK not loaded — running in local-only mode');
     return { enabled: false };
   }
-  if (typeof supabase === 'undefined') {
-    console.warn('[P1] Supabase SDK not loaded — running in local-only mode');
-    return { enabled: false };
-  }
-  const client = supabase.createClient(P1_CONFIG.SUPABASE_URL, P1_CONFIG.SUPABASE_ANON_KEY, {
-    auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
-  });
-  return { enabled: true, client };
+  firebase.initializeApp(cfg);
+  const auth = firebase.auth();
+  try { auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL); } catch {}
+  // Storage is optional — it now requires the paid Blaze plan, so we don't depend on
+  // it. Images ride along in the Realtime Database instead. null = not available.
+  let storage = null;
+  try { if (cfg.storageBucket) storage = firebase.storage(); } catch (e) { console.warn('[P1] storage unavailable', e); }
+  return { enabled: true, auth, db: firebase.database(), storage };
 })();
 
 // Current signed-in user (null = signed out). Populated by cloudInit().
@@ -9304,36 +9320,22 @@ let cloudSyncTimer = null;
 // points visibly recalculate. This window stays up for the whole push + drain.
 let cloudEchoSuppressUntil = 0;
 
-/* ---------- AUTH wrappers ---------- */
+/* ---------- AUTH wrappers (Firebase Auth) ---------- */
 async function cloudSignUp(email, password) {
-  const { data, error } = await CLOUD.client.auth.signUp({
-    email, password,
-    options: { emailRedirectTo: window.location.origin },
-  });
-  if (error) throw error;
-  return data;
+  return (await CLOUD.auth.createUserWithEmailAndPassword(email, password)).user;
 }
 async function cloudSignIn(email, password) {
-  const { data, error } = await CLOUD.client.auth.signInWithPassword({ email, password });
-  if (error) throw error;
-  return data;
+  return (await CLOUD.auth.signInWithEmailAndPassword(email, password)).user;
 }
 async function cloudMagicLink(email) {
-  const { error } = await CLOUD.client.auth.signInWithOtp({
-    email,
-    options: { emailRedirectTo: window.location.origin },
-  });
-  if (error) throw error;
+  // Email-link sign-in isn't wired up on Firebase yet — steer to the live methods.
+  throw new Error('Use email + password or “Continue with Google”.');
 }
 async function cloudGoogleSignIn() {
-  const { error } = await CLOUD.client.auth.signInWithOAuth({
-    provider: 'google',
-    options: { redirectTo: window.location.origin },
-  });
-  if (error) throw error;
+  await CLOUD.auth.signInWithPopup(new firebase.auth.GoogleAuthProvider());
 }
 async function cloudSignOut() {
-  await CLOUD.client.auth.signOut();
+  await CLOUD.auth.signOut();
   // Clear all local state on sign-out so user B doesn't see user A's cached data
   localStorage.removeItem(STORAGE_KEY);
   location.reload();
@@ -9671,9 +9673,15 @@ async function cloudPushOneSave(save) {
     save._members = [{ save_id: save.id, user_id: currentUser.id, role: 'owner' }];
     save._cloud = true;
   } else {
-    // Existing save → UPDATE name only
-    const { error: eUpd } = await CLOUD.client.from('saves').update({ name: save.name }).eq('id', save.id);
-    if (eUpd) { console.warn('[P1] save update failed', eUpd); return; }
+    // Existing save → UPDATE name, but ONLY when it actually changed. This used to
+    // fire on EVERY push (including pure navigation), writing the saves row and
+    // emitting a realtime message each time — pure waste against the message quota.
+    const nameHash = 'name:' + save.name;
+    if (cloudLastPushHashes['save:' + save.id] !== nameHash) {
+      const { error: eUpd } = await CLOUD.client.from('saves').update({ name: save.name }).eq('id', save.id);
+      if (eUpd) { console.warn('[P1] save update failed', eUpd); return; }
+      cloudLastPushHashes['save:' + save.id] = nameHash;
+    }
   }
 
   // Upsert every season in this save
@@ -10598,6 +10606,296 @@ async function cloudInit() {
   return false; // not signed in
 }
 
+/* =====================================================
+   ▼ FIREBASE CLOUD LAYER (Realtime Database) ▼
+   Defined AFTER the legacy Supabase functions above — and since a later function
+   declaration wins in JS, THESE override them. The Supabase code is now dead (never
+   called; its CLOUD.client refs never run). Reuses existing module vars. Data model:
+     /saves/{id}/info           { name, ownerId, members:{uid:role}, updatedAt }
+     /saves/{id}/seasons/{sid}  full season (base64 images stripped → rehydrate locally)
+     /userSaves/{uid}/{saveId}  true   (which saves a user can open)
+   A per-save onValue listener IS the initial load AND the live realtime feed.
+   ===================================================== */
+let _fbSaveListeners = {};
+let _fbUserSavesRef = null;
+let _fbLastLocalEditAt = 0;
+let _fbRetryTimers = {};
+
+function _fbArr(x) {
+  if (Array.isArray(x)) return x;
+  if (x && typeof x === 'object') return Object.keys(x).sort((a, b) => a - b).map(k => x[k]);
+  return [];
+}
+function _fbCleanSeason(season) {
+  const s = JSON.parse(JSON.stringify(season)); // deep clone, drops undefined (RTDB rejects it)
+  (s.drivers || []).forEach(d => { delete d.photos; if (d.photo && String(d.photo).startsWith('data:')) d.photo = null; });
+  (s.teams   || []).forEach(t => { delete t.logos;  if (t.logo  && String(t.logo ).startsWith('data:')) t.logo  = null; });
+  return s;
+}
+function _fbSeasonFromRtdb(raw) {
+  const s = Object.assign({}, raw);
+  s.drivers = _fbArr(s.drivers);
+  s.teams   = _fbArr(s.teams);
+  s.races   = _fbArr(s.races).map(r => Object.assign({}, r, { results: _fbArr(r.results), sprintResults: _fbArr(r.sprintResults) }));
+  return s;
+}
+function _fbSaveFromRtdb(saveId, raw) {
+  const info = (raw && raw.info) || {};
+  const members = info.members || {};
+  const seasons = {};
+  for (const sid in ((raw && raw.seasons) || {})) seasons[sid] = _fbSeasonFromRtdb(raw.seasons[sid]);
+  return {
+    id: saveId, name: info.name || 'Save', ownerId: info.ownerId || null, members,
+    _members: Object.keys(members).map(uid => ({ user_id: uid, role: members[uid] })),
+    _cloud: true, createdAt: info.createdAt || Date.now(), updatedAt: info.updatedAt || Date.now(), seasons,
+  };
+}
+
+// No Storage on the free plan → don't upload; images stay in the preset library and
+// rehydrate via backfill. Return the value untouched.
+async function uploadImageToBucket(value, path) { return value; }
+
+/* ---- PUSH ---- */
+async function cloudPushOneSave(save) {
+  if (!CLOUD.enabled || !currentUser || !save) return;
+  const uid = currentUser.uid;
+  if (!save.ownerId) save.ownerId = uid;
+  if (!save.members) save.members = { [uid]: 'owner' };
+  cloudSaveIds.add(save.id);
+  const ref = CLOUD.db.ref('saves/' + save.id);
+  const info = { name: save.name || '', ownerId: save.ownerId, members: save.members, updatedAt: Date.now() };
+  const infoHash = JSON.stringify([info.name, info.members, info.ownerId]);
+  if (cloudLastPushHashes['info:' + save.id] !== infoHash) {
+    await ref.child('info').update(info);
+    cloudLastPushHashes['info:' + save.id] = infoHash;
+  }
+  await CLOUD.db.ref('userSaves/' + uid + '/' + save.id).set(true); // index for the current user; collaborators add their own on accept-invite
+  for (const season of Object.values(save.seasons || {})) {
+    const clean = _fbCleanSeason(season);
+    const h = JSON.stringify(clean);
+    if (cloudLastPushHashes['season:' + season.id] === h) continue;
+    await ref.child('seasons/' + season.id).set(clean);  // set() replaces the node → removed drivers/results drop automatically
+    cloudLastPushHashes['season:' + season.id] = h;
+  }
+}
+async function cloudPushActive() {
+  if (!CLOUD.enabled || !currentUser) return;
+  for (const save of Object.values(state.saves || {})) {
+    if (!save) continue;
+    try { await cloudPushOneSave(save); } catch (e) { console.warn('[P1] push failed', save.id, e); }
+  }
+}
+function scheduleCloudSync() {
+  if (!CLOUD.enabled || !currentUser) return;
+  _fbLastLocalEditAt = Date.now();
+  if (typeof setCloudSyncStatus === 'function') setCloudSyncStatus('pending');
+  clearTimeout(cloudSyncTimer);
+  cloudSyncTimer = setTimeout(async () => {
+    if (typeof setCloudSyncStatus === 'function') setCloudSyncStatus('syncing');
+    try { await cloudPushActive(); if (typeof setCloudSyncStatus === 'function') setCloudSyncStatus('saved'); }
+    catch (e) { console.warn('[P1] sync failed', e); if (typeof setCloudSyncStatus === 'function') setCloudSyncStatus('error'); }
+  }, 500);
+}
+async function cloudPushNowBlocking(message) {
+  if (!CLOUD.enabled || !currentUser) return;
+  clearTimeout(cloudSyncTimer);
+  if (typeof showSyncOverlay === 'function') showSyncOverlay(message || 'Saving…');
+  if (typeof setCloudSyncStatus === 'function') setCloudSyncStatus('syncing');
+  try { await cloudPushActive(); if (typeof setCloudSyncStatus === 'function') setCloudSyncStatus('saved'); }
+  catch (e) { console.warn('[P1] blocking push failed', e); if (typeof setCloudSyncStatus === 'function') setCloudSyncStatus('error'); }
+  finally { if (typeof hideSyncOverlay === 'function') hideSyncOverlay(); }
+}
+
+/* ---- PULL (one-time) + REALTIME (onValue = load + live) ---- */
+async function cloudFetchAllRows() { return []; } // unused on RTDB
+async function cloudPullAllSaves() {
+  if (!CLOUD.enabled || !currentUser) return;
+  const uid = currentUser.uid;
+  const idx = await CLOUD.db.ref('userSaves/' + uid).get();
+  const ids = idx.val() ? Object.keys(idx.val()) : [];
+  for (const id of ids) {
+    const snap = await CLOUD.db.ref('saves/' + id).get();
+    if (snap.val()) { state.saves[id] = _fbSaveFromRtdb(id, snap.val()); dedupeSaveResults(state.saves[id]); cloudSaveIds.add(id); }
+  }
+  saveLocal();
+}
+function cloudSubscribeRealtime() {
+  if (!CLOUD.enabled || !currentUser) return;
+  cloudUnsubscribeAll();
+  cloudRealtimeOk = true;
+  _fbUserSavesRef = CLOUD.db.ref('userSaves/' + currentUser.uid);
+  _fbUserSavesRef.on('value', snap => {
+    const ids = snap.val() ? Object.keys(snap.val()) : [];
+    ids.forEach(id => { if (!_fbSaveListeners[id]) _fbAttachSave(id); });
+    Object.keys(_fbSaveListeners).forEach(id => {
+      if (!ids.includes(id)) { _fbDetachSave(id); if (state.saves[id]) { delete state.saves[id]; renderAll(); } }
+    });
+  });
+}
+function _fbAttachSave(saveId) {
+  const ref = CLOUD.db.ref('saves/' + saveId);
+  _fbSaveListeners[saveId] = ref;
+  ref.on('value', snap => _fbOnSaveSnapshot(saveId, snap));
+}
+function _fbDetachSave(saveId) {
+  if (_fbSaveListeners[saveId]) { _fbSaveListeners[saveId].off(); delete _fbSaveListeners[saveId]; }
+}
+function cloudUnsubscribeAll() {
+  if (_fbUserSavesRef) { _fbUserSavesRef.off(); _fbUserSavesRef = null; }
+  Object.values(_fbSaveListeners).forEach(r => r.off());
+  _fbSaveListeners = {};
+}
+function _fbOnSaveSnapshot(saveId, snap) {
+  const raw = snap.val();
+  lastRealtimeEventAt = Date.now();
+  if (!raw) { if (state.saves[saveId]) { delete state.saves[saveId]; renderAll(); } return; }
+  cloudSaveIds.add(saveId);
+  // Don't clobber an in-progress edit or a local change we haven't pushed yet — retry shortly.
+  if (userIsMidEntry() || (Date.now() - _fbLastLocalEditAt < 1500)) {
+    clearTimeout(_fbRetryTimers[saveId]);
+    _fbRetryTimers[saveId] = setTimeout(() => CLOUD.db.ref('saves/' + saveId).get().then(s => _fbOnSaveSnapshot(saveId, s)).catch(() => {}), 1300);
+    return;
+  }
+  const before = (typeof cloudStateSignature === 'function') ? cloudStateSignature() : Math.random();
+  const incoming = _fbSaveFromRtdb(saveId, raw);
+  state.saves[saveId] = incoming;
+  dedupeSaveResults(incoming);
+  if (state.activeSaveId === saveId && state.activeSeasonId && !incoming.seasons[state.activeSeasonId]) state.activeSeasonId = null;
+  backfillTeamLogosFromPresets(); backfillDriverPhotosFromPresets();
+  saveLocal();
+  if (typeof cloudStateSignature === 'function' && cloudStateSignature() === before) return; // our own echo, identical → no flicker
+  renderAll();
+}
+
+/* ---- DELETIONS (a season set() already drops removed drivers/results) ---- */
+async function cloudDeleteSave(saveId) {
+  if (!CLOUD.enabled || !currentUser || !saveId) return;
+  try {
+    const ms = await CLOUD.db.ref('saves/' + saveId + '/info/members').get();
+    const members = ms.val() || {};
+    await CLOUD.db.ref('saves/' + saveId).remove();
+    for (const m in members) { try { await CLOUD.db.ref('userSaves/' + m + '/' + saveId).remove(); } catch {} }
+    try { await CLOUD.db.ref('userSaves/' + currentUser.uid + '/' + saveId).remove(); } catch {}
+  } catch (e) { console.warn('[P1] delete save failed', e); }
+  cloudSaveIds.delete(saveId);
+  _fbDetachSave(saveId);
+}
+async function cloudDeleteSeason(seasonId) {
+  if (!CLOUD.enabled || !currentUser || !seasonId || !state.activeSaveId) return;
+  try { await CLOUD.db.ref('saves/' + state.activeSaveId + '/seasons/' + seasonId).remove(); }
+  catch (e) { console.warn('[P1] delete season failed', e); }
+  delete cloudLastPushHashes['season:' + seasonId];
+}
+async function cloudDeleteDriver() {}
+async function cloudDeleteTeam() {}
+async function cloudDeleteRace() {}
+async function cloudDeleteResultRows() {}
+
+/* ---- PRESET BACKUP (per-user) ---- */
+async function cloudPushPresets() {
+  if (!CLOUD.enabled || !currentUser || typeof collectPresetBlob !== 'function') return;
+  try {
+    const blob = collectPresetBlob();
+    const h = JSON.stringify(blob).length + ':' + Object.keys(blob).length;
+    if (cloudLastPushHashes['_presets'] === h) return;
+    await CLOUD.db.ref('userPresets/' + currentUser.uid).set(blob);
+    cloudLastPushHashes['_presets'] = h;
+  } catch (e) { console.warn('[P1] preset backup failed', e); }
+}
+async function cloudPullPresets() {
+  if (!CLOUD.enabled || !currentUser || typeof applyPresetBlob !== 'function') return;
+  try { const snap = await CLOUD.db.ref('userPresets/' + currentUser.uid).get(); if (snap.val()) applyPresetBlob(snap.val()); }
+  catch (e) { console.warn('[P1] preset restore failed', e); }
+}
+async function cloudPullCollaboratorPresets() { /* v2 */ }
+
+/* ---- SHARING (invite link → members map) ---- */
+async function cloudInvite(saveId, role = 'editor') {
+  if (!CLOUD.enabled || !currentUser) throw new Error('Sign in first.');
+  const token = CLOUD.db.ref('invites').push().key;
+  await CLOUD.db.ref('invites/' + token).set({ saveId, role, createdAt: Date.now() });
+  return token;
+}
+async function cloudAcceptInvite(token) {
+  if (!CLOUD.enabled || !currentUser || !token) throw new Error('Invalid invite.');
+  const snap = await CLOUD.db.ref('invites/' + token).get();
+  const inv = snap.val();
+  if (!inv || !inv.saveId) throw new Error('Invite link is invalid or expired.');
+  await CLOUD.db.ref('saves/' + inv.saveId + '/info/members/' + currentUser.uid).set(inv.role || 'editor');
+  await CLOUD.db.ref('userSaves/' + currentUser.uid + '/' + inv.saveId).set(true);
+  return inv.saveId;
+}
+async function cloudRemoveMember(saveId, userId) {
+  await CLOUD.db.ref('saves/' + saveId + '/info/members/' + userId).remove();
+  try { await CLOUD.db.ref('userSaves/' + userId + '/' + saveId).remove(); } catch {}
+}
+async function cloudUpdateMemberRole(saveId, userId, newRole) {
+  await CLOUD.db.ref('saves/' + saveId + '/info/members/' + userId).set(newRole);
+}
+
+/* ---- PUBLIC SHARE + PRESENCE ---- */
+async function cloudEnablePublicShare(saveId) {
+  const slug = CLOUD.db.ref('public').push().key || saveId;
+  await CLOUD.db.ref('public/' + slug).set({ saveId, at: Date.now() });
+  try { await CLOUD.db.ref('saves/' + saveId + '/info/publicSlug').set(slug); } catch {}
+  return slug;
+}
+async function cloudDisablePublicShare(saveId) {
+  try {
+    const s = await CLOUD.db.ref('saves/' + saveId + '/info/publicSlug').get();
+    if (s.val()) await CLOUD.db.ref('public/' + s.val()).remove();
+    await CLOUD.db.ref('saves/' + saveId + '/info/publicSlug').remove();
+  } catch {}
+}
+async function cloudGetPublicShareSlug(saveId) {
+  try { const s = await CLOUD.db.ref('saves/' + saveId + '/info/publicSlug').get(); return s.val() || null; } catch { return null; }
+}
+async function cloudFetchPublicSave(slug) {
+  try {
+    const ps = await CLOUD.db.ref('public/' + slug).get();
+    const meta = ps.val(); if (!meta || !meta.saveId) return null;
+    const ss = await CLOUD.db.ref('saves/' + meta.saveId).get();
+    if (!ss.val()) return null;
+    const save = _fbSaveFromRtdb(meta.saveId, ss.val());
+    return { save, seasons: Object.values(save.seasons).map(season => ({ season })) };
+  } catch { return null; }
+}
+function cloudSubscribePresence(saveId) {
+  if (!CLOUD.enabled || !currentUser || !saveId) return;
+  const me = CLOUD.db.ref('presence/' + saveId + '/' + currentUser.uid);
+  me.set({ email: currentUser.email || 'guest', at: Date.now() });
+  me.onDisconnect().remove();
+  CLOUD.db.ref('presence/' + saveId).on('value', snap => {
+    const val = snap.val() || {};
+    presenceState = {};
+    Object.keys(val).forEach(uid => { presenceState[uid] = { email: val[uid].email || 'guest' }; });
+    if (typeof renderPresenceDots === 'function') renderPresenceDots();
+  });
+}
+
+/* ---- INIT (Firebase Auth) ---- */
+async function cloudInit() {
+  if (!CLOUD.enabled) return false;
+  const inviteToken = new URLSearchParams(location.search).get('invite');
+  return await new Promise(resolve => {
+    let settled = false;
+    CLOUD.auth.onAuthStateChanged(async user => {
+      const was = !!currentUser;
+      currentUser = user || null;
+      if (currentUser) {
+        if (inviteToken) {
+          try { await cloudAcceptInvite(inviteToken); const u = new URL(location.href); u.searchParams.delete('invite'); history.replaceState({}, '', u.toString()); }
+          catch (e) { console.warn('[P1] invite failed', e.message); }
+        }
+        cloudSubscribeRealtime(); // listeners = initial load + every live change
+      }
+      if (!settled) { settled = true; resolve(!!currentUser); }
+      else if (currentUser && !was) renderAll();
+      else if (!currentUser && was) { localStorage.removeItem(STORAGE_KEY); location.reload(); }
+    });
+  });
+}
+
 /* ---------- PUBLIC READ-ONLY VIEW (Feature #11) ---------- */
 let isPublicView = false;
 function renderPublicView(data) {
@@ -11475,6 +11773,15 @@ function saveState() {
   } catch (e) { console.warn('Save failed', e); }
   // Mirror to cloud in the background (debounced, no-op if cloud disabled or not signed in)
   scheduleCloudSync();
+}
+
+// Persist to localStorage WITHOUT touching the cloud — for pure UI state (which
+// page/tab/sub-view/save you're looking at). Navigation doesn't change any shared
+// data, so it must not push to Supabase (that was firing needless writes + realtime
+// messages on every click). Also does NOT bump updatedAt — opening a page shouldn't
+// make your copy "newer" for the merge.
+function saveLocal() {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(stateForStorage())); } catch (e) { console.warn('Local save failed', e); }
 }
 
 /* ---------- utils ---------- */
@@ -13050,13 +13357,13 @@ function renderTopbar() {
     state.activeSaveId = v || null;
     state.activeSeasonId = null;
     state.view = v ? 'home-save' : 'home';
-    saveState(); renderAll();
+    saveLocal(); renderAll(); // switching save = UI state, no cloud push
   };
   if ($('#season-select')) $('#season-select').onchange = (e) => {
     const v = e.target.value;
     state.activeSeasonId = v || null;
     state.view = v ? 'dashboard' : 'home-save';
-    saveState(); renderAll();
+    saveLocal(); renderAll(); // switching season = UI state, no cloud push
   };
 
   // actions
@@ -13117,7 +13424,7 @@ function renderTabs() {
   $$('.tab', tabs).forEach(b => b.onclick = () => {
     state.view = b.dataset.tab;
     state.raceId = null;
-    saveState(); renderAll();
+    saveLocal(); renderAll(); // navigation only — no cloud push
   });
 }
 
@@ -13204,7 +13511,7 @@ function renderHome() {
       state.activeSaveId = c.dataset.save;
       state.activeSeasonId = null;
       state.view = 'home-save';
-      saveState(); renderAll();
+      saveLocal(); renderAll(); // opening a save = UI state, no cloud push
     });
   }, 0);
   return wrap;
@@ -13284,7 +13591,7 @@ function renderHomeSave() {
       e.stopPropagation();
       state.activeSeasonId = b.dataset.viewSeason;
       state.view = 'dashboard';
-      saveState(); renderAll();
+      saveLocal(); renderAll(); // opening a season = UI state, no cloud push
     });
     $$('[data-del-season]', wrap).forEach(b => b.onclick = (e) => {
       e.stopPropagation();
@@ -16000,7 +16307,7 @@ function renderStandings() {
     });
     $('#open-predictions', wrap)?.addEventListener('click', openPredictionsModal);
     $('#open-progression', wrap)?.addEventListener('click', () => {
-      state.view = 'stats'; _statsView = 'charts'; saveState(); renderAll();
+      state.view = 'stats'; _statsView = 'charts'; saveLocal(); renderAll();
     });
   }, 0);
   return wrap;
