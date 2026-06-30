@@ -10814,7 +10814,7 @@ async function cloudInvite(saveId, role = 'editor') {
   if (!CLOUD.enabled || !currentUser) throw new Error('Sign in first.');
   const token = CLOUD.db.ref('invites').push().key;
   await CLOUD.db.ref('invites/' + token).set({ saveId, role, createdAt: Date.now() });
-  return token;
+  return `${window.location.origin}${window.location.pathname}?invite=${token}`;
 }
 async function cloudAcceptInvite(token) {
   if (!CLOUD.enabled || !currentUser || !token) throw new Error('Invalid invite.');
