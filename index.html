@@ -9382,7 +9382,7 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
 }
 .rr-table-head, .rr-row {
   display: grid;
-  grid-template-columns: 56px 1fr 1.1fr 88px 70px;
+  grid-template-columns: 52px 1fr 1fr 108px 56px;
   align-items: center;
   gap: 8px;
 }
@@ -9429,6 +9429,47 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
 .rr-side-name { font-family: var(--f-display); font-weight: 800; font-size: 18px; text-transform: uppercase; }
 .rr-side-name .first { color: var(--text-soft); font-weight: 600; }
 .rr-side-team { display: flex; align-items: center; justify-content: center; gap: 7px; margin-top: 6px; font-size: 13px; color: var(--text-soft); }
+
+/* Driver names: first name white, surname in the team colour (set via --team-color on the row/card) */
+.rr-name .last, .rr-podium-name .last, .rr-side-name .last { color: var(--team-color, var(--text)); font-weight: 800; }
+.rr-name .first, .rr-podium-name .first, .rr-side-name .first { color: #fff; }
+
+/* ---- editable race entry ---- */
+.rr-entry-hint { text-align: center; color: var(--text-muted); font-size: 12px; margin: -10px 0 18px; }
+.rr-entry-hint b { color: var(--text-soft); }
+.rr-input-wrap { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.rr-input {
+  width: 100%; min-width: 0;
+  background: var(--bg-1); border: 1px solid var(--border-hi); border-radius: 7px;
+  padding: 8px 11px; color: var(--text);
+  font-family: var(--f-display); font-weight: 600; font-size: 13px; letter-spacing: 0.04em; text-transform: uppercase;
+}
+.rr-input::placeholder { color: var(--text-dim); text-transform: none; letter-spacing: 0; font-weight: 400; }
+.rr-input:focus { outline: none; border-color: #2f7bf0; box-shadow: 0 0 0 2px rgba(47,123,240,0.25); }
+.rr-hint { font-family: var(--f-mono); font-size: 10px; color: var(--text-dim); white-space: nowrap; }
+.rr-erow .rr-entry-tools { display: flex; gap: 5px; align-items: center; }
+.rr-mini {
+  min-width: 27px; height: 27px; padding: 0 6px; border-radius: 6px;
+  border: 1px solid var(--border-hi); background: var(--bg-1); color: var(--text-muted);
+  font-family: var(--f-display); font-weight: 800; font-size: 10px; cursor: pointer; transition: all 0.14s;
+}
+.rr-mini:hover { color: var(--text); border-color: var(--text-muted); }
+.rr-mini.clr { color: var(--text-dim); }
+.rr-mini.on.pole { background: #1e63d8; border-color: #1e63d8; color: #fff; }
+.rr-mini.on.fl { background: #7b2fd8; border-color: #7b2fd8; color: #fff; }
+.rr-status { margin-top: 16px; border-top: 1px dashed var(--border-hi); padding-top: 14px; }
+.rr-status-head { font-family: var(--f-display); font-weight: 700; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 10px; }
+.rr-status-row { display: flex; align-items: center; justify-content: space-between; padding: 7px 6px; border-bottom: 1px solid var(--border-dim); }
+.rr-status-row .rr-name { font-family: var(--f-display); font-size: 14px; text-transform: uppercase; }
+.rr-status-btns { display: flex; gap: 6px; }
+.rr-status-btn {
+  padding: 5px 11px; border-radius: 6px; border: 1px solid var(--border-hi);
+  background: var(--bg-1); color: var(--text-muted);
+  font-family: var(--f-display); font-weight: 800; font-size: 10px; cursor: pointer; transition: all 0.14s;
+}
+.rr-status-btn:hover { color: var(--text); }
+.rr-status-btn.dnf.on, .rr-status-btn.dsq.on { background: var(--red); border-color: var(--red); color: #fff; }
+.rr-status-btn.dns.on { background: var(--text-muted); border-color: var(--text-muted); color: #11110a; }
 
 </style>
 </head>
@@ -10990,14 +11031,65 @@ function _fbAttachSave(saveId) {
   const ref = CLOUD.db.ref('saves/' + saveId);
   _fbSaveListeners[saveId] = ref;
   ref.on('value', snap => _fbOnSaveSnapshot(saveId, snap));
+  _fbAttachSharedPresets(saveId); // also pull every member's shared driver/team/track presets
 }
 function _fbDetachSave(saveId) {
   if (_fbSaveListeners[saveId]) { _fbSaveListeners[saveId].off(); delete _fbSaveListeners[saveId]; }
+  _fbDetachSharedPresets(saveId);
 }
 function cloudUnsubscribeAll() {
   if (_fbUserSavesRef) { _fbUserSavesRef.off(); _fbUserSavesRef = null; }
   Object.values(_fbSaveListeners).forEach(r => r.off());
   _fbSaveListeners = {};
+  Object.keys(_fbSharedRefs).forEach(id => { try { _fbSharedRefs[id].off(); } catch (e) {} });
+  _fbSharedRefs = {}; _fbSharedBySave = {};
+}
+
+/* ---- SHARED PRESETS (per-save, realtime) -----------------------------------
+   Every save the user can see gets its own /savePresets/{saveId} listener. We
+   aggregate EVERY member's driver/team/track presets (including our own, so our
+   photos rehydrate too after another member's push strips them) into
+   state._sharedPresets. backfillDriver/TeamPhotos then refills the images that
+   _fbCleanSeason strips out of the synced season. _fbArr() coerces Firebase's
+   object-encoded arrays back to real arrays. */
+let _fbSharedRefs = {};
+let _fbSharedBySave = {};
+function _fbAttachSharedPresets(saveId) {
+  if (!CLOUD.enabled || !currentUser || _fbSharedRefs[saveId]) return;
+  // Stored UNDER the save node so the existing /saves member rule covers it
+  // (no separate rule to publish). Read by all members; ignored by _fbSaveFromRtdb.
+  const ref = CLOUD.db.ref('saves/' + saveId + '/presets');
+  _fbSharedRefs[saveId] = ref;
+  ref.on('value', snap => {
+    const all = snap.val() || {};
+    const agg = { drivers: [], teams: [], tracks: [] };
+    Object.keys(all).forEach(uid => {
+      const d = all[uid] || {};
+      _fbArr(d.drivers).forEach(p => p && agg.drivers.push({ ...p, isShared: true }));
+      _fbArr(d.teams).forEach(p => p && agg.teams.push({ ...p, isShared: true }));
+      _fbArr(d.tracks).forEach(p => p && agg.tracks.push({ ...p, isShared: true }));
+    });
+    _fbSharedBySave[saveId] = agg;
+    _fbRebuildSharedPresets();
+  }, e => console.warn('[P1] shared presets listen failed for', saveId, e && e.message));
+}
+function _fbDetachSharedPresets(saveId) {
+  if (_fbSharedRefs[saveId]) { try { _fbSharedRefs[saveId].off(); } catch (e) {} delete _fbSharedRefs[saveId]; }
+  delete _fbSharedBySave[saveId];
+  _fbRebuildSharedPresets();
+}
+function _fbRebuildSharedPresets() {
+  const merged = { drivers: [], teams: [], tracks: [] };
+  Object.values(_fbSharedBySave).forEach(agg => {
+    if (!agg) return;
+    merged.drivers.push(...(agg.drivers || []));
+    merged.teams.push(...(agg.teams || []));
+    merged.tracks.push(...(agg.tracks || []));
+  });
+  state._sharedPresets = merged;
+  try { backfillTeamLogosFromPresets(); backfillDriverPhotosFromPresets(); } catch (e) {}
+  try { saveLocal(); } catch (e) {}
+  try { renderAll(); } catch (e) {}
 }
 function _fbOnSaveSnapshot(saveId, snap) {
   const raw = snap.val();
@@ -11105,7 +11197,7 @@ async function cloudPushSharedPresets() {
     const key = '_sharedPresets:' + state.activeSaveId;
     const h = JSON.stringify(blob).length + ':' + (drivers.length + teams.length + tracks.length);
     if (cloudLastPushHashes[key] === h) return; // unchanged → skip
-    await CLOUD.db.ref('savePresets/' + state.activeSaveId + '/' + currentUser.uid).set(blob);
+    await CLOUD.db.ref('saves/' + state.activeSaveId + '/presets/' + currentUser.uid).set(blob);
     cloudLastPushHashes[key] = h;
   } catch (e) { console.warn('[P1] shared preset push failed', e); }
 }
@@ -15318,7 +15410,7 @@ function renderRace() {
                 </button>`
               : `<button class="btn btn-ghost" id="race-edit-results" style="border-color:var(--sec-cyan);color:var(--sec-cyan)">
                   <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px;vertical-align:-2px"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-                  ${hasAnyResults ? 'EDIT RESULTS' : 'ENTER RESULTS'}
+                  ${race.sprint ? '⚡ SPRINT / QUALI' : '⏱ QUALIFYING / LAPS'}
                 </button>`}
           ${hasAnyResults ? `<button class="btn btn-danger" id="race-reset">
             <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px;vertical-align:-2px"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
@@ -15390,7 +15482,7 @@ function renderRace() {
     // can see the format and fill it in. The editor (quick entry + DNF/DNS/DSQ) opens
     // only when you click ENTER/EDIT RESULTS.
     if (_raceEditingResults === race.id) renderRaceEditor($('#race-content', wrap), race);
-    else renderRaceReadout($('#race-content', wrap), race);
+    else renderRaceEntry($('#race-content', wrap), race);
   }, 0);
   return wrap;
 }
@@ -16269,6 +16361,154 @@ function renderRaceEditor(container, race) {
 
 // Active tab on the race readout — 'race' | 'sprint' | 'quali'
 let _raceReadoutTab = 'race';
+
+/* EDITABLE broadcast race entry — type a driver into each position slot and it
+   autofills (code / number / name). Pole + FL toggles per row; a section below for
+   DNF / DSQ / DNS. This IS the race view: same format empty or filled. */
+function renderRaceEntry(container, race) {
+  const season = activeSeason();
+  if (!season.drivers.length) {
+    container.innerHTML = `<div class="empty"><div class="empty-headline">NO DRIVERS</div><div class="empty-sub">Sign drivers before scoring this race.</div></div>`;
+    return;
+  }
+  const ps = getPointsSystem(season.pointsSystemId || DEFAULT_POINTS_SYSTEM_ID);
+  const drivers = season.drivers;
+  const MAX = Math.min(26, drivers.length);
+  const teamLogoHTML = (team, color) => team
+    ? (team.logo
+        ? `<span class="rr-team-logo" style="background-image:url('${esc(team.logo)}');--team-color:${color}"></span>`
+        : `<span class="rr-team-logo no-img" style="--team-color:${color}">${esc((team.short || team.name || '?').slice(0,3).toUpperCase())}</span>`)
+    : '';
+  const teamOf = (drv) => season.teams.find(t => t.id === drv.teamId);
+  const nm = (drv) => { const { first, last } = splitName(drv.name); return `<span class="first">${esc(first || '')}</span> <span class="last">${esc(last)}</span>`; };
+
+  let working = drivers.map(d => {
+    const ex = (race.results || []).find(x => x.driverId === d.id);
+    return { driverId: d.id, position: ex?.position ?? null, dnf: !!ex?.dnf, dsq: !!ex?.dsq, dns: !!ex?.dns };
+  });
+  let pole = race.poleDriverId || null;
+  let fl = race.fastestLapDriverId || null;
+  let focusPos = null;
+
+  const posMap = () => { const m = new Map(); working.forEach(w => { if (w.position && !w.dnf && !w.dsq && !w.dns) m.set(Number(w.position), w.driverId); }); return m; };
+  const ptsFor = (pos, did) => {
+    let pts = 0;
+    if (pos && pos <= ps.points.length) pts += ps.points[pos-1];
+    if (fl === did && pos && ps.flBonus && (!ps.flRequiresTop10 || pos <= 10)) pts += ps.flBonus;
+    return pts;
+  };
+  const commit = () => {
+    const results = working.filter(w => w.position || w.dnf || w.dsq || w.dns)
+      .map(w => ({ driverId: w.driverId, position: w.position || null, dnf: w.dnf, dsq: w.dsq, dns: w.dns }));
+    updateRace(race.id, { results, poleDriverId: pole, fastestLapDriverId: fl, completed: results.length > 0 });
+  };
+  const assign = (pos, did) => {
+    working.forEach(w => {
+      if (w.driverId === did) { w.position = null; w.dnf = w.dsq = w.dns = false; }
+      if (Number(w.position) === pos) w.position = null;
+    });
+    const w = working.find(x => x.driverId === did);
+    if (w) { w.position = pos; w.dnf = w.dsq = w.dns = false; }
+    focusPos = pos + 1; commit(); rerender();
+  };
+  const clearPos = (pos) => { working.forEach(w => { if (Number(w.position) === pos) w.position = null; }); focusPos = pos; commit(); rerender(); };
+  const setStatus = (did, s) => { const w = working.find(x => x.driverId === did); if (!w) return; const was = w[s]; w.dnf = w.dsq = w.dns = false; if (!was) { w[s] = true; w.position = null; } commit(); rerender(); };
+  const togglePole = (did) => { pole = pole === did ? null : did; commit(); rerender(); };
+  const toggleFL = (did) => { fl = fl === did ? null : did; commit(); rerender(); };
+
+  function build() {
+    const pm = posMap();
+    const placed = new Set([...pm.values()]);
+    const podCard = (pos) => {
+      const did = pm.get(pos); const drv = did ? drivers.find(d => d.id === did) : null;
+      if (!drv) return `<div class="rr-podium-card rr-empty"><div class="rr-podium-card-top"><span class="rr-podium-badge rr-b${pos}">${pos}${['','ST','ND','RD'][pos]}</span></div><div class="rr-podium-empty">—</div></div>`;
+      const team = teamOf(drv); const color = team?.color || '#6b7280';
+      const photo = drv.photo ? `background-image:url('${esc(drv.photo)}')` : '';
+      const icon = pos === 1 ? '🏆' : pos === 2 ? '🥈' : '🥉';
+      return `<div class="rr-podium-card rr-p${pos}" style="--team-color:${color}">
+        <div class="rr-podium-card-top"><span class="rr-podium-badge rr-b${pos}">${icon} ${pos}${['','ST','ND','RD'][pos]}</span><span class="rr-podium-pts">+${ptsFor(pos,did)} pts</span></div>
+        <div class="rr-podium-photo" style="--team-color:${color};${photo}"></div>
+        <div class="rr-podium-name">${nm(drv)}</div>
+        <div class="rr-podium-team">${teamLogoHTML(team,color)} <span>${esc(team?.name || '—')}</span></div>
+      </div>`;
+    };
+    let rows = '';
+    for (let pos = 1; pos <= MAX; pos++) {
+      const did = pm.get(pos); const drv = did ? drivers.find(d => d.id === did) : null;
+      const team = drv ? teamOf(drv) : null; const color = team?.color || '#6b7280';
+      if (drv) {
+        const photo = drv.photo ? `background-image:url('${esc(drv.photo)}')` : '';
+        rows += `<div class="rr-row rr-erow filled" data-pos="${pos}" style="--team-color:${color}">
+          <div class="rr-pos">${pos}</div>
+          <div class="rr-driver"><span class="rr-photo" style="--team-color:${color};${photo}"></span><span class="rr-name">${nm(drv)}</span></div>
+          <div class="rr-team">${teamLogoHTML(team,color)} <span>${esc(team?.name || '—')}</span></div>
+          <div class="rr-entry-tools">
+            <button class="rr-mini ${pole===did?'on pole':''}" data-pole="${esc(did)}" title="Set pole">P</button>
+            <button class="rr-mini ${fl===did?'on fl':''}" data-fl="${esc(did)}" title="Set fastest lap">FL</button>
+            <button class="rr-mini clr" data-clr="${pos}" title="Clear slot">✕</button>
+          </div>
+          <div class="rr-pts">${ptsFor(pos,did) ? '+' + ptsFor(pos,did) : ''}</div>
+        </div>`;
+      } else {
+        rows += `<div class="rr-row rr-erow" data-pos="${pos}" style="--team-color:${color}">
+          <div class="rr-pos">${pos}</div>
+          <div class="rr-driver rr-input-wrap"><input class="rr-input" type="text" data-pos="${pos}" placeholder="type code · # · name" autocomplete="off" autocapitalize="characters" spellcheck="false"><span class="rr-hint" data-hint="${pos}"></span></div>
+          <div class="rr-team"></div>
+          <div class="rr-entry-tools"></div>
+          <div class="rr-pts"></div>
+        </div>`;
+      }
+    }
+    const unplaced = working.filter(w => !placed.has(w.driverId));
+    let statusHTML = '';
+    if (unplaced.length) {
+      statusHTML = `<div class="rr-status"><div class="rr-status-head">Not classified — mark DNF / DSQ / DNS</div>
+        ${unplaced.map(w => {
+          const drv = drivers.find(d => d.id === w.driverId); if (!drv) return '';
+          const team = teamOf(drv); const color = team?.color || '#6b7280';
+          const mk = (s,l) => `<button class="rr-status-btn ${s} ${w[s]?'on':''}" data-status="${s}" data-did="${esc(w.driverId)}">${l}</button>`;
+          return `<div class="rr-status-row" style="--team-color:${color}"><span class="rr-name">${nm(drv)}</span><span class="rr-status-btns">${mk('dnf','DNF')}${mk('dsq','DSQ')}${mk('dns','DNS')}</span></div>`;
+        }).join('')}</div>`;
+    }
+    const sideCard = (did, kind) => {
+      const head = kind === 'pole' ? '<div class="rr-side-head pole">★ POLE POSITION</div>' : '<div class="rr-side-head fl">⏱ FASTEST LAP</div>';
+      const drv = did ? drivers.find(d => d.id === did) : null;
+      if (!drv) return `<div class="rr-side-card">${head}<div class="rr-side-empty">Tap P / FL on a row</div></div>`;
+      const team = teamOf(drv); const color = team?.color || '#6b7280';
+      const photo = drv.photo ? `background-image:url('${esc(drv.photo)}')` : '';
+      return `<div class="rr-side-card" style="--team-color:${color}">${head}<div class="rr-side-body"><div class="rr-side-photo ${kind}" style="--team-color:${color};${photo}"></div><div class="rr-side-name">${nm(drv)}</div><div class="rr-side-team">${teamLogoHTML(team,color)} <span>${esc(team?.name || '—')}</span></div></div></div>`;
+    };
+    return `
+      <h2 class="rr-title">Formula 1 ${esc(race.name)} ${esc(String(season.year))}</h2>
+      <div class="rr-entry-hint">Type a driver <b>code</b>, <b>number</b> or <b>name</b> into each position — it autofills. Use <b>P</b>/<b>FL</b> for pole &amp; fastest lap; mark retirements below.</div>
+      <div class="rr-layout">
+        <div class="rr-podium-col">${podCard(1)}${podCard(2)}${podCard(3)}</div>
+        <div class="rr-table-col">
+          <div class="rr-table-head"><div>POS</div><div>DRIVER</div><div>TEAM</div><div>P / FL</div><div>PTS</div></div>
+          ${rows}${statusHTML}
+        </div>
+        <div class="rr-side-col">${sideCard(pole,'pole')}${sideCard(fl,'fl')}</div>
+      </div>`;
+  }
+  function wire() {
+    container.querySelectorAll('.rr-input').forEach(inp => {
+      inp.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); const res = resolveDriverShort(inp.value, drivers, [...posMap().values()]); if (res.match) assign(Number(inp.dataset.pos), res.match.id); } });
+      inp.addEventListener('input', () => {
+        const res = resolveDriverShort(inp.value, drivers, [...posMap().values()]);
+        const hint = container.querySelector(`.rr-hint[data-hint="${inp.dataset.pos}"]`);
+        if (res.match) { assign(Number(inp.dataset.pos), res.match.id); }
+        else if (hint) hint.textContent = res.ambiguous ? (res.ambiguous.length + ' matches') : (inp.value ? 'no match' : '');
+      });
+    });
+    container.querySelectorAll('[data-clr]').forEach(b => b.onclick = () => clearPos(Number(b.dataset.clr)));
+    container.querySelectorAll('[data-pole]').forEach(b => b.onclick = () => togglePole(b.dataset.pole));
+    container.querySelectorAll('[data-fl]').forEach(b => b.onclick = () => toggleFL(b.dataset.fl));
+    container.querySelectorAll('[data-status]').forEach(b => b.onclick = () => setStatus(b.dataset.did, b.dataset.status));
+    if (focusPos != null) { const n = container.querySelector(`.rr-input[data-pos="${focusPos}"]`); if (n) n.focus(); focusPos = null; }
+  }
+  function rerender() { container.innerHTML = build(); wire(); }
+  rerender();
+}
 
 function renderRaceReadout(container, race) {
   const season = activeSeason();
@@ -22860,11 +23100,9 @@ function renderAll() {
       presenceState = {};
       if (state.activeSaveId) {
         cloudSubscribePresence(state.activeSaveId);
-        cloudSubscribeSharedPresets(state.activeSaveId);
-        cloudPushSharedPresets(); // share my presets with this save's members
+        cloudPushSharedPresets(); // share my presets; reading is handled per-save in _fbAttachSharedPresets
       } else {
         cloudUnsubscribePresence();
-        cloudUnsubscribeSharedPresets();
       }
     }
     renderPresenceDots();
