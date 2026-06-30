@@ -10882,6 +10882,12 @@ async function cloudInit() {
     CLOUD.auth.onAuthStateChanged(async user => {
       const was = !!currentUser;
       currentUser = user || null;
+      // Compat: lots of UI code (share modal, account page, presence) was written
+      // for the Supabase user shape which used `.id`. Firebase uses `.uid`.
+      // Alias id->uid so all that code keeps working without a rewrite.
+      if (currentUser && currentUser.uid && !currentUser.id) {
+        try { currentUser.id = currentUser.uid; } catch (e) {}
+      }
       if (currentUser) {
         if (inviteToken) {
           try { await cloudAcceptInvite(inviteToken); const u = new URL(location.href); u.searchParams.delete('invite'); history.replaceState({}, '', u.toString()); }
@@ -17394,9 +17400,12 @@ function openRecordDetail(catId, recs) {
 function openShareModal() {
   if (!state.activeSaveId) return;
   const save = state.saves[state.activeSaveId];
+  const myUid = currentUser?.uid || currentUser?.id;
   const isOwner = (save._members?.length
-    ? save._members.some(m => m.user_id === currentUser?.id && m.role === 'owner')
-    : (cloudSaveIds.has(save.id) && !!currentUser));
+    ? save._members.some(m => m.user_id === myUid && m.role === 'owner')
+    // Fallback: if signed in and this save is cloud-backed (or has no member
+    // list yet, e.g. a freshly imported save), let the signed-in user invite.
+    : (!!currentUser && (cloudSaveIds.has(save.id) || CLOUD.enabled)));
 
   let inviteRole = 'editor';   // current selection for the next invite
   let publicSlug = null;        // populated on mount via cloudGetPublicShareSlug
@@ -17467,7 +17476,7 @@ function openShareModal() {
           return;
         }
         list.innerHTML = members.map(m => {
-          const isYou = m.user_id === currentUser?.id;
+          const isYou = m.user_id === (currentUser?.uid || currentUser?.id);
           const isThisMemberOwner = m.role === 'owner';
           const canKick = isOwner && !isThisMemberOwner;
           const canChangeRole = isOwner && !isThisMemberOwner;
