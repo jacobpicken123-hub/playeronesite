@@ -11360,8 +11360,24 @@ function applyPresetBlob(blob) {
     if (LIST_KEYS.includes(k)) {
       const cloud = _fbArr(blob[k]).map(_fbNormalizePreset).filter(Boolean);
       const local = Array.isArray(state[k]) ? state[k] : [];
-      const seen = new Set(local.map(p => presetKey(p)));
-      const merged = local.slice(); // local first = local wins
+      const cloudByKey = new Map(cloud.map(p => [presetKey(p), p]));
+      // Local wins on conflicts, but REFILL images the quota-fallback save stripped
+      // from the stored copy (photo/photos/logo/logos) from the cloud twin.
+      const merged = local.map(l => {
+        const c = cloudByKey.get(presetKey(l));
+        if (!c) return l;
+        const out = { ...l };
+        if (!out.photo && !(Array.isArray(out.photos) && out.photos.length)) {
+          if (c.photo) out.photo = c.photo;
+          if (Array.isArray(c.photos) && c.photos.length) out.photos = c.photos;
+        }
+        if (!out.logo && !(Array.isArray(out.logos) && out.logos.length)) {
+          if (c.logo) out.logo = c.logo;
+          if (Array.isArray(c.logos) && c.logos.length) out.logos = c.logos;
+        }
+        return out;
+      });
+      const seen = new Set(merged.map(p => presetKey(p)));
       cloud.forEach(p => { const key = presetKey(p); if (!seen.has(key)) { seen.add(key); merged.push(p); } });
       state[k] = merged;
     } else if (k === 'hiddenPresets') {
@@ -12410,7 +12426,43 @@ function stateForStorage() {
     }
     saves[sid] = { ...save, seasons };
   }
-  return { ...state, saves };
+  // _sharedPresets is a cloud-derived cache (every collaborator's base64 photos +
+  // harvested season photos). Persisting it ballooned localStorage past its quota,
+  // which made EVERY save silently fail — new presets then vanished on refresh.
+  // It's rebuilt live by the per-save listeners, so never store it.
+  const { _sharedPresets, ...persistable } = state;
+  return { ...persistable, saves };
+}
+
+/* Quota-resilient localStorage write. Stage 1: full state. Stage 2 (quota hit):
+   retry with preset images stripped from the STORED copy only — images stay in
+   memory and in the cloud backup, and the load-time merge refills them. If even
+   that fails, tell the user loudly instead of silently losing their session. */
+let _storageFailWarned = false;
+function _writeStateToStorage() {
+  const full = stateForStorage();
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(full)); return true; } catch (e) {}
+  try {
+    const slim = { ...full };
+    ['customDriverPresets', 'customTeamPresets', 'customTrackPresets'].forEach(k => {
+      slim[k] = (full[k] || []).map(p => {
+        const { photos, logos, ...rest } = p || {};
+        if (rest.photo && String(rest.photo).startsWith('data:')) delete rest.photo;
+        if (rest.logo && String(rest.logo).startsWith('data:')) delete rest.logo;
+        return rest;
+      });
+    });
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(slim));
+    console.warn('[P1] storage quota hit — saved without preset images (cloud backup keeps them)');
+    return true;
+  } catch (e) {
+    if (!_storageFailWarned && typeof toast === 'function') {
+      _storageFailWarned = true;
+      toast('Storage is full — changes may not survive a refresh. Sign in so the cloud keeps a copy.', 'error');
+    }
+    console.warn('[P1] local save failed completely', e);
+    return false;
+  }
 }
 
 // Collapse duplicate result rows (the SAME driver appearing more than once in one
@@ -12451,10 +12503,8 @@ function dedupeAllResults(saves) {
 }
 
 function saveState() {
-  try {
-    state.saves[state.activeSaveId] && (state.saves[state.activeSaveId].updatedAt = Date.now());
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(stateForStorage()));
-  } catch (e) { console.warn('Save failed', e); }
+  try { state.saves[state.activeSaveId] && (state.saves[state.activeSaveId].updatedAt = Date.now()); } catch (e) {}
+  _writeStateToStorage();
   // Mirror to cloud in the background (debounced, no-op if cloud disabled or not signed in)
   scheduleCloudSync();
 }
@@ -12465,7 +12515,7 @@ function saveState() {
 // messages on every click). Also does NOT bump updatedAt — opening a page shouldn't
 // make your copy "newer" for the merge.
 function saveLocal() {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(stateForStorage())); } catch (e) { console.warn('Local save failed', e); }
+  _writeStateToStorage();
 }
 
 /* ---------- utils ---------- */
