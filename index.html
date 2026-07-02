@@ -9696,7 +9696,7 @@ input:focus, select:focus, textarea:focus { box-shadow: 0 0 0 3px rgba(225,6,47,
   <!-- Footer -->
   <footer class="footer">
     <span>P1 · A simulation tool for fictional motorsport · No affiliation with any real race series.</span>
-    <span class="footer-meta">v2.0 · LOCAL SAVE</span>
+    <span class="footer-meta">v3.0 · <span style="color:var(--red)">NIGHT RACE</span></span>
   </footer>
 
   <!-- Modal & toast roots -->
@@ -14326,6 +14326,7 @@ function renderDashboard() {
           <button class="btn btn-ghost btn-sm" id="dash-template">★ TEMPLATES</button>
           <button class="btn btn-ghost btn-sm" id="dash-reimport">⟳ REIMPORT</button>
           <button class="btn btn-ghost btn-sm" id="dash-settings">⚙ SETTINGS</button>
+          <button class="btn btn-ghost btn-sm" id="dash-delete-season" style="border-color:var(--red);color:var(--red)" title="Delete this season">🗑 DELETE</button>
         </div>
       </div>
       <div class="dash-stats">
@@ -14493,6 +14494,14 @@ function renderDashboard() {
     $('#dash-settings', wrap)?.addEventListener('click', openSeasonSettings);
     $('#dash-template', wrap)?.addEventListener('click', openSeasonTemplatesModal);
     $('#dash-reimport', wrap)?.addEventListener('click', openReimportSeasonModal);
+    $('#dash-delete-season', wrap)?.addEventListener('click', () => {
+      confirmModal({
+        title: 'Delete this season?',
+        message: `Permanently delete <b>${esc(String(season.year))} · ${esc(season.name)}</b> — all drivers, teams, races and results in it? This cannot be undone.`,
+        danger: true,
+        onConfirm: () => { deleteSeason(season.id); toast('Season deleted', 'warn'); renderAll(); }
+      });
+    });
   }, 0);
   return wrap;
 }
