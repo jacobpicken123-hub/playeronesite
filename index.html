@@ -8645,6 +8645,13 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
   color: var(--red);
   background: rgba(225,6,47,0.08);
 }
+/* Track presets: the added-state button means "add this GP again", not remove —
+   hover green to signal an additive action (drivers keep the red UNADD hover). */
+.preset-add-btn.is-readd:hover {
+  border-color: var(--sec-green, #10dc88);
+  color: var(--sec-green, #10dc88);
+  background: rgba(16,220,136,0.08);
+}
 
 /* Mobile / narrow modal */
 @media (max-width: 700px) {
@@ -22261,16 +22268,18 @@ function openTrackPresetSearch() {
             <button class="preset-edit-btn" data-edit="${i}" title="Edit preset" aria-label="Edit">
               <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
             </button>
-            <button class="preset-add-btn ${already ? 'is-added' : ''}">
-              <span class="preset-add-btn-label">${already ? '✓ ADDED' : '+ ADD'}</span>
+            <button class="preset-add-btn ${already ? 'is-added is-readd' : ''}" title="${already ? 'Add this Grand Prix again as another round' : 'Add to calendar'}">
+              <span class="preset-add-btn-label">${already ? '+ ADD AGAIN' : '+ ADD'}</span>
             </button>
           </div>`;
         }).join('');
         $$('.preset-row', list).forEach(row => {
           row.onclick = (ev) => {
             if (ev.target.closest('[data-edit]')) return;
-            if (row.classList.contains('added')) return;
+            // A GP already on the calendar can be added AGAIN as another round
+            // (real seasons repeat tracks — two Austrian GPs in 2020, etc.).
             const p = items[Number(row.dataset.idx)];
+            const again = row.classList.contains('added');
             addRace({
               name: p.name,
               circuit: p.circuit || '',
@@ -22279,7 +22288,8 @@ function openTrackPresetSearch() {
               date: '',
               flagImage: p.flagImage || '',
             });
-            toast(`${p.name} added to calendar`, 'success');
+            const round = (activeSeason()?.races || []).length;
+            toast(again ? `${p.name} added again — round ${round}` : `${p.name} added to calendar`, 'success');
             renderList();
             renderMain();
           };
