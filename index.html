@@ -21158,7 +21158,10 @@ function getEffectiveDriverPresets() {
     const ov = findPresetOverride(overrides, p);
     return ov ? { ...p, ...ov, presetKey: k, isBuiltin: true } : { ...p, presetKey: k, isBuiltin: true };
   });
-  const customs = (state.customDriverPresets || []).filter(p => !hiddenNames.has((p.name || '').toLowerCase().trim())).map(p => ({ ...p, presetKey: presetKey(p), isCustom: true }));
+  // Customs are NEVER name-filtered: deleting one removes it from the array, and
+  // editing a built-in hides the built-in's name — which must not hide the custom
+  // copy that edit just created. hiddenNames only blocks shared/harvested copies.
+  const customs = (state.customDriverPresets || []).map(p => ({ ...p, presetKey: presetKey(p), isCustom: true }));
   const shared = (state._sharedPresets?.drivers || []).filter(p => !hiddenNames.has((p.name || '').toLowerCase().trim())).map(p => ({ ...p, presetKey: presetKey(p), isShared: true }));
   const result = dedupePresetsByName([...customs, ...shared, ...merged]);
   // Fallback: if a preset has no photo, borrow it from a signed season driver of
@@ -21184,7 +21187,7 @@ function getEffectiveTeamPresets() {
     const ov = findPresetOverride(overrides, p);
     return ov ? { ...p, ...ov, presetKey: k, isBuiltin: true } : { ...p, presetKey: k, isBuiltin: true };
   });
-  const customs = (state.customTeamPresets || []).filter(p => !hiddenNames.has((p.name || '').toLowerCase().trim())).map(p => ({ ...p, presetKey: presetKey(p), isCustom: true }));
+  const customs = (state.customTeamPresets || []).map(p => ({ ...p, presetKey: presetKey(p), isCustom: true })); // never name-filtered (see drivers note)
   const shared = (state._sharedPresets?.teams || []).filter(p => !hiddenNames.has((p.name || '').toLowerCase().trim())).map(p => ({ ...p, presetKey: presetKey(p), isShared: true }));
   return dedupePresetsByName([...customs, ...shared, ...merged]);
 }
@@ -21198,7 +21201,7 @@ function getEffectiveTrackPresets() {
     const ov = findPresetOverride(overrides, p);
     return ov ? { ...p, ...ov, presetKey: k, isBuiltin: true } : { ...p, presetKey: k, isBuiltin: true };
   });
-  const customs = (state.customTrackPresets || []).filter(p => !hiddenNames.has((p.name || '').toLowerCase().trim())).map(p => ({ ...p, presetKey: presetKey(p), isCustom: true }));
+  const customs = (state.customTrackPresets || []).map(p => ({ ...p, presetKey: presetKey(p), isCustom: true })); // never name-filtered (see drivers note)
   const shared = (state._sharedPresets?.tracks || []).filter(p => !hiddenNames.has((p.name || '').toLowerCase().trim())).map(p => ({ ...p, presetKey: presetKey(p), isShared: true }));
   return dedupePresetsByName([...customs, ...shared, ...merged]);
 }
