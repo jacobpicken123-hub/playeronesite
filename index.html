@@ -8640,6 +8640,11 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
   pointer-events: none;
 }
 .preset-add-btn.is-added::before { display: none; }
+.preset-add-btn.is-added:hover {
+  border-color: var(--red);
+  color: var(--red);
+  background: rgba(225,6,47,0.08);
+}
 
 /* Mobile / narrow modal */
 @media (max-width: 700px) {
@@ -21754,7 +21759,7 @@ function openDriverPresetSearch() {
         ${ERA_FILTERS.map(e => `<button class="preset-filter ${e === _presetEraFilter ? 'active' : ''}" data-era="${e}">${e}</button>`).join('')}
       </div>
       <div class="preset-list" id="ps-list"></div>`,
-    footer: `<span style="font-family:var(--f-mono);font-size:10px;color:var(--text-muted);letter-spacing:0.1em;margin-right:auto">CLICK ROW TO SIGN · CLICK ✎ TO EDIT</span><button class="btn btn-ghost" data-act="cancel">Done</button>`,
+    footer: `<span style="font-family:var(--f-mono);font-size:10px;color:var(--text-muted);letter-spacing:0.1em;margin-right:auto">CLICK ROW TO SIGN · UNADD REMOVES FROM SEASON · ✎ EDITS</span><button class="btn btn-ghost" data-act="cancel">Done</button>`,
     onMount: (root, close) => {
       const list = $('#ps-list', root);
       const qInp = $('#ps-q', root);
@@ -21763,6 +21768,7 @@ function openDriverPresetSearch() {
       const renderList = () => {
         const q = (query || '').toLowerCase();
         const present = new Set(season.drivers.map(d => d.name.toLowerCase().trim()));
+        const presentIds = new Map(season.drivers.map(d => [d.name.toLowerCase().trim(), d.id]));
         const allPresets = getEffectiveDriverPresets();
         const items = allPresets.filter(p => {
           if (_presetEraFilter !== 'All' && !presetEras(p).includes(_presetEraFilter)) return false;
@@ -21793,7 +21799,7 @@ function openDriverPresetSearch() {
               <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
             </button>
             <button class="preset-add-btn ${already ? 'is-added' : ''}">
-              <span class="preset-add-btn-label">${already ? '✓ ADDED' : '+ SIGN'}</span>
+              <span class="preset-add-btn-label">${already ? '− UNADD' : '+ SIGN'}</span>
             </button>
           </div>`;
         }).join('');
@@ -21801,30 +21807,36 @@ function openDriverPresetSearch() {
           row.onclick = (ev) => {
             // Edit click handled separately
             if (ev.target.closest('[data-edit]')) return;
-            if (row.classList.contains('added')) return;
             const p = items[Number(row.dataset.idx)];
+            if (row.classList.contains('added')) {
+              // UNADD — remove this driver from the season (results included).
+              if (!ev.target.closest('.preset-add-btn')) return; // only the button removes
+              const drvId = presentIds.get((p.name || '').toLowerCase().trim());
+              if (drvId) {
+                deleteDriver(drvId);
+                toast(`${p.name} removed from season`, 'warn');
+                renderList();
+                renderMain();
+              }
+              return;
+            }
             const usedNums = new Set(season.drivers.map(d => d.number));
             let num = p.number || 2;
             while (usedNums.has(num)) num = num + 1 > 99 ? 2 : num + 1;
             // Prefer the driver's preset team (e.g. their 2026 constructor) when it
-            // exists in this season; otherwise drop them in the first open seat.
+            // exists in this season; otherwise sign them WITHOUT a team so they land
+            // in the Unemployed / free-agents pool — never stuffed into a random seat.
             let targetTeam = null;
             if (p.team) {
               const want = p.team.toLowerCase().trim();
               targetTeam = season.teams.find(t => (t.name || '').toLowerCase().trim() === want)
                         || season.teams.find(t => (t.short || '').toLowerCase().trim() === want);
             }
-            if (!targetTeam) {
-              const teamCounts = {};
-              season.teams.forEach(t => teamCounts[t.id] = 0);
-              season.drivers.forEach(d => { if (d.teamId) teamCounts[d.teamId] = (teamCounts[d.teamId] || 0) + 1; });
-              targetTeam = season.teams.find(t => teamCounts[t.id] < 2) || season.teams[0];
-            }
             // If this preset has multiple photos, ask the user which one to use.
             // Single-photo (or zero-photo) presets sign immediately.
             const sign = (photoUrl) => {
-              addDriver({ name: p.name, number: num, country: p.country, teamId: targetTeam.id, photo: photoUrl || '', abbr: p.abbr || '' });
-              toast(`${p.name} signed`, 'success');
+              addDriver({ name: p.name, number: num, country: p.country, teamId: targetTeam ? targetTeam.id : null, photo: photoUrl || '', abbr: p.abbr || '' });
+              toast(targetTeam ? `${p.name} signed to ${targetTeam.name}` : `${p.name} signed — unemployed (no matching team)`, 'success');
               renderList();
               renderMain();
             };
