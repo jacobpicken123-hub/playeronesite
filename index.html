@@ -9502,6 +9502,35 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
 .preset-pick-name { font-family: var(--f-display); font-weight: 700; font-size: 15px; text-transform: uppercase; color: var(--text); }
 .preset-pick-meta { font-family: var(--f-mono); font-size: 10px; letter-spacing: 0.08em; color: var(--text-muted); text-transform: uppercase; }
 
+/* Extra (3rd+) drivers on a lineup team — small portraits under the team logo */
+.lineup-extras { display: flex; justify-content: center; gap: 7px; margin-top: 9px; flex-wrap: wrap; }
+.lineup-extra {
+  width: 36px; height: 36px; border-radius: 50%;
+  background: var(--bg-3) center/cover no-repeat;
+  border: 2px solid var(--team-color, var(--border-hi));
+  position: relative; cursor: pointer;
+  transition: transform 0.2s cubic-bezier(0.22,1,0.36,1), box-shadow 0.2s ease;
+}
+.lineup-extra:hover { transform: scale(1.12); box-shadow: 0 0 14px -2px var(--team-color, rgba(225,6,47,0.5)); }
+.lineup-extra-num {
+  position: absolute; bottom: -5px; right: -5px;
+  min-width: 15px; height: 15px; padding: 0 3px;
+  border-radius: 8px; background: var(--team-color, #666); color: #fff;
+  font-family: var(--f-display); font-weight: 700; font-size: 9px;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+
+/* Circuit variants strip in the race editor — pick which track hosts this GP */
+.circuit-variants { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.circuit-variant {
+  padding: 5px 11px; border-radius: 7px; border: 1px solid var(--border-hi);
+  background: var(--bg-1); color: var(--text-soft); cursor: pointer;
+  font-family: var(--f-display); font-weight: 600; font-size: 11px; letter-spacing: 0.04em;
+  transition: all 0.15s;
+}
+.circuit-variant:hover { border-color: var(--red); color: var(--text); }
+.circuit-variant.active { border-color: var(--red); color: #fff; background: rgba(225,6,47,0.14); }
+
 /* ═══════════════════ NIGHT RACE — cinematic redesign layer ═══════════════════
    Atmosphere, choreographed view entrances, chrome titles, glowing surfaces.
    Purely additive: appended last so it wins by source order; no markup changes. */
@@ -13246,6 +13275,16 @@ function addDriver({ name, number, country, teamId, photo, abbr }) {
 function updateDriver(id, patch) {
   const s = activeSeason(); if (!s) return;
   const d = s.drivers.find(x => x.id === id); if (!d) return;
+  // MID-SEASON TRANSFER: before the team changes, stamp all of this driver's
+  // existing result rows with the OLD team — those points were scored for it
+  // and must stay in that constructor's total.
+  if (patch.teamId !== undefined && patch.teamId !== d.teamId && d.teamId) {
+    s.races.forEach(r => {
+      [r.results, r.sprintResults].forEach(arr => {
+        (arr || []).forEach(row => { if (row && row.driverId === id && !row.teamId) row.teamId = d.teamId; });
+      });
+    });
+  }
   Object.assign(d, patch);
   if (patch.country) d.country = patch.country.toUpperCase().slice(0,3);
   if (patch.number != null) d.number = Number(patch.number) || d.number;
@@ -13319,6 +13358,9 @@ function updateRace(id, patch) {
   const s = activeSeason(); if (!s) return;
   const r = s.races.find(x => x.id === id); if (!r) return;
   Object.assign(r, patch);
+  // Any time results are written, record which team each driver raced for —
+  // so a later mid-season transfer can't move these points to the new team.
+  if (patch.results || patch.sprintResults) stampResultTeams(s, r);
   saveState();
 }
 function deleteRace(id) {
@@ -13429,22 +13471,82 @@ function calcDriverStandings(season) {
   });
 }
 
+/* Constructors' standings, attributed PER RACE. Each result row carries the
+   teamId the driver raced for at the time (stamped on entry, and back-stamped
+   when a driver switches teams mid-season). So a transfer takes the DRIVER's
+   points with him in the drivers' table, but the constructor keeps everything
+   scored while he drove for them. Unstamped rows fall back to the current team
+   (identical to the old behaviour for seasons with no transfers). */
 function calcTeamStandings(season) {
-  const driverTotals = calcDriverStandings(season);
+  const ps = getPointsSystem(season.pointsSystemId || DEFAULT_POINTS_SYSTEM_ID);
+  const { flValue, poleValue } = seasonBonusValues(season, ps);
   const teamMap = {};
   season.teams.forEach(t => {
     teamMap[t.id] = { teamId: t.id, points: 0, wins: 0, podiums: 0, polePositions: 0, fastestLaps: 0 };
   });
-  driverTotals.forEach(d => {
-    const driver = season.drivers.find(x => x.id === d.driverId);
-    if (!driver || !driver.teamId || !teamMap[driver.teamId]) return;
-    teamMap[driver.teamId].points += d.points;
-    teamMap[driver.teamId].wins += d.wins;
-    teamMap[driver.teamId].podiums += d.podiums;
-    teamMap[driver.teamId].polePositions += d.polePositions;
-    teamMap[driver.teamId].fastestLaps += d.fastestLaps;
+  const drvById = new Map(season.drivers.map(d => [d.id, d]));
+  const champDsq = (d) => { if (!d) return true; const t = season.teams.find(x => x.id === d.teamId); return !!(d.dsq || (t && t.dsq)); };
+  // Resolve which team bucket a driver's points belong to for THIS race:
+  // row stamp → race-result row stamp → driver's current team.
+  const bucketFor = (race, driverId, row) => {
+    const raceRow = (race.results || []).find(r => r.driverId === driverId);
+    const tid = (row && row.teamId) || (raceRow && raceRow.teamId) || (drvById.get(driverId) || {}).teamId;
+    return tid ? teamMap[tid] : null;
+  };
+  season.races.forEach(race => {
+    if (!race.completed) return;
+    const mult = racePointsMultiplier(race);
+    (race.results || []).forEach(res => {
+      const d = drvById.get(res.driverId); if (!d) return;
+      const tm = bucketFor(race, res.driverId, res); if (!tm) return;
+      if (res.dns || res.dsq || res.dnf || champDsq(d)) return;
+      if (res.position && res.position <= ps.points.length) tm.points += ps.points[res.position - 1] * mult;
+      if (res.position === 1) tm.wins++;
+      if (res.position && res.position <= 3) tm.podiums++;
+    });
+    if (race.sprint && race.sprintResults && ps.sprintPoints && ps.sprintPoints.length) {
+      race.sprintResults.forEach(sr => {
+        const d = drvById.get(sr.driverId); if (!d) return;
+        const tm = bucketFor(race, sr.driverId, sr); if (!tm) return;
+        if (sr.dns || sr.dsq || sr.dnf || champDsq(d)) return;
+        if (sr.position && sr.position <= ps.sprintPoints.length) tm.points += ps.sprintPoints[sr.position - 1] * mult;
+      });
+    }
+    if (race.poleDriverId) {
+      const d = drvById.get(race.poleDriverId);
+      const tm = bucketFor(race, race.poleDriverId, null);
+      if (d && tm && !champDsq(d)) { tm.polePositions++; if (poleValue) tm.points += poleValue * mult; }
+    }
+    if (race.fastestLapDriverId) {
+      const d = drvById.get(race.fastestLapDriverId);
+      const tm = bucketFor(race, race.fastestLapDriverId, null);
+      if (d && tm) {
+        tm.fastestLaps++;
+        if (!champDsq(d) && flValue) {
+          const flRes = (race.results || []).find(r => r.driverId === race.fastestLapDriverId);
+          if (flRes && flRes.position && !flRes.dnf && !flRes.dsq && !flRes.dns && (!ps.flRequiresTop10 || flRes.position <= 10)) {
+            tm.points += flValue * mult;
+          }
+        }
+      }
+    }
   });
   return Object.values(teamMap).sort((a,b) => b.points - a.points || b.wins - a.wins);
+}
+
+/* Fill missing teamId stamps on a race's result rows from the drivers' CURRENT
+   teams. Called whenever results are written, so every row records who the
+   driver was racing for at the time. Never overwrites an existing stamp. */
+function stampResultTeams(season, race) {
+  if (!season || !race) return;
+  const drvById = new Map(season.drivers.map(d => [d.id, d]));
+  [race.results, race.sprintResults].forEach(arr => {
+    (arr || []).forEach(r => {
+      if (!r || r.teamId) return;
+      const d = drvById.get(r.driverId);
+      if (d && d.teamId) r.teamId = d.teamId;
+    });
+  });
 }
 
 /* ---------- championship permutations & cross-season career aggregation ---------- */
@@ -14705,6 +14807,7 @@ function renderLineup() {
   const teamRow = (t) => {
     const drivers = season.drivers.filter(d => d.teamId === t.id).sort((a, b) => (a.number || 0) - (b.number || 0));
     const d1 = drivers[0], d2 = drivers[1];
+    const extras = drivers.slice(2); // 3rd+ drivers — small portraits under the team logo
     const color = t.color || '#666';
     const left = d1
       ? `<div class="lineup-driver lineup-driver-left" data-edit-driver="${d1.id}">${sideText(d1, t)}${photo(d1)}</div>`
@@ -14712,17 +14815,25 @@ function renderLineup() {
     const right = d2
       ? `<div class="lineup-driver lineup-driver-right" data-edit-driver="${d2.id}">${photo(d2)}${sideText(d2, t)}</div>`
       : emptySlot(t, 'right');
+    const extrasHTML = extras.length ? `
+      <div class="lineup-extras">
+        ${extras.map(d => `
+          <div class="lineup-extra" data-edit-driver="${d.id}" title="${esc(d.name)} · #${d.number || '–'}"
+               style="${d.photo ? `background-image:url('${esc(d.photo)}');` : ''}">
+            <span class="lineup-extra-num">${d.number || '–'}</span>
+          </div>`).join('')}
+      </div>` : '';
     return `
       <div class="lineup-row ${t.dsq ? 'champ-dsq' : ''}" style="--team-color:${color}">
         <div class="lineup-grid">
           <div class="lineup-num lineup-num-left">${d1 ? (d1.number || '–') : ''}</div>
           ${left}
-          <div class="lineup-logo" data-edit-team="${t.id}" title="Edit ${esc(t.name)}">${teamLogo(t)}</div>
+          <div class="lineup-logo" data-edit-team="${t.id}" title="Edit ${esc(t.name)}">${teamLogo(t)}${extrasHTML}</div>
           ${right}
           <div class="lineup-num lineup-num-right">${d2 ? (d2.number || '–') : ''}</div>
         </div>
         <div class="lineup-row-actions">
-          ${[d1, d2].filter(Boolean).map(d => `<button class="btn btn-sm btn-ghost" data-release-driver="${d.id}" title="Remove ${esc(d.name)} from the season">✕ ${esc(splitName(d.name).last)}</button>`).join('')}
+          ${drivers.map(d => `<button class="btn btn-sm btn-ghost" data-release-driver="${d.id}" title="Remove ${esc(d.name)} from the season">✕ ${esc(splitName(d.name).last)}</button>`).join('')}
           <span style="flex:1"></span>
           <button class="btn btn-sm btn-ghost" data-edit-team="${t.id}">✎ EDIT TEAM</button>
           <button class="btn btn-sm btn-ghost" data-dsq-team="${t.id}">${t.dsq ? '✓ REINSTATE' : '⊘ DSQ'}</button>
@@ -15619,6 +15730,10 @@ function openRaceModal(raceId) {
         <div class="field"><label>Circuit</label><input type="text" id="r-circ" placeholder="e.g. Silverstone" value="${esc(editing?.circuit || '')}"></div>
         <div class="field" style="max-width:160px"><label>Country code</label><input type="text" id="r-ctry" placeholder="GBR" maxlength="3" value="${esc(editing?.country || '')}" style="text-transform:uppercase"></div>
       </div>
+      <div class="field" id="r-variants-field" style="display:none">
+        <label>Host circuit <span style="font-weight:400;color:var(--text-muted);font-family:var(--f-body);text-transform:none;letter-spacing:0">— this Grand Prix has been held at several tracks; pick one (add more via track presets)</span></label>
+        <div class="circuit-variants" id="r-variants"></div>
+      </div>
 
       <div class="field">
         <label>Flag</label>
@@ -15679,7 +15794,45 @@ function openRaceModal(raceId) {
         flagImage = p.flagImage || '';
         const sp = $('#r-sprint', root); if (sp) sp.checked = !!p.sprint;
         renderFlagWidget();
+        renderVariants();
       };
+
+      // HOST-CIRCUIT VARIANTS — a Grand Prix can be held at several tracks over
+      // the years (Spanish GP: Catalunya, Jarama, Jerez, Madrid…). Offer every
+      // track preset for this race's COUNTRY as a one-click choice that swaps the
+      // circuit (+ its flag) without touching the race name or results. Add more
+      // variants by creating track presets with the same country code.
+      const renderVariants = () => {
+        const field = $('#r-variants-field', root); if (!field) return;
+        const ctry = ($('#r-ctry', root).value || '').trim().toUpperCase();
+        const curCirc = ($('#r-circ', root).value || '').trim().toLowerCase();
+        if (ctry.length < 2) { field.style.display = 'none'; return; }
+        const seen = new Set();
+        const variants = trackPresets.filter(p => {
+          if ((p.country || '').toUpperCase() !== ctry) return false;
+          const key = (p.circuit || p.name || '').toLowerCase().trim();
+          if (!key || seen.has(key)) return false;
+          seen.add(key); return true;
+        });
+        if (variants.length < 2) { field.style.display = 'none'; return; }
+        field.style.display = '';
+        $('#r-variants', root).innerHTML = variants.map((p, i) => {
+          const label = p.circuit || p.name;
+          const active = curCirc && (p.circuit || '').toLowerCase().trim() === curCirc;
+          return `<button type="button" class="circuit-variant ${active ? 'active' : ''}" data-variant="${trackPresets.indexOf(p)}">${esc(label)}</button>`;
+        }).join('');
+        $$('#r-variants [data-variant]', root).forEach(b => b.onclick = () => {
+          const p = trackPresets[Number(b.dataset.variant)];
+          if (!p) return;
+          $('#r-circ', root).value = p.circuit || p.name || '';
+          if (p.flagImage) { flagImage = p.flagImage; renderFlagWidget(); }
+          renderVariants();
+          toast(`Circuit set to ${p.circuit || p.name}`, 'success');
+        });
+      };
+      renderVariants();
+      $('#r-circ', root).addEventListener('input', renderVariants);
+      $('#r-ctry', root).addEventListener('input', renderVariants);
 
       $('[data-act="cancel"]', root).onclick = close;
       $('[data-act="ok"]', root).onclick = () => {
