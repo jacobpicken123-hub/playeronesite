@@ -9496,6 +9496,157 @@ input:focus-visible, select:focus-visible, textarea:focus-visible,
 .preset-pick-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .preset-pick-name { font-family: var(--f-display); font-weight: 700; font-size: 15px; text-transform: uppercase; color: var(--text); }
 .preset-pick-meta { font-family: var(--f-mono); font-size: 10px; letter-spacing: 0.08em; color: var(--text-muted); text-transform: uppercase; }
+
+/* ═══════════════════ NIGHT RACE — cinematic redesign layer ═══════════════════
+   Atmosphere, choreographed view entrances, chrome titles, glowing surfaces.
+   Purely additive: appended last so it wins by source order; no markup changes. */
+
+/* ---- atmosphere: layered ambient light behind everything ---- */
+html {
+  background:
+    radial-gradient(1100px 600px at 12% -8%, rgba(225,6,47,0.075), transparent 60%),
+    radial-gradient(900px 700px at 108% 12%, rgba(0,140,255,0.04), transparent 65%),
+    radial-gradient(1400px 900px at 50% 118%, rgba(225,6,47,0.05), transparent 60%),
+    #0b0b0d;
+  scroll-behavior: smooth;
+}
+body { background: transparent; }
+/* breathe: the vignette very slowly pulses so the dark feels alive */
+body::after {
+  background:
+    radial-gradient(ellipse 100% 80% at 50% 50%, transparent 40%, rgba(0,0,0,0.5) 100%),
+    radial-gradient(700px 300px at 50% 0%, rgba(225,6,47,0.05), transparent 70%);
+  animation: p1-breathe 14s ease-in-out infinite alternate;
+}
+@keyframes p1-breathe { from { opacity: 0.85; } to { opacity: 1; } }
+
+::selection { background: rgba(225,6,47,0.6); color: #fff; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #26282f; border-radius: 5px; border: 2px solid #0b0b0d; }
+::-webkit-scrollbar-thumb:hover { background: var(--red); }
+
+/* ---- chrome-gradient display titles ---- */
+.f1-page-title, .rr-title, .signin-title, .section-head h2, .section-title {
+  background: linear-gradient(180deg, #ffffff 30%, #8e94a3 100%);
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+.f1-page-title span, .rr-title span, .signin-title span, .section-head h2 span, .section-title span {
+  -webkit-text-fill-color: currentColor; background: none;
+}
+.brand-name {
+  background: linear-gradient(180deg, #fff 35%, #a7adbd 100%);
+  -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+}
+
+/* ---- surfaces: unified hover glow + lift across every card ---- */
+.stat-leader-card, .race-card, .record-tile, .team-card, .driver-card,
+.rr-podium-card, .rr-side-card, .dash-block, .save-card, .season-card, .universe-card {
+  transition: transform 0.28s cubic-bezier(0.22,1,0.36,1), border-color 0.22s ease,
+              box-shadow 0.32s ease, background 0.22s ease;
+}
+.stat-leader-card:hover, .race-card:hover, .record-tile:hover, .team-card:hover,
+.driver-card:hover, .rr-podium-card:hover, .rr-side-card:hover,
+.save-card:hover, .season-card:hover, .universe-card:hover {
+  transform: translateY(-4px);
+  border-color: rgba(255,255,255,0.14);
+  box-shadow:
+    0 18px 44px -18px rgba(0,0,0,0.85),
+    0 0 0 1px rgba(255,255,255,0.03) inset,
+    0 8px 34px -16px var(--accent-color, var(--team-color, rgba(225,6,47,0.5)));
+}
+
+/* driver / team imagery: gentle zoom + ring bloom on hover */
+.rr-photo, .rc-pod-photo, .stat-leader-portrait, .f1-portrait, .rr-podium-photo, .rr-side-photo {
+  transition: transform 0.3s cubic-bezier(0.22,1,0.36,1), box-shadow 0.3s ease;
+}
+.rr-row:hover .rr-photo, .rc-pod-row:hover .rc-pod-photo,
+.stat-leader-card:hover .stat-leader-portrait, .f1-matrix-row:hover .f1-portrait,
+.rr-podium-card:hover .rr-podium-photo, .rr-side-card:hover .rr-side-photo {
+  transform: scale(1.07);
+  box-shadow: 0 0 0 3px rgba(255,255,255,0.06), 0 0 22px -4px var(--team-color, rgba(225,6,47,0.55));
+}
+
+/* ---- champion gold: living shimmer ---- */
+@keyframes p1-shimmer { to { background-position: -200% center; } }
+.rr-podium-badge.rr-b1, .f1-matrix-rank-cell.crown, .ts-rank-badge.crown {
+  background-image: linear-gradient(110deg, #ffd76b 20%, #fff3c4 38%, #ffd76b 52%, #b48a30 100%);
+  background-size: 200% auto;
+  animation: p1-shimmer 3.2s linear infinite;
+}
+.rc-pod-rank.r1 { text-shadow: 0 0 14px rgba(255,215,107,0.5); }
+
+/* ---- buttons: press physics + livelier primary ---- */
+.btn { transition: transform 0.16s cubic-bezier(0.34,1.56,0.64,1), background 0.18s ease, border-color 0.18s ease, color 0.18s ease, box-shadow 0.22s ease; }
+.btn:hover { transform: translateY(-1px); }
+.btn:active { transform: translateY(0) scale(0.96); }
+.btn-primary { box-shadow: 0 4px 18px -6px rgba(225,6,47,0.55); }
+.btn-primary:hover { box-shadow: 0 8px 26px -6px rgba(225,6,47,0.75); }
+
+/* ---- vertical nav rail: glass + sliding hover ---- */
+.tabs {
+  background: linear-gradient(180deg, rgba(20,22,28,0.72), rgba(11,11,13,0.72));
+  backdrop-filter: blur(14px) saturate(160%);
+  -webkit-backdrop-filter: blur(14px) saturate(160%);
+}
+.tab { transition: color 0.18s ease, background 0.2s ease, transform 0.22s cubic-bezier(0.22,1,0.36,1), letter-spacing 0.28s var(--ease-out); }
+.tab:hover { transform: translateX(4px); }
+@keyframes p1-nav-glow { 0%,100% { box-shadow: 0 0 8px 0 rgba(225,6,47,0.55); } 50% { box-shadow: 0 0 16px 1px rgba(225,6,47,0.85); } }
+.tab.active::after { animation: p1-nav-glow 2.6s ease-in-out infinite; }
+
+/* ---- choreographed view entrance (only when the view actually changes —
+        body.p1-view-anim is set by the choreographer JS, so realtime cloud
+        re-renders do NOT re-trigger it and can't flicker) ---- */
+@keyframes p1-rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+body.p1-view-anim #app > div > * { animation: p1-rise 0.5s cubic-bezier(0.22,1,0.36,1) both; }
+body.p1-view-anim #app > div > *:nth-child(1) { animation-delay: 0.02s; }
+body.p1-view-anim #app > div > *:nth-child(2) { animation-delay: 0.07s; }
+body.p1-view-anim #app > div > *:nth-child(3) { animation-delay: 0.12s; }
+body.p1-view-anim #app > div > *:nth-child(4) { animation-delay: 0.17s; }
+body.p1-view-anim #app > div > *:nth-child(5) { animation-delay: 0.22s; }
+body.p1-view-anim #app > div > *:nth-child(n+6) { animation-delay: 0.27s; }
+body.p1-view-anim :is(.race-card-grid, .records-grid, .rr-podium-col, .rr-side-col, .lineup-grid, .team-grid) > * {
+  animation: p1-rise 0.55s cubic-bezier(0.22,1,0.36,1) both;
+}
+body.p1-view-anim :is(.race-card-grid, .records-grid, .lineup-grid, .team-grid) > *:nth-child(1) { animation-delay: 0.05s; }
+body.p1-view-anim :is(.race-card-grid, .records-grid, .lineup-grid, .team-grid) > *:nth-child(2) { animation-delay: 0.10s; }
+body.p1-view-anim :is(.race-card-grid, .records-grid, .lineup-grid, .team-grid) > *:nth-child(3) { animation-delay: 0.15s; }
+body.p1-view-anim :is(.race-card-grid, .records-grid, .lineup-grid, .team-grid) > *:nth-child(4) { animation-delay: 0.20s; }
+body.p1-view-anim :is(.race-card-grid, .records-grid, .lineup-grid, .team-grid) > *:nth-child(5) { animation-delay: 0.25s; }
+body.p1-view-anim :is(.race-card-grid, .records-grid, .lineup-grid, .team-grid) > *:nth-child(6) { animation-delay: 0.30s; }
+body.p1-view-anim :is(.race-card-grid, .records-grid, .lineup-grid, .team-grid) > *:nth-child(n+7) { animation-delay: 0.34s; }
+
+/* rows cascade inside tables on view change */
+body.p1-view-anim :is(.f1-matrix tbody tr, .rr-row, .rc-pod-row) { animation: p1-rise 0.4s cubic-bezier(0.22,1,0.36,1) both; }
+body.p1-view-anim :is(.f1-matrix tbody tr, .rr-row):nth-child(1) { animation-delay: 0.03s; }
+body.p1-view-anim :is(.f1-matrix tbody tr, .rr-row):nth-child(2) { animation-delay: 0.06s; }
+body.p1-view-anim :is(.f1-matrix tbody tr, .rr-row):nth-child(3) { animation-delay: 0.09s; }
+body.p1-view-anim :is(.f1-matrix tbody tr, .rr-row):nth-child(4) { animation-delay: 0.12s; }
+body.p1-view-anim :is(.f1-matrix tbody tr, .rr-row):nth-child(5) { animation-delay: 0.15s; }
+body.p1-view-anim :is(.f1-matrix tbody tr, .rr-row):nth-child(6) { animation-delay: 0.18s; }
+body.p1-view-anim :is(.f1-matrix tbody tr, .rr-row):nth-child(n+7) { animation-delay: 0.21s; }
+
+/* table rows glide on hover */
+.rr-row, .f1-matrix-row, .rc-pod-row, .sl-top5-row { transition: background 0.16s ease, transform 0.2s cubic-bezier(0.22,1,0.36,1); }
+.rr-row:hover, .rc-pod-row:hover { transform: translateX(3px); }
+
+/* topbar: floating glass with a live red seam */
+.topbar { box-shadow: 0 10px 34px -18px rgba(0,0,0,0.9); }
+@keyframes p1-seam { 0%,100% { opacity: 0.35; } 50% { opacity: 0.8; } }
+.topbar::after { animation: p1-seam 5s ease-in-out infinite; }
+
+/* inputs: focus bloom */
+input, select, textarea { transition: border-color 0.18s ease, box-shadow 0.22s ease, background 0.18s ease; }
+input:focus, select:focus, textarea:focus { box-shadow: 0 0 0 3px rgba(225,6,47,0.18); }
+
+/* respect reduced-motion: kill the redesign's animations, keep the look */
+@media (prefers-reduced-motion: reduce) {
+  body::after, .tab.active::after, .topbar::after,
+  .rr-podium-badge.rr-b1, .f1-matrix-rank-cell.crown, .ts-rank-badge.crown { animation: none !important; }
+  body.p1-view-anim * { animation: none !important; }
+  .stat-leader-card, .race-card, .record-tile, .team-card, .driver-card, .btn, .tab, .rr-row { transition: none; }
+}
 .rr-status { margin-top: 16px; border-top: 1px dashed var(--border-hi); padding-top: 14px; }
 .rr-status-head { font-family: var(--f-display); font-weight: 700; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-muted); margin-bottom: 10px; }
 .rr-status-row { display: flex; align-items: center; justify-content: space-between; padding: 7px 6px; border-bottom: 1px solid var(--border-dim); }
@@ -11104,9 +11255,12 @@ function _fbAttachSharedPresets(saveId) {
     const agg = { drivers: [], teams: [], tracks: [] };
     Object.keys(all).forEach(uid => {
       const d = all[uid] || {};
-      _fbArr(d.drivers).forEach(p => p && agg.drivers.push({ ...p, isShared: true }));
-      _fbArr(d.teams).forEach(p => p && agg.teams.push({ ...p, isShared: true }));
-      _fbArr(d.tracks).forEach(p => p && agg.tracks.push({ ...p, isShared: true }));
+      // _fbNormalizePreset: RTDB object-encodes nested arrays, so multi-photo
+      // galleries (photos/logos/eras) must be coerced back to real arrays or
+      // presetPhotosList() sees them as "no gallery" and drops to one photo.
+      _fbArr(d.drivers).forEach(p => p && agg.drivers.push({ ..._fbNormalizePreset(p), isShared: true }));
+      _fbArr(d.teams).forEach(p => p && agg.teams.push({ ..._fbNormalizePreset(p), isShared: true }));
+      _fbArr(d.tracks).forEach(p => p && agg.tracks.push({ ..._fbNormalizePreset(p), isShared: true }));
     });
     _fbSharedBySave[saveId] = agg;
     _fbRebuildSharedPresets();
@@ -11177,10 +11331,40 @@ async function cloudDeleteRace() {}
 async function cloudDeleteResultRows() {}
 
 /* ---- PRESET BACKUP (per-user) ---- */
+// RTDB rejects `undefined` anywhere in a payload (the whole set() throws) — a
+// JSON round-trip drops undefined fields so one bad preset can't kill the push.
+function _fbCleanForWrite(obj) { return JSON.parse(JSON.stringify(obj)); }
+// RTDB re-encodes arrays as {0:…,1:…} objects. A preset's nested photos / logos
+// / eras galleries come back array-LIKE, but presetPhotosList() requires a real
+// Array — so multi-photo presets silently collapsed to one photo after a sync.
+// Normalize every nested gallery back to a real array on read.
+function _fbNormalizePreset(p) {
+  if (!p || typeof p !== 'object') return p;
+  const out = { ...p };
+  if (out.photos != null) out.photos = _fbArr(out.photos).filter(x => x && x.url);
+  if (out.logos  != null) out.logos  = _fbArr(out.logos).filter(x => x && x.url);
+  if (out.eras   != null) out.eras   = _fbArr(out.eras);
+  return out;
+}
+// Restore the preset library from a cloud blob (userPresets backup). Arrays may
+// arrive object-encoded — normalize the lists AND each preset's galleries.
+function applyPresetBlob(blob) {
+  if (!blob || typeof blob !== 'object') return;
+  const LIST_KEYS = ['customDriverPresets', 'customTeamPresets', 'customTrackPresets', 'calendarPresets', 'seasonTemplates'];
+  for (const k of PRESET_BACKUP_KEYS) {
+    if (blob[k] === undefined) continue;
+    state[k] = LIST_KEYS.includes(k) ? _fbArr(blob[k]).map(_fbNormalizePreset) : blob[k];
+  }
+  // hiddenPresets sub-lists also arrive object-encoded
+  if (state.hiddenPresets && typeof state.hiddenPresets === 'object') {
+    ['drivers','teams','tracks'].forEach(f => { if (state.hiddenPresets[f] != null) state.hiddenPresets[f] = _fbArr(state.hiddenPresets[f]); });
+  }
+  try { saveLocal(); } catch (e) {}
+}
 async function cloudPushPresets() {
   if (!CLOUD.enabled || !currentUser || typeof collectPresetBlob !== 'function') return;
   try {
-    const blob = collectPresetBlob();
+    const blob = _fbCleanForWrite(collectPresetBlob());
     const h = JSON.stringify(blob).length + ':' + Object.keys(blob).length;
     if (cloudLastPushHashes['_presets'] === h) return;
     await CLOUD.db.ref('userPresets/' + currentUser.uid).set(blob);
@@ -11232,7 +11416,7 @@ async function cloudPushSharedPresets() {
         }
       });
     });
-    const blob = { drivers, teams, tracks };
+    const blob = _fbCleanForWrite({ drivers, teams, tracks }); // drop undefined so RTDB can't reject the whole push
     const key = '_sharedPresets:' + state.activeSaveId;
     const h = JSON.stringify(blob).length + ':' + (drivers.length + teams.length + tracks.length);
     if (cloudLastPushHashes[key] === h) return; // unchanged → skip
@@ -23535,6 +23719,38 @@ function renderAll() {
   } else {
     bootstrap();
   }
+})();
+
+/* =====================================================
+   P1 VIEW CHOREOGRAPHER — staggered entrance on view change.
+   Wraps renderAll: the `p1-view-anim` class (which arms the CSS
+   entrance animations) is added ONLY when the view key actually
+   changes. Realtime cloud re-renders keep the same key, so they
+   repaint with no animation — no flicker.
+   ===================================================== */
+(function P1ViewChoreo() {
+  'use strict';
+  if (window.__p1ViewChoreo) return;
+  window.__p1ViewChoreo = true;
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let lastKey = null, timer = null;
+  const arm = () => {
+    if (reduced) return;
+    document.body.classList.add('p1-view-anim');
+    clearTimeout(timer);
+    timer = setTimeout(() => document.body.classList.remove('p1-view-anim'), 950);
+  };
+  try {
+    const orig = renderAll;
+    renderAll = function () {
+      let key = '';
+      try { key = [state.view, state.activeSaveId, state.activeSeasonId, state.raceId, (typeof standingsTab !== 'undefined' ? standingsTab : ''), (typeof recordsTab !== 'undefined' ? recordsTab : '')].join('|'); }
+      catch (e) { key = String(Math.random()); }
+      if (key !== lastKey) { lastKey = key; arm(); }
+      return orig.apply(this, arguments);
+    };
+  } catch (e) { /* renderAll missing — skip choreography */ }
+  arm(); // first paint gets the entrance too
 })();
 
 </script>
