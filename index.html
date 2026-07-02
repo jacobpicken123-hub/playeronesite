@@ -11346,20 +11346,44 @@ function _fbNormalizePreset(p) {
   if (out.eras   != null) out.eras   = _fbArr(out.eras);
   return out;
 }
-// Restore the preset library from a cloud blob (userPresets backup). Arrays may
-// arrive object-encoded — normalize the lists AND each preset's galleries.
+// Restore the preset library from a cloud blob (userPresets backup).
+// MERGE, never clobber: this runs on every sign-in, and the cloud copy can be
+// STALE (an old push, or pushes that were failing). Overwriting local state with
+// it deleted presets the user had just created. So: union the lists with LOCAL
+// winning on conflicts, then push the merged result back up so the cloud catches
+// up. Arrays may arrive object-encoded — normalize lists AND nested galleries.
 function applyPresetBlob(blob) {
   if (!blob || typeof blob !== 'object') return;
   const LIST_KEYS = ['customDriverPresets', 'customTeamPresets', 'customTrackPresets', 'calendarPresets', 'seasonTemplates'];
   for (const k of PRESET_BACKUP_KEYS) {
     if (blob[k] === undefined) continue;
-    state[k] = LIST_KEYS.includes(k) ? _fbArr(blob[k]).map(_fbNormalizePreset) : blob[k];
-  }
-  // hiddenPresets sub-lists also arrive object-encoded
-  if (state.hiddenPresets && typeof state.hiddenPresets === 'object') {
-    ['drivers','teams','tracks'].forEach(f => { if (state.hiddenPresets[f] != null) state.hiddenPresets[f] = _fbArr(state.hiddenPresets[f]); });
+    if (LIST_KEYS.includes(k)) {
+      const cloud = _fbArr(blob[k]).map(_fbNormalizePreset).filter(Boolean);
+      const local = Array.isArray(state[k]) ? state[k] : [];
+      const seen = new Set(local.map(p => presetKey(p)));
+      const merged = local.slice(); // local first = local wins
+      cloud.forEach(p => { const key = presetKey(p); if (!seen.has(key)) { seen.add(key); merged.push(p); } });
+      state[k] = merged;
+    } else if (k === 'hiddenPresets') {
+      const cur = state.hiddenPresets || {};
+      const inc = blob[k] || {};
+      const out = {};
+      ['drivers', 'teams', 'tracks'].forEach(f => { out[f] = Array.from(new Set([..._fbArr(cur[f]), ..._fbArr(inc[f])])); });
+      state.hiddenPresets = out;
+    } else if (k === 'presetOverrides') {
+      const out = {};
+      ['drivers', 'teams', 'tracks'].forEach(f => { out[f] = Object.assign({}, (blob[k] || {})[f] || {}, (state[k] || {})[f] || {}); });
+      state.presetOverrides = out;
+    } else if (k === 'driverClasses' || k === 'teamClasses') {
+      state[k] = Object.assign({}, blob[k] || {}, state[k] || {}); // cloud fills gaps, local wins
+    } else if (state[k] === undefined) {
+      state[k] = blob[k];
+    }
   }
   try { saveLocal(); } catch (e) {}
+  // Local may now be richer than the cloud copy — force the next backup push.
+  delete cloudLastPushHashes['_presets'];
+  try { cloudPushPresets(); } catch (e) {}
 }
 async function cloudPushPresets() {
   if (!CLOUD.enabled || !currentUser || typeof collectPresetBlob !== 'function') return;
